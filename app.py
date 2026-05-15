@@ -9,7 +9,7 @@ from data_fetcher import (
     get_cache_summary,
     get_stock_metrics,
     normalize_code,
-    refresh_financial_cache,
+    refresh_current_holdings_cache,
     refresh_market_cache,
 )
 from report_generator import generate_txt_report, money, percent
@@ -177,13 +177,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.expander("数据缓存工具", expanded=False):
+with st.expander("高级选项：数据缓存工具", expanded=False):
     summary = get_cache_summary()
     st.caption(
         f"当前本地缓存约 {summary['count']} 只标的，其中 {summary['finance_count']} 只有财务数据；"
         f"最近更新时间：{summary['latest_update']}。"
     )
-    st.caption("普通体检会自动尝试查真实行情；这里的按钮用于手动把缓存变大。接口失败时不会影响页面使用。")
+    st.caption("页面默认读取 stock_metrics.csv，本地和云端都更稳定。下面的按钮会尝试联网更新，接口可能失败。")
     cache_col1, cache_col2 = st.columns(2)
     if cache_col1.button("更新全部 A 股行情缓存", use_container_width=True):
         with st.spinner("正在拉取全部 A 股行情，可能需要几十秒..."):
@@ -202,9 +202,9 @@ with st.expander("数据缓存工具", expanded=False):
         if normalized_code:
             current_input_codes.append(normalized_code)
 
-    if cache_col2.button("更新当前持仓财务缓存", use_container_width=True):
-        with st.spinner("正在尝试更新当前填写代码的财务数据..."):
-            update_summary, messages = refresh_financial_cache(current_input_codes)
+    if cache_col2.button("手动更新当前持仓数据", use_container_width=True):
+        with st.spinner("正在尝试更新当前填写代码的行情数据..."):
+            update_summary, messages = refresh_current_holdings_cache(current_input_codes)
         for message in messages:
             st.info(message)
         st.success(f"缓存现有 {update_summary['count']} 只标的，{update_summary['finance_count']} 只有财务数据。")

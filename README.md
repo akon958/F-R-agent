@@ -6,20 +6,20 @@
 
 - 输入家庭现金、风险承受能力、多只股票或基金持仓。
 - 默认支持 3 行持仓，可以继续增加持仓行。
-- 支持输入任意 A 股代码。程序会优先通过 AkShare 查询真实行情。
-- 如果真实接口失败，会自动读取 `stock_metrics.csv` 本地缓存。
-- 页面提供“更新全部 A 股行情缓存”按钮，可以把本地缓存逐步扩展到更多 A 股。
-- 页面提供“更新当前持仓财务缓存”按钮，会尝试为当前填写的股票补充财务指标。
-- 如果真实接口和本地缓存都没有该股票，会显示“数据缺失”，不会强行给绿色评级。
+- 页面默认优先读取 `stock_metrics.csv`，不会在 Streamlit Cloud 每次启动时自动抓全市场行情。
+- 可以在“高级选项：数据缓存工具”里手动更新当前持仓数据。
+- “更新全部 A 股行情缓存”也放在高级选项里，接口可能失败，失败时页面会继续使用本地缓存。
+- 如果本地缓存没有该股票，会显示“数据缺失”，不会强行给绿色评级。
 - 输出综合评分、红黄绿风险等级、数据状态、家庭仓位、资产配置饼图、持仓明细、风险提示、家人建议和 txt 报告。
 
 ## 重要说明
 
 这个项目不是完整行情软件。它的目标是家庭风险体检：
 
-- 行情数据：优先查 AkShare，失败后用本地缓存。
-- 财务数据：真实接口能拿到就更新，拿不到就用缓存；缺失时会保守降级。
-- 云端部署时，缓存文件可能是临时写入，重启后可能回到 GitHub 仓库里的初始 CSV。
+- 行情数据：默认读取 `stock_metrics.csv`。
+- 手动更新：本地运行 `python update_cache.py` 或在页面高级选项里点击更新按钮。
+- 财务数据：如果缓存里没有完整财务指标，会保守判断，最高不会轻易给绿色。
+- 云端部署：Streamlit Cloud 会读取 GitHub 仓库中的 `stock_metrics.csv`。手机端使用时不依赖实时抓取。
 
 ## 项目结构
 
@@ -29,6 +29,7 @@ Family_Investment_Agent/
 ├── analyzer.py
 ├── data_fetcher.py
 ├── report_generator.py
+├── update_cache.py
 ├── stock_metrics.csv
 ├── requirements.txt
 └── README.md
@@ -67,6 +68,35 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
+## 本地更新 A 股缓存
+
+在上传 GitHub 前，建议先在本地运行一次：
+
+```powershell
+python update_cache.py
+```
+
+这个脚本会调用 AkShare 的 `stock_zh_a_spot_em()`，把沪深京 A 股行情保存到 `stock_metrics.csv`。缓存字段至少包括：
+
+- 代码
+- 名称
+- 最新价
+- 涨跌幅
+- 成交额
+- 市盈率-动态
+- 市净率
+- 换手率
+- 总市值
+- 流通市值
+
+如果 AkShare 接口失败，脚本会提示：
+
+```text
+实时行情更新失败，已使用本地缓存数据。
+```
+
+这时页面仍然可以使用已有的 `stock_metrics.csv`，不会崩溃。
+
 ## 手机访问本地网页
 
 手机和电脑连接同一个 Wi-Fi。启动 Streamlit 后，终端会显示类似下面的地址：
@@ -88,7 +118,7 @@ Family_Investment_Agent
 ```
 
 4. 选择 `Public`，然后点击 `Create repository`。
-5. 上传本项目根目录中的 7 个文件：
+5. 上传本项目根目录中的文件：
 
 ```text
 app.py
@@ -96,6 +126,7 @@ requirements.txt
 analyzer.py
 data_fetcher.py
 report_generator.py
+update_cache.py
 stock_metrics.csv
 README.md
 ```
@@ -113,24 +144,14 @@ Main file path: app.py
 
 10. 点击 `Deploy`。
 
-## 数据缓存使用
+## 上传 GitHub 后的数据逻辑
 
-`stock_metrics.csv` 同时是示例数据和本地缓存文件。字段包括：
+上传 GitHub 后，Streamlit Cloud 会直接读取仓库里的 `stock_metrics.csv`。因此：
 
-- 基础信息：股票代码、股票名称、所属行业。
-- 行情与交易热度：最新收盘价、涨跌幅、换手率、量比、振幅、成交额、内外盘比例。
-- 财务质量：ROE、净利率、毛利率、营收增长率、净利润增长率、资产负债率、经营现金流/净利润。
-- 数据来源、更新时间。
-
-建议使用方式：
-
-1. 第一次打开页面，先点“数据缓存工具”。
-2. 点“更新全部 A 股行情缓存”，让缓存覆盖更多股票。
-3. 输入家里的持仓代码和金额。
-4. 如需补充财务指标，点“更新当前持仓财务缓存”。
-5. 点“开始体检”查看风险颜色和家人建议。
-
-如果 AkShare 接口失败，页面仍会继续使用本地缓存，不会崩溃。
+- 手机端打开云端链接时，不需要每次实时抓 AkShare。
+- 如果想更新缓存，先在本地运行 `python update_cache.py`。
+- 然后把更新后的 `stock_metrics.csv` 再上传或提交到 GitHub。
+- Streamlit Cloud 重新部署后，就会读取新的缓存。
 
 ## 免责声明
 
