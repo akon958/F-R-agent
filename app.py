@@ -5,19 +5,33 @@ import pandas as pd
 import streamlit as st
 
 from analyzer import analyze_portfolio
-from data_fetcher import (
-    get_cache_summary,
-    get_stock_metrics,
-    normalize_code,
-    refresh_current_holdings_cache,
-    refresh_market_cache,
-)
+import data_fetcher
 from report_generator import generate_txt_report, money, percent
 
 
 APP_TITLE = "家庭投资雷达 Agent"
 DEFAULT_CODES = ["600519", "000001", "300750"]
 DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
+
+
+def safe_cache_summary() -> dict:
+    if hasattr(data_fetcher, "get_cache_summary"):
+        return data_fetcher.get_cache_summary()
+    return {"count": 0, "latest_update": "未知", "finance_count": 0}
+
+
+def safe_refresh_current_holdings(codes: list[str]) -> tuple[dict, list[str]]:
+    if hasattr(data_fetcher, "refresh_current_holdings_cache"):
+        return data_fetcher.refresh_current_holdings_cache(codes)
+    if hasattr(data_fetcher, "refresh_financial_cache"):
+        return data_fetcher.refresh_financial_cache(codes)
+    return safe_cache_summary(), ["当前版本暂不支持手动更新当前持仓数据，请先上传最新 data_fetcher.py。"]
+
+
+def safe_refresh_market_cache() -> tuple[dict, list[str]]:
+    if hasattr(data_fetcher, "refresh_market_cache"):
+        return data_fetcher.refresh_market_cache()
+    return safe_cache_summary(), ["当前版本暂不支持更新全部 A 股行情缓存，请先上传最新 data_fetcher.py。"]
 
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
