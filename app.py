@@ -150,38 +150,26 @@ div[data-testid="stMetricValue"] {
 )
 
 
+# ── session_state 初始化 ────────────────────────────────────────────
+# 所有跨 rerun 需要保留的状态都在这里声明，缺一不可。
 def init_state() -> None:
-    if "holding_rows" not in st.session_state:
-        st.session_state.holding_rows = 3
-    # AI 报告缓存，避免重复调用
-    if "ai_report_text" not in st.session_state:
-        st.session_state.ai_report_text = None
-    if "ai_report_error" not in st.session_state:
-        st.session_state.ai_report_error = None
-    # 体检结果变化时需要清空旧 AI 报告
-    if "last_analysis_score" not in st.session_state:
-        st.session_state.last_analysis_score = None
-
-
-def clean_holdings(raw_rows: list[dict[str, float | str]]) -> list[dict[str, float | str]]:
-    holdings: list[dict[str, float | str]] = []
-    for row in raw_rows:
-        code = normalize_code(str(row["code"]))
-        amount = float(row["amount"])
-        if code and amount > 0:
-            holdings.append({"code": code, "amount": amount})
-    return holdings
-
-
-def show_disclaimer() -> None:
-    st.markdown(
-        '<p class="notice">本工具仅用于家庭投资风险体检和学习参考，不构成投资建议。市场有风险，投资需谨慎。</p>',
-        unsafe_allow_html=True,
-    )
+    defaults: dict = {
+        "holding_rows": 3,
+        # 体检核心结果（"开始体检"后写入，之后所有 rerun 都从这里读）
+        "analysis_result": None,
+        "fetch_warnings": [],
+        # AI 报告
+        "ai_report": None,       # 成功时存文本
+        "ai_report_error": None, # 失败时存错误消息
+    }
+    for key, default in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
 
 
 init_state()
 
+# ── 页面头部 ────────────────────────────────────────────────────────
 st.title(APP_TITLE)
 st.markdown(
     """
@@ -193,6 +181,24 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+def show_disclaimer() -> None:
+    st.markdown(
+        '<p class="notice">本工具仅用于家庭投资风险体检和学习参考，不构成投资建议。市场有风险，投资需谨慎。</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def clean_holdings(raw_rows: list[dict]) -> list[dict]:
+    result = []
+    for row in raw_rows:
+        code = normalize_code(str(row["code"]))
+        amount = float(row["amount"])
+        if code and amount > 0:
+            result.append({"code": code, "amount": amount})
+    return result
+
+
 # ── 高级缓存工具：默认收起 ──────────────────────────────────────────
 with st.expander("高级选项：数据缓存工具", expanded=False):
     try:
@@ -203,7 +209,8 @@ with st.expander("高级选项：数据缓存工具", expanded=False):
         st.info("缓存状态暂时无法读取，不影响风险体检。")
 
     st.caption(
-        f"当前本地缓存约 {summary.get('count', 0)} 只标的，其中 {summary.get('finance_count', 0)} 只有财务数据；"
+        f"当前本地缓存约 {summary.get('count', 0)} 只标的，"
+        f"其中 {summary.get('finance_count', 0)} 只有财务数据；"
         f"最近更新时间：{summary.get('latest_update', '未知')}。"
     )
     st.caption("页面默认读取 stock_metrics.csv，本地和云端都更稳定。下面的按钮会尝试联网更新，接口可能失败。")
@@ -213,25 +220,25 @@ with st.expander("高级选项：数据缓存工具", expanded=False):
     if cache_col1.button("更新全部 A 股行情缓存", use_container_width=True):
         with st.spinner("正在拉取全部 A 股行情，可能需要几十秒..."):
             update_summary, messages = refresh_market_cache()
-        for message in messages:
-            st.info(message)
+        for msg in messages:
+            st.info(msg)
         st.success(f"缓存现有 {update_summary.get('count', 0)} 只标的。")
 
-    current_input_codes = []
+    current_input_codes: list[str] = []
     for idx in range(st.session_state.holding_rows):
-        code_value = st.session_state.get(
+        raw_code = st.session_state.get(
             f"code_{idx}",
             DEFAULT_CODES[idx] if idx < len(DEFAULT_CODES) else "",
         )
-        normalized_code = normalize_code(str(code_value))
-        if normalized_code:
-            current_input_codes.append(normalized_code)
+        nc = normalize_code(str(raw_code))
+        if nc:
+            current_input_codes.append(nc)
 
     if cache_col2.button("手动更新当前持仓数据", use_container_width=True):
         with st.spinner("正在尝试更新当前填写代码的行情数据..."):
             update_summary, messages = refresh_current_holdings_cache(current_input_codes)
-        for message in messages:
-            st.info(message)
+        for msg in messages:
+            st.info(msg)
         st.success(
             f"缓存现有 {update_summary.get('count', 0)} 只标的，"
             f"{update_summary.get('finance_count', 0)} 只有财务数据。"
@@ -243,13 +250,18 @@ with st.expander("高级选项：数据缓存工具", expanded=False):
 
 # ── 输入表单 ────────────────────────────────────────────────────────
 with st.form("family_risk_form"):
-    cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=50000.0, step=1000.0)
+    cash = st.number_input(
+        "家庭可用于投资的现金金额（元）", min_value=0.0, value=50000.0, step=1000.0
+    )
     risk_profile = st.selectbox("家庭风险承受能力", ["稳健", "平衡", "积极"], index=1)
 
     st.markdown("### 持仓")
-    st.markdown('<p class="mini">默认 3 行。只填写有持仓的股票或基金，金额填 0 的行会自动忽略。</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="mini">默认 3 行。只填写有持仓的股票或基金，金额填 0 的行会自动忽略。</p>',
+        unsafe_allow_html=True,
+    )
 
-    raw_holdings: list[dict[str, float | str]] = []
+    raw_holdings: list[dict] = []
     for index in range(st.session_state.holding_rows):
         with st.container(border=True):
             st.markdown(f"**第 {index + 1} 只持仓**")
@@ -272,18 +284,9 @@ with st.form("family_risk_form"):
 
 show_disclaimer()
 
-# ── 未提交时显示颜色说明 ────────────────────────────────────────────
-if not submitted:
-    st.markdown(
-        """
-<div class="risk-card green"><h3>绿色：风险较低</h3><p>不是说一定赚钱，只是当前看起来没那么紧张。</p></div>
-<div class="risk-card yellow"><h3>黄色：需要注意</h3><p>有些地方要多看一眼，先别急着加钱。</p></div>
-<div class="risk-card red"><h3>红色：风险偏高</h3><p>先保护家庭现金和睡眠质量。</p></div>
-""",
-        unsafe_allow_html=True,
-    )
-
-# ── 提交后输出 ──────────────────────────────────────────────────────
+# ── "开始体检"被点击：运行分析并写入 session_state ─────────────────
+# 只在 submitted 为 True 的那次 rerun 里执行，结果存进 session_state，
+# 后续所有 rerun（包括 AI 按钮触发的）都从 session_state 读，不重新计算。
 if submitted:
     holdings = clean_holdings(raw_holdings)
     if not holdings:
@@ -292,24 +295,43 @@ if submitted:
 
     try:
         with st.spinner("正在体检中，先查数据，再做保守判断..."):
-            codes = [str(item["code"]) for item in holdings]
+            codes = [str(h["code"]) for h in holdings]
             stocks, fetch_warnings = get_stock_metrics(codes)
             analysis = analyze_portfolio(cash, risk_profile, holdings, stocks)
     except Exception:  # noqa: BLE001
         st.error("体检时遇到问题，但页面没有崩。请稍后重试，或检查 stock_metrics.csv 是否存在。")
         st.stop()
 
-    # 体检结果变化时清空旧的 AI 报告缓存
-    current_score = analysis.get("score")
-    if current_score != st.session_state.last_analysis_score:
-        st.session_state.ai_report_text = None
-        st.session_state.ai_report_error = None
-        st.session_state.last_analysis_score = current_score
+    # 写入 session_state（关键：让后续 rerun 也能访问）
+    st.session_state.analysis_result = analysis
+    st.session_state.fetch_warnings = fetch_warnings
 
-    for warning in fetch_warnings:
+    # 体检内容变了就清空旧 AI 报告，避免展示错误内容
+    st.session_state.ai_report = None
+    st.session_state.ai_report_error = None
+
+# ── 结果区域：只要 session_state 里有 analysis 就渲染 ──────────────
+# 这是修复的核心：渲染条件从 `if submitted` 改为 `if analysis_result`，
+# 任何按钮（包括 AI 按钮）触发的 rerun 都不会清空结果区域。
+analysis = st.session_state.analysis_result
+
+if analysis is None:
+    # 还没做过体检，显示颜色说明引导用户
+    st.markdown(
+        """
+<div class="risk-card green"><h3>绿色：风险较低</h3><p>不是说一定赚钱，只是当前看起来没那么紧张。</p></div>
+<div class="risk-card yellow"><h3>黄色：需要注意</h3><p>有些地方要多看一眼，先别急着加钱。</p></div>
+<div class="risk-card red"><h3>红色：风险偏高</h3><p>先保护家庭现金和睡眠质量。</p></div>
+""",
+        unsafe_allow_html=True,
+    )
+else:
+    # ── 渲染体检结果 ────────────────────────────────────────────────
+
+    for warning in st.session_state.fetch_warnings:
         st.warning(warning)
 
-    # ── 1. 综合评分卡（首屏核心，始终展开）──────────────────────────
+    # 1. 综合评分卡
     st.markdown(
         f"""
 <div class="risk-card {analysis['color']}">
@@ -322,7 +344,7 @@ if submitted:
         unsafe_allow_html=True,
     )
 
-    # ── 2. 核心四项指标（始终展开）──────────────────────────────────
+    # 2. 核心四项指标
     col1, col2 = st.columns(2)
     col1.metric("家庭总资产", money(analysis["total_assets"]))
     col2.metric("现金比例", percent(analysis["cash_ratio"]))
@@ -333,14 +355,14 @@ if submitted:
 
     st.metric("行业集中度", f"{analysis['top_industry']} {percent(analysis['industry_concentration'])}")
 
-    # ── 3. 主要风险提示（始终展开）──────────────────────────────────
+    # 3. 主要风险提示
     st.subheader("主要风险提示")
     st.markdown('<div class="plain-card">', unsafe_allow_html=True)
     for note in analysis["risk_notes"]:
         st.write(f"- {note}")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── 4. 给家人的建议（始终展开）──────────────────────────────────
+    # 4. 给家人的建议
     st.subheader("给家人的建议")
     st.markdown('<div class="plain-card">', unsafe_allow_html=True)
     for note in analysis["advice"]:
@@ -353,45 +375,50 @@ if submitted:
     st.subheader("AI 风险说明（给父母看）")
 
     if not is_ai_available():
-        # Key 未配置：静默提示，其他功能完全不受影响
-        st.caption("未配置 AI 分析功能。如需启用，请在 Streamlit Cloud Secrets 中配置 DEEPSEEK_API_KEY。")
+        st.caption("未配置 AI 分析功能。")
     else:
-        if st.session_state.ai_report_text:
-            # 已有缓存结果，直接展示，不重复调用
-            st.markdown(
-                f'<div class="ai-card">{st.session_state.ai_report_text}</div>',
-                unsafe_allow_html=True,
+        if st.session_state.ai_report:
+            # ── 已有结果：直接展示 ──────────────────────────────────
+            # 用 st.write 而非 unsafe_allow_html，避免换行符被压缩
+            st.markdown('<div class="ai-card">', unsafe_allow_html=True)
+            st.write(st.session_state.ai_report)
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.caption(
+                "以上为 AI 生成的风险说明，仅供家庭参考，不构成投资建议。市场有风险，投资需谨慎。"
             )
-            st.caption("以上为 AI 生成的风险说明，仅供家庭参考，不构成投资建议。市场有风险，投资需谨慎。")
             if st.button("重新生成 AI 风险说明", use_container_width=True):
-                st.session_state.ai_report_text = None
+                st.session_state.ai_report = None
                 st.session_state.ai_report_error = None
-                st.rerun()
+                # 不调用 st.rerun()，让下一次自然渲染直接进入"首次"分支
 
         elif st.session_state.ai_report_error:
-            # 上次调用失败，显示错误提示和重试按钮
+            # ── 上次失败：显示错误 + 重试按钮 ──────────────────────
             st.warning(st.session_state.ai_report_error)
             if st.button("重试 AI 风险说明", use_container_width=True):
                 st.session_state.ai_report_error = None
-                st.rerun()
+                # 不调用 st.rerun()，让下一次自然渲染进入"首次"分支
 
         else:
-            # 首次：显示按钮，等待用户主动点击
+            # ── 首次：等待用户点击按钮 ──────────────────────────────
             st.caption("点击下方按钮，AI 会用通俗语言解释这份体检结果，方便发给父母阅读。")
             if st.button("生成 AI 风险说明", use_container_width=True):
                 with st.spinner("AI 正在生成说明，大约需要几秒钟..."):
                     report_text, error_msg = generate_ai_report(analysis)
+
                 if report_text:
-                    st.session_state.ai_report_text = report_text
+                    # ✅ 成功：写入 session_state，Streamlit 自动 rerun 后仍可读到
+                    st.session_state.ai_report = report_text
                     st.session_state.ai_report_error = None
                 else:
-                    st.session_state.ai_report_text = None
+                    # ❌ 失败：写入错误消息，rerun 后显示 warning
+                    st.session_state.ai_report = None
                     st.session_state.ai_report_error = (
                         error_msg or "AI 分析暂时不可用，基础风险体检结果不受影响。"
                     )
+                # 写完 session_state 再 rerun，确保状态已落盘
                 st.rerun()
 
-    # ── 6. 资产配置饼图（默认收起）──────────────────────────────────
+    # 6. 资产配置饼图（默认收起）
     with st.expander("查看资产配置饼图", expanded=False):
         if analysis["total_assets"] <= 0:
             st.info("现金和持仓都为 0，暂时没有可画的资产配置图。")
@@ -408,30 +435,29 @@ if submitted:
             ax.axis("equal")
             st.pyplot(fig, clear_figure=True)
 
-    # ── 7. 四项得分（默认收起）──────────────────────────────────────
+    # 7. 四项得分（默认收起）
     with st.expander("查看四项得分明细", expanded=False):
         score_cols = st.columns(2)
         for idx, (name, score) in enumerate(analysis["module_scores"].items()):
             score_cols[idx % 2].metric(name, f"{score:.0f}/100")
 
-    # ── 8. 持仓明细表格（默认收起）─────────────────────────────────
+    # 8. 持仓明细表格（默认收起）
     with st.expander("查看持仓明细表格", expanded=False):
-        detail_rows = []
-        for item in analysis["stock_results"]:
-            detail_rows.append(
-                {
-                    "代码": item["code"],
-                    "名称": item["name"],
-                    "金额": money(item["amount"]),
-                    "占比": percent(item["single_ratio"]),
-                    "行业": item["industry"],
-                    "数据": item["data_source"],
-                    "风险": item["level"],
-                }
-            )
+        detail_rows = [
+            {
+                "代码": item["code"],
+                "名称": item["name"],
+                "金额": money(item["amount"]),
+                "占比": percent(item["single_ratio"]),
+                "行业": item["industry"],
+                "数据": item["data_source"],
+                "风险": item["level"],
+            }
+            for item in analysis["stock_results"]
+        ]
         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
-    # ── 9. 每只持仓详情卡 ────────────────────────────────────────────
+    # 9. 每只持仓详情卡
     st.subheader("每只持仓怎么看")
     for item in analysis["stock_results"]:
         st.markdown(
@@ -457,7 +483,7 @@ if submitted:
             for note in item["position_notes"]:
                 st.write(f"- {note}")
 
-    # ── 10. 下载报告 ─────────────────────────────────────────────────
+    # 10. 下载报告
     report_text = generate_txt_report(analysis)
     st.download_button(
         "下载 txt 报告",
