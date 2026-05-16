@@ -273,9 +273,17 @@ if submitted:
             codes = [str(item["code"]) for item in holdings]
             stocks, fetch_warnings = get_stock_metrics(codes)
             analysis = analyze_portfolio(cash, risk_profile, holdings, stocks)
+        st.session_state["analysis"] = analysis
+        st.session_state["fetch_warnings"] = fetch_warnings
+        st.session_state.pop("ai_report", None)
+        st.session_state.pop("ai_report_failed", None)
     except Exception:  # noqa: BLE001
         st.error("体检时遇到问题，但页面没有崩。请稍后重试，或检查 stock_metrics.csv 是否存在。")
         st.stop()
+
+if "analysis" in st.session_state:
+    analysis = st.session_state["analysis"]
+    fetch_warnings = st.session_state.get("fetch_warnings", [])
 
     for warning in fetch_warnings:
         st.warning(warning)
@@ -379,21 +387,34 @@ if submitted:
 
     st.subheader("AI 风险说明")
     st.caption("可选功能：只在点击按钮后调用 DeepSeek，用来把上面的体检结果改写成更适合家人看的话。")
-    if st.button("生成 AI 风险说明", use_container_width=True):
-        try:
-            deepseek_api_key = st.secrets["DEEPSEEK_API_KEY"]
-        except Exception:  # noqa: BLE001
-            deepseek_api_key = ""
 
+    deepseek_api_key = st.secrets.get("DEEPSEEK_API_KEY", "")
+    if "ai_report" in st.session_state:
+        _ai_status = "已生成"
+    elif st.session_state.get("ai_report_failed"):
+        _ai_status = "调用失败"
+    elif deepseek_api_key:
+        _ai_status = "已配置"
+    else:
+        _ai_status = "未配置"
+    st.caption(f"AI 分析状态：{_ai_status}")
+
+    if st.button("生成 AI 风险说明", use_container_width=True):
         if not deepseek_api_key:
-            st.info("未配置 AI 分析功能")
+            st.info("未配置 AI 分析功能。")
         else:
             try:
                 with st.spinner("正在生成给家人看的风险说明..."):
                     ai_text = generate_parent_friendly_report(analysis, deepseek_api_key)
-                st.markdown(ai_text)
+                st.session_state["ai_report"] = ai_text
+                st.session_state.pop("ai_report_failed", None)
+                st.rerun()
             except Exception:  # noqa: BLE001
+                st.session_state["ai_report_failed"] = True
                 st.info("AI 分析暂时不可用，基础风险体检结果不受影响。")
+
+    if "ai_report" in st.session_state:
+        st.markdown(st.session_state["ai_report"])
 
     report_text = generate_txt_report(analysis)
     st.download_button(
