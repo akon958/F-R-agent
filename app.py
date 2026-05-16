@@ -4,16 +4,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from analyzer import (
-    analyze_portfolio,
-)
-from data_fetcher import (
-    get_cache_summary,
-    get_stock_metrics,
-    normalize_code,
-    refresh_current_holdings_cache,
-    refresh_market_cache,
-)
+from analyzer import analyze_portfolio
+from data_fetcher import get_cache_summary, get_stock_metrics, normalize_code, refresh_current_holdings_cache, refresh_market_cache
 from ai_report import generate_parent_friendly_report
 from report_generator import generate_txt_report, money, percent
 
