@@ -5,33 +5,19 @@ import pandas as pd
 import streamlit as st
 
 from analyzer import analyze_portfolio
-import data_fetcher
+from data_fetcher import (
+    get_cache_summary,
+    get_stock_metrics,
+    normalize_code,
+    refresh_current_holdings_cache,
+    refresh_market_cache,
+)
 from report_generator import generate_txt_report, money, percent
 
 
 APP_TITLE = "家庭投资雷达 Agent"
 DEFAULT_CODES = ["600519", "000001", "300750"]
 DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
-
-
-def safe_cache_summary() -> dict:
-    if hasattr(data_fetcher, "get_cache_summary"):
-        return data_fetcher.get_cache_summary()
-    return {"count": 0, "latest_update": "未知", "finance_count": 0}
-
-
-def safe_refresh_current_holdings(codes: list[str]) -> tuple[dict, list[str]]:
-    if hasattr(data_fetcher, "refresh_current_holdings_cache"):
-        return data_fetcher.refresh_current_holdings_cache(codes)
-    if hasattr(data_fetcher, "refresh_financial_cache"):
-        return data_fetcher.refresh_financial_cache(codes)
-    return safe_cache_summary(), ["当前版本暂不支持手动更新当前持仓数据，请先上传最新 data_fetcher.py。"]
-
-
-def safe_refresh_market_cache() -> tuple[dict, list[str]]:
-    if hasattr(data_fetcher, "refresh_market_cache"):
-        return data_fetcher.refresh_market_cache()
-    return safe_cache_summary(), ["当前版本暂不支持更新全部 A 股行情缓存，请先上传最新 data_fetcher.py。"]
 
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
@@ -192,10 +178,15 @@ st.markdown(
 )
 
 with st.expander("高级选项：数据缓存工具", expanded=False):
-    summary = get_cache_summary()
+    try:
+        summary = get_cache_summary()
+        st.info(summary.get("message", "缓存状态未知"))
+    except Exception:  # noqa: BLE001
+        summary = {"count": 0, "latest_update": "未知", "finance_count": 0}
+        st.info("缓存状态暂时无法读取，不影响风险体检。")
     st.caption(
-        f"当前本地缓存约 {summary['count']} 只标的，其中 {summary['finance_count']} 只有财务数据；"
-        f"最近更新时间：{summary['latest_update']}。"
+        f"当前本地缓存约 {summary.get('count', 0)} 只标的，其中 {summary.get('finance_count', 0)} 只有财务数据；"
+        f"最近更新时间：{summary.get('latest_update', '未知')}。"
     )
     st.caption("页面默认读取 stock_metrics.csv，本地和云端都更稳定。下面的按钮会尝试联网更新，接口可能失败。")
     cache_col1, cache_col2 = st.columns(2)
@@ -204,7 +195,7 @@ with st.expander("高级选项：数据缓存工具", expanded=False):
             update_summary, messages = refresh_market_cache()
         for message in messages:
             st.info(message)
-        st.success(f"缓存现有 {update_summary['count']} 只标的。")
+        st.success(f"缓存现有 {update_summary.get('count', 0)} 只标的。")
 
     current_input_codes = []
     for idx in range(st.session_state.holding_rows):
@@ -221,7 +212,10 @@ with st.expander("高级选项：数据缓存工具", expanded=False):
             update_summary, messages = refresh_current_holdings_cache(current_input_codes)
         for message in messages:
             st.info(message)
-        st.success(f"缓存现有 {update_summary['count']} 只标的，{update_summary['finance_count']} 只有财务数据。")
+        st.success(
+            f"缓存现有 {update_summary.get('count', 0)} 只标的，"
+            f"{update_summary.get('finance_count', 0)} 只有财务数据。"
+        )
 
 if st.button("增加一行持仓", use_container_width=True):
     st.session_state.holding_rows += 1
@@ -278,9 +272,8 @@ if submitted:
             codes = [str(item["code"]) for item in holdings]
             stocks, fetch_warnings = get_stock_metrics(codes)
             analysis = analyze_portfolio(cash, risk_profile, holdings, stocks)
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         st.error("体检时遇到问题，但页面没有崩。请稍后重试，或检查 stock_metrics.csv 是否存在。")
-        st.caption(f"错误信息：{exc}")
         st.stop()
 
     for warning in fetch_warnings:

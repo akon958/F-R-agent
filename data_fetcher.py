@@ -118,12 +118,24 @@ def _write_cache(df: pd.DataFrame) -> None:
 
 
 def get_cache_summary() -> dict[str, Any]:
-    df = _read_cache()
+    if not CACHE_FILE.exists():
+        return {"exists": False, "count": 0, "message": "暂无缓存数据"}
+    try:
+        df = _read_cache()
+    except Exception:  # noqa: BLE001
+        return {"exists": False, "count": 0, "message": "缓存读取失败，不影响风险体检"}
     if df.empty:
-        return {"count": 0, "latest_update": "无", "finance_count": 0}
+        return {"exists": True, "count": 0, "message": "暂无缓存数据"}
     finance_count = df[FINANCIAL_COLUMNS].notna().any(axis=1).sum()
-    latest_update = df["更新时间"].dropna().astype(str).max() if "更新时间" in df.columns else "无"
-    return {"count": int(len(df)), "latest_update": latest_update or "无", "finance_count": int(finance_count)}
+    latest_update = df["更新时间"].dropna().astype(str).max() if "更新时间" in df.columns else "暂无缓存数据"
+    count = int(len(df))
+    return {
+        "exists": True,
+        "count": count,
+        "message": f"缓存现有 {count} 只标的",
+        "latest_update": latest_update or "暂无缓存数据",
+        "finance_count": int(finance_count),
+    }
 
 
 def _cache_row(df: pd.DataFrame, code: str) -> dict[str, Any] | None:
