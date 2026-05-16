@@ -5,7 +5,6 @@ from typing import Any
 
 import numpy as np
 
-
 FINANCIAL_COLUMNS = [
     "ROE",
     "净利率",
@@ -81,21 +80,16 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
         notes.append(f"{name} 的赚钱能力看起来较强。")
     elif roe < 0.08:
         notes.append(f"{name} 的赚钱能力偏弱，需要多留心。")
-
     if net_margin >= 0.20:
         notes.append(f"{name} 留下利润的能力较好。")
     elif net_margin < 0.05:
         notes.append(f"{name} 赚钱留下来的比例不高。")
-
     if revenue_growth < 0 or profit_growth < 0:
         notes.append(f"{name} 最近增长不够顺，先别只看短期热闹。")
-
     if debt_ratio > 0.75:
         notes.append(f"{name} 负债比例偏高，环境不好时压力可能更大。")
-
     if cash_profit < 0.8:
         notes.append(f"{name} 账面利润变成现金的程度不够理想。")
-
     if not notes:
         notes.append(f"{name} 的公司底子没有特别刺眼的问题。")
 
@@ -215,7 +209,7 @@ def position_safety(
     target = target_by_risk.get(risk_profile, 0.60)
     if stock_ratio > target:
         score -= min(25, (stock_ratio - target) * 80)
-        notes.append(f"按“{risk_profile}”类型看，当前股票仓位偏高。")
+        notes.append(f"按"{risk_profile}"类型看，当前股票仓位偏高。")
 
     return {"score": clamp(score), "notes": notes, "single_ratio": single_ratio}
 
@@ -230,8 +224,10 @@ def portfolio_position_score(
     total_assets = cash + stock_total
     cash_ratio = cash / total_assets if total_assets > 0 else 0
     stock_ratio = stock_total / total_assets if total_assets > 0 else 0
-    max_single_ratio = max((item["amount"] / total_assets for item in holdings), default=0) if total_assets > 0 else 0
-
+    max_single_ratio = (
+        max((item["amount"] / total_assets for item in holdings), default=0)
+        if total_assets > 0 else 0
+    )
     score = 100.0
     notes: list[str] = []
 
@@ -265,7 +261,7 @@ def portfolio_position_score(
     top_industry = "无"
     industry_concentration = 0.0
     if stock_total > 0 and industry_amounts:
-        top_industry, top_amount = max(industry_amounts.items(), key=lambda item: item[1])
+        top_industry, top_amount = max(industry_amounts.items(), key=lambda x: x[1])
         industry_concentration = top_amount / stock_total
         if industry_concentration > 0.60 and top_industry != "未知":
             score -= 18
@@ -296,7 +292,7 @@ def risk_match_score(risk_profile: str, stock_ratio: float, max_single_ratio: fl
 
     if stock_ratio > target:
         score -= min(35, (stock_ratio - target) * 100)
-        notes.append(f"你选择的是“{risk_profile}”，当前股票和基金仓位偏高。")
+        notes.append(f"你选择的是"{risk_profile}"，当前股票和基金仓位偏高。")
 
     if risk_profile == "稳健" and max_single_ratio > 0.25:
         score -= 20
@@ -357,7 +353,6 @@ def analyze_portfolio(
 
         finance_scores.append((finance["score"], holding["amount"]))
         heat_scores.append((heat["score"], holding["amount"]))
-
         severe_missing = severe_missing or stock.get("数据来源") == "数据缺失"
         finance_missing = finance_missing or finance["missing"]
         overheated = overheated or heat["overheated"] or heat["score"] < 55
@@ -372,37 +367,51 @@ def analyze_portfolio(
 
         stock_results.append(
             {
-                "code": holding["code"],
-                "name": stock.get("股票名称") or holding["code"],
-                "industry": stock.get("所属行业") or "未知",
-                "amount": holding["amount"],
-                "single_ratio": single_ratio,
-                "data_source": stock.get("数据来源", "数据缺失"),
-                "market_source": stock.get("市场数据来源", stock.get("数据来源", "数据缺失")),
+                "code":           holding["code"],
+                "name":           stock.get("股票名称") or holding["code"],
+                "industry":       stock.get("所属行业") or "未知",
+                # ── 新增：透传用户手动填写的资产类型和备注 ──
+                "asset_type":     stock.get("资产类型") or "股票",
+                "note":           stock.get("备注") or "",
+                # ──────────────────────────────────────────
+                "amount":         holding["amount"],
+                "single_ratio":   single_ratio,
+                "data_source":    stock.get("数据来源", "数据缺失"),
+                "market_source":  stock.get("市场数据来源", stock.get("数据来源", "数据缺失")),
                 "finance_source": stock.get("财务数据来源", stock.get("数据来源", "数据缺失")),
-                "level": item_level[0],
-                "color": item_level[1],
+                "level":          item_level[0],
+                "color":          item_level[1],
                 "financial_score": finance["score"],
                 "financial_text": finance["text"],
                 "financial_notes": finance["notes"],
-                "heat_score": heat["score"],
-                "heat_text": heat["text"],
-                "heat_notes": heat["notes"],
+                "heat_score":     heat["score"],
+                "heat_text":      heat["text"],
+                "heat_notes":     heat["notes"],
                 "position_score": pos["score"],
                 "position_notes": pos["notes"],
             }
         )
 
     financial_score = weighted_average(finance_scores, default=35)
-    heat_score = weighted_average(heat_scores, default=35)
-    position_score = position_summary["score"]
-    match = risk_match_score(risk_profile, position_summary["stock_ratio"], position_summary["max_single_ratio"])
+    heat_score      = weighted_average(heat_scores, default=35)
+    position_score  = position_summary["score"]
+    match           = risk_match_score(
+        risk_profile,
+        position_summary["stock_ratio"],
+        position_summary["max_single_ratio"],
+    )
     match_score = match["score"]
 
-    total_score = financial_score * 0.40 + heat_score * 0.25 + position_score * 0.25 + match_score * 0.10
+    total_score = (
+        financial_score * 0.40
+        + heat_score    * 0.25
+        + position_score * 0.25
+        + match_score   * 0.10
+    )
 
     cap_reasons: list[str] = []
     score_cap = 100.0
+
     if severe_missing:
         score_cap = min(score_cap, 59)
         cap_reasons.append("有持仓缺少真实数据和本地缓存，不能做完整判断。")
@@ -413,11 +422,9 @@ def analyze_portfolio(
     if position_summary["max_single_ratio"] > 0.40:
         score_cap = min(score_cap, 79)
         cap_reasons.append("单只持仓超过 40%，即使公司不错也不能给绿色。")
-
     if position_summary["cash_ratio"] < 0.05:
         score_cap = min(score_cap, 79)
         cap_reasons.append("现金比例低于 5%，不能给绿色。")
-
     if overheated:
         score_cap = min(score_cap, 79)
         cap_reasons.append("部分持仓短期交易明显偏热，不能给绿色。")
@@ -429,8 +436,8 @@ def analyze_portfolio(
     risk_notes.extend(cap_reasons)
     risk_notes.extend(position_summary["notes"])
     risk_notes.extend(match["notes"])
-    for stock in stock_results:
-        for note in stock["financial_notes"][:2] + stock["heat_notes"][:2] + stock["position_notes"][:1]:
+    for s in stock_results:
+        for note in s["financial_notes"][:2] + s["heat_notes"][:2] + s["position_notes"][:1]:
             if note not in risk_notes:
                 risk_notes.append(note)
 
@@ -444,28 +451,28 @@ def analyze_portfolio(
         data_status = "数据不足，不能做完整判断"
     elif finance_missing:
         data_status = "部分数据缺失，已保守判断"
-    elif any(stock.get("数据来源") == "真实数据" for stock in stocks):
+    elif any(s.get("数据来源") == "真实数据" for s in stocks):
         data_status = "已使用真实数据，并结合本地缓存"
-    elif all(stock.get("数据来源") == "示例数据" for stock in stocks):
+    elif all(s.get("数据来源") == "示例数据" for s in stocks):
         data_status = "示例数据"
     else:
         data_status = "本地缓存"
 
     return {
-        "analysis_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "score": int(final_score),
-        "raw_score": round(total_score, 1),
-        "level": level,
-        "color": color,
-        "level_text": level_text,
-        "data_status": data_status,
-        "total_assets": total_assets,
-        "cash": cash,
-        "stock_total": stock_total,
-        "cash_ratio": position_summary["cash_ratio"],
-        "stock_ratio": position_summary["stock_ratio"],
-        "max_single_ratio": position_summary["max_single_ratio"],
-        "top_industry": position_summary["top_industry"],
+        "analysis_time":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "score":                int(final_score),
+        "raw_score":            round(total_score, 1),
+        "level":                level,
+        "color":                color,
+        "level_text":           level_text,
+        "data_status":          data_status,
+        "total_assets":         total_assets,
+        "cash":                 cash,
+        "stock_total":          stock_total,
+        "cash_ratio":           position_summary["cash_ratio"],
+        "stock_ratio":          position_summary["stock_ratio"],
+        "max_single_ratio":     position_summary["max_single_ratio"],
+        "top_industry":         position_summary["top_industry"],
         "industry_concentration": position_summary["industry_concentration"],
         "module_scores": {
             "公司财务质量": round(financial_score, 1),
@@ -474,7 +481,7 @@ def analyze_portfolio(
             "风险承受匹配": round(match_score, 1),
         },
         "stock_results": stock_results,
-        "risk_notes": risk_notes[:12],
-        "advice": advice,
-        "cap_reasons": cap_reasons,
+        "risk_notes":    risk_notes[:12],
+        "advice":        advice,
+        "cap_reasons":   cap_reasons,
     }
