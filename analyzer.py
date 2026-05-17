@@ -78,23 +78,23 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
 
     notes: list[str] = []
     if roe >= 0.15:
-        notes.append(f"{name} 的赚钱能力看起来较强。")
+        notes.append(f"{name} 的 ROE（公司用自己的钱赚钱的能力）看起来较强。")
     elif roe < 0.08:
-        notes.append(f"{name} 的赚钱能力偏弱，需要多留心。")
+        notes.append(f"{name} 的 ROE（公司用自己的钱赚钱的能力）偏弱，需要多留心。")
 
     if net_margin >= 0.20:
-        notes.append(f"{name} 留下利润的能力较好。")
+        notes.append(f"{name} 净利率（每卖出100元最终留下多少利润）较高，留利能力好。")
     elif net_margin < 0.05:
-        notes.append(f"{name} 赚钱留下来的比例不高。")
+        notes.append(f"{name} 净利率（每卖出100元最终留下多少利润）偏低，留利空间不大。")
 
     if revenue_growth < 0 or profit_growth < 0:
-        notes.append(f"{name} 最近增长不够顺，先别只看短期热闹。")
+        notes.append(f"{name} 营收增长率或净利润增长率（公司收入和利润有没有在增加）出现下滑，先别只看短期热闹。")
 
     if debt_ratio > 0.75:
-        notes.append(f"{name} 负债比例偏高，环境不好时压力可能更大。")
+        notes.append(f"{name} 资产负债率（公司借了多少钱相对自己的家底）偏高，环境不好时压力可能更大。")
 
     if cash_profit < 0.8:
-        notes.append(f"{name} 账面利润变成现金的程度不够理想。")
+        notes.append(f"{name} 经营现金流/净利润（账面利润有多少真正变成了现金）不够理想。")
 
     if not notes:
         notes.append(f"{name} 的公司底子没有特别刺眼的问题。")
@@ -124,14 +124,14 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
 
     if turnover is None:
         score -= 12
-        notes.append(f"{name} 缺少换手数据，短期热度判断不完整。")
+        notes.append(f"{name} 缺少换手率（今天有多少人在买卖这只股票）数据，短期热度判断不完整。")
     elif turnover > 5:
         score -= 28
         overheated = True
-        notes.append(f"{name} 今天买卖很热，价格容易上上下下。")
+        notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）很高，价格容易上上下下。")
     elif turnover > 3:
         score -= 18
-        notes.append(f"{name} 短期交易偏热，别被气氛带着追。")
+        notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）偏高，别被气氛带着追。")
     elif turnover > 1.5:
         score -= 8
 
@@ -140,7 +140,7 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
     elif volume_ratio > 2:
         score -= 20
         overheated = True
-        notes.append(f"{name} 成交突然放大，容易让人冲动下单。")
+        notes.append(f"{name} 量比（今天成交量比平时多多少）明显放大，容易让人冲动下单。")
     elif volume_ratio > 1.4:
         score -= 9
 
@@ -149,26 +149,26 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
     elif amplitude > 7:
         score -= 22
         overheated = True
-        notes.append(f"{name} 一天里波动比较大，持有时心理压力会更大。")
+        notes.append(f"{name} 振幅（今天股价最高最低相差多少）较大，持有时心理压力会更大。")
     elif amplitude > 4:
         score -= 12
 
     if change is not None and abs(change) > 5:
         score -= 18
-        notes.append(f"{name} 今天涨跌幅较大，不建议被一天走势带着做决定。")
+        notes.append(f"{name} 涨跌幅（今天整体涨或跌的幅度）较大，不建议被一天走势带着做决定。")
     elif change is not None and abs(change) > 3:
         score -= 8
 
     if change is not None and change > 4 and turnover is not None and turnover > 3:
         overheated = True
-        notes.append(f"{name} 出现上涨较多且交易偏热的情况，不建议盲目追涨。")
+        notes.append(f"{name} 涨跌幅和换手率同时偏高，不建议盲目追涨。")
 
     if amount is None:
         notes.append(f"{name} 缺少成交额数据，交易热度只能保守判断。")
 
     if bid_ask_ratio is not None and (bid_ask_ratio > 1.4 or bid_ask_ratio < 0.7):
         score -= 8
-        notes.append(f"{name} 买卖力量不太平衡，只能当作短期情绪参考。")
+        notes.append(f"{name} 内外盘比例（主动买入和主动卖出的力量对比）不太平衡，只能当作短期情绪参考。")
 
     score = clamp(score)
     if not notes:
