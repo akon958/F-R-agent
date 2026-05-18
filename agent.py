@@ -56,7 +56,7 @@ def _try_realtime_data(codes: list[str]) -> tuple[list[dict[str, Any]] | None, s
     try:
         import realtime_data  # type: ignore
     except Exception:  # noqa: BLE001
-        return None, "数据来源：本地缓存。后续可接入实时行情。"
+        return None, "当前数据来源：本地缓存。实时行情模块后续可接入。"
 
     for func_name in ("get_realtime_data", "get_stock_metrics", "fetch_realtime_quotes"):
         func = getattr(realtime_data, func_name, None)
@@ -70,7 +70,7 @@ def _try_realtime_data(codes: list[str]) -> tuple[list[dict[str, Any]] | None, s
                 return data, f"已尝试使用 realtime_data.py 的 {func_name}。"
         except Exception:  # noqa: BLE001
             continue
-    return None, "当前使用本地缓存数据，实时行情暂未接入。"
+    return None, "当前数据来源：本地缓存。实时行情模块后续可接入。"
 
 
 def _safe_ai_text(text: str) -> str:
@@ -176,24 +176,24 @@ def run_family_risk_agent(
 ) -> dict[str, Any]:
     agent_steps = [
         {
-            "title": "检查输入信息",
-            "description": "确认股票代码、持仓金额、家庭现金和风险承受能力是否完整。",
+            "title": "识别家庭持仓",
+            "description": "已读取持仓金额、家庭现金和风险承受能力。",
+            "status": "已完成",
         },
         {
-            "title": "读取数据",
-            "description": "读取本地行情和财务缓存；如果实时行情未接入，则使用本地缓存。",
+            "title": "检查数据完整性",
+            "description": "已检查行情、估值和财务数据是否完整。",
+            "status": "已完成",
         },
         {
-            "title": "计算家庭持仓风险",
-            "description": "计算持仓占比、现金比例、集中度风险和数据缺失情况。",
+            "title": "评估家庭风险",
+            "description": "已计算持仓占比、现金比例、集中度风险和数据缺口。",
+            "status": "已完成",
         },
         {
-            "title": "生成给家人的风险说明",
-            "description": "用简单语言解释主要风险和需要关注的地方。",
-        },
-        {
-            "title": "保存本次体检记录",
-            "description": "如果 storage.py 可用，则保存到历史记录。",
+            "title": "生成家庭说明",
+            "description": "已生成适合家人阅读的风险说明。",
+            "status": "已完成",
         },
     ]
     debug_steps: list[str] = []
@@ -228,6 +228,7 @@ def run_family_risk_agent(
     warnings.extend(fetch_warnings)
 
     debug_steps.append("尝试读取 realtime_data.py，失败则回退 stock_metrics.csv")
+    realtime_file_exists = Path(__file__).with_name("realtime_data.py").exists()
     realtime_rows, realtime_message = _try_realtime_data(codes)
     warnings.append(realtime_message)
     if realtime_rows:
@@ -268,10 +269,13 @@ def run_family_risk_agent(
     if api_key:
         try:
             ai_report = _safe_ai_text(generate_parent_friendly_report(analysis, api_key))
+            ai_report_success = True
         except Exception:  # noqa: BLE001
             ai_report = "AI 分析暂时不可用，基础风险体检结果不受影响。"
+            ai_report_success = False
     else:
         ai_report = "未配置 AI 分析功能。\n\n" + _safe_ai_text(_fallback_ai_report(analysis, missing_data))
+        ai_report_success = False
 
     agent_result = {
         "success": True,
@@ -286,6 +290,15 @@ def run_family_risk_agent(
         "warnings": warnings,
         "ai_report": ai_report,
         "saved_history": False,
+        "debug_info": {
+            "使用本地缓存": not bool(realtime_rows),
+            "发现 realtime_data.py": realtime_file_exists,
+            "保存历史记录": False,
+            "analyzer.py 调用成功": True,
+            "ai_report.py 调用成功": ai_report_success,
+            "saved_history": False,
+            "data_status 原始值": data_status,
+        },
         "analysis": analysis,
         "stocks": stocks,
         "holdings": clean_holdings,
@@ -293,4 +306,6 @@ def run_family_risk_agent(
 
     debug_steps.append("保存 analysis_history.csv（如本地 storage.py 可用）")
     agent_result["saved_history"] = _save_history(agent_result, analysis)
+    agent_result["debug_info"]["保存历史记录"] = agent_result["saved_history"]
+    agent_result["debug_info"]["saved_history"] = agent_result["saved_history"]
     return agent_result

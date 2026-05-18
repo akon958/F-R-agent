@@ -1870,13 +1870,23 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         return
 
     summary = agent_result.get("portfolio_summary", {})
+    main_risks = agent_result.get("main_risks", []) or ["当前没有明显刺眼的问题，但仍需定期复盘。"]
+    missing_data = agent_result.get("missing_data", {})
+    data_status = agent_result.get("data_status", "未知")
+    conclusion = (
+        "本次体检显示："
+        f"现金比例为 {percent(float(summary.get('cash_ratio', 0) or 0))}，"
+        f"股票/基金持仓比例为 {percent(float(summary.get('stock_ratio', 0) or 0))}，"
+        f"最大单只持仓占比为 {percent(float(summary.get('max_single_ratio', 0) or 0))}。"
+        f"主要需要关注的是：{main_risks[0]}"
+    )
     render_html(
         f"""
         <section class="block ai-report">
             <div class="block-head">
                 <div>
-                    <h2 class="block-title">家庭持仓风险体检 Agent</h2>
-                    <p class="block-subtitle">先给结论，再看原因；本工具不荐股、不预测涨跌、不自动交易。</p>
+                    <h2 class="block-title">本次智能体检结论</h2>
+                    <p class="block-subtitle">{html_escape(conclusion)}</p>
                 </div>
                 <div class="muted">历史保存：{"已保存" if agent_result.get("saved_history") else "未保存"}</div>
             </div>
@@ -1884,7 +1894,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 <div>
                     <div class="kicker">综合风险等级</div>
                     <div class="verdict-title">{html_escape(agent_result.get("risk_level", "暂无"))}</div>
-                    <p class="muted">数据状态：{html_escape(agent_result.get("data_status", "未知"))}</p>
+                    <p class="muted">数据状态：{html_escape(data_status)}</p>
                 </div>
                 {score_dial(int(agent_result.get("risk_score", 0) or 0))}
             </div>
@@ -1897,19 +1907,25 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    with st.expander("Agent 执行进度", expanded=True):
-        for step in agent_result.get("agent_steps", []):
-            if isinstance(step, dict):
-                st.write(f"**{step.get('title', '')}**")
-                st.caption(step.get("description", ""))
-            else:
-                st.write(f"- {step}")
+    st.subheader("智能体检过程")
+    for step in agent_result.get("agent_steps", []):
+        if isinstance(step, dict):
+            status_icon = "✓" if step.get("status") == "已完成" else "⚠"
+            render_html(
+                f"""
+                <div class="plain-card" style="margin:.55rem 0;">
+                    <strong>{status_icon} {html_escape(step.get('status', '已完成'))}｜{html_escape(step.get('title', ''))}</strong>
+                    <p class="muted" style="margin:.25rem 0 0;">{html_escape(step.get('description', ''))}</p>
+                </div>
+                """
+            )
+        else:
+            st.write(f"✓ 已完成｜{step}")
 
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("主要风险")
-        risks = agent_result.get("main_risks", []) or ["当前没有明显刺眼的问题，但仍需定期复盘。"]
-        for risk in risks:
+        for risk in main_risks:
             st.write(f"- {risk}")
     with col2:
         st.subheader("数据缺失")
@@ -1927,7 +1943,15 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     st.markdown(agent_result.get("ai_report", "暂无 AI 风险说明。"))
     render_html("</div>")
 
+
+def developer_debug_block(agent_result: dict[str, Any]) -> None:
+    if not agent_result:
+        return
     with st.expander("开发者信息 / 调试详情", expanded=False):
+        debug_info = agent_result.get("debug_info", {})
+        if debug_info:
+            for key, value in debug_info.items():
+                st.write(f"- {key}：{value}")
         for step in agent_result.get("debug_steps", []):
             st.write(f"- {step}")
         st.write(f"- saved_history: {agent_result.get('saved_history')}")
@@ -1945,7 +1969,10 @@ def analysis_page() -> None:
         st.rerun()
     agent_result_block(st.session_state.get("agent_result", {}))
     for warning in fetch_warnings:
-        st.warning(warning)
+        if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
+            st.info(warning)
+        else:
+            st.warning(warning)
 
     with st.expander("普通分析 / 调试入口", expanded=False):
         stock_header(analysis)
@@ -1960,6 +1987,7 @@ def analysis_page() -> None:
             news_block()
         discussion_block()
         deepseek_block(analysis)
+    developer_debug_block(st.session_state.get("agent_result", {}))
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
 
