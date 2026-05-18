@@ -40,18 +40,28 @@ FINANCIAL_COLUMNS = [
 ]
 
 COLUMN_ALIASES = {
-    "代码":     ["代码", "股票代码", "证券代码", "symbol"],
-    "名称":     ["名称", "股票名称", "证券简称", "简称", "name"],
-    "最新价":   ["最新价", "最新价格", "最新收盘价", "收盘", "现价", "trade", "price"],
-    "涨跌幅":   ["涨跌幅", "涨跌幅%", "涨幅", "changepercent", "pct_chg"],
-    "成交额":   ["成交额", "成交金额", "amount"],
-    "市盈率-动态": ["市盈率-动态", "市盈率动态", "动态市盈率", "市盈率", "pe", "pe_ttm"],
-    "市净率":   ["市净率", "pb"],
-    "换手率":   ["换手率", "换手率%", "turnover", "turnoverrate"],
-    "总市值":   ["总市值", "market_cap", "总市值(元)"],
-    "流通市值": ["流通市值", "circulating_market_cap", "流通市值(元)"],
-    "量比":     ["量比"],
-    "振幅":     ["振幅", "振幅%", "amplitude"],
+    "代码":      ["代码", "股票代码", "证券代码", "symbol"],
+    "名称":      ["名称", "股票名称", "证券简称", "简称", "name"],
+    "最新价":    ["最新价", "最新价格", "最新收盘价", "收盘", "现价", "当前价格", "trade", "price"],
+    "涨跌幅":    ["涨跌幅", "涨跌幅%", "涨幅", "changepercent", "pct_chg"],
+    "成交额":    ["成交额", "成交金额", "amount"],
+    # PE：覆盖全角连字符／括号／不带后缀等各种变体
+    "市盈率-动态": [
+        "市盈率-动态", "市盈率－动态", "市盈率动态",
+        "市盈率（动态）", "市盈率(动态)",
+        "动态市盈率", "市盈率TTM", "市盈率ttm",
+        "市盈率", "per", "pe", "pe_ttm",
+    ],
+    # PB：覆盖常见变体
+    "市净率": [
+        "市净率", "市净率PB", "pb",
+        "净资产倍率",
+    ],
+    "换手率":    ["换手率", "换手率%", "turnover", "turnoverrate"],
+    "总市值":    ["总市值", "总市值(元)", "总市值(亿元)", "market_cap", "marketcap"],
+    "流通市值":  ["流通市值", "流通市值(元)", "circulating_market_cap", "float_market_cap"],
+    "量比":      ["量比", "volume_ratio", "volumeratio"],
+    "振幅":      ["振幅", "振幅%", "amplitude"],
 }
 
 # stock_financial_abstract 宽表中各指标对应的精确行名
@@ -148,6 +158,57 @@ def first_present(row: Any, names: list[str]) -> Any:
         except (KeyError, TypeError):
             pass
     return None
+
+
+def _norm_col(s: str) -> str:
+    """归一化列名：剥离空格、下划线、各种连字符和括号，全部转小写。
+    让 "市盈率-动态" / "市盈率－动态" / "市盈率（动态）" 都映射到同一个 key。
+    """
+    return (
+        str(s)
+        .strip()
+        .replace(" ", "")
+        .replace("_", "")
+        .replace("-", "")        # ASCII 连字符
+        .replace("—", "")   # EM DASH —
+        .replace("–", "")   # EN DASH –
+        .replace("－", "")   # 全角连字符 －
+        .replace("（", "")
+        .replace("）", "")
+        .replace("(", "")
+        .replace(")", "")
+        .lower()
+    )
+
+
+def first_present_by_alias(row: Any, names: list[str]) -> Any:
+    """Return the first non-empty value, matching column names leniently.
+    Uses aggressive normalization to handle AkShare version differences.
+    """
+    try:
+        row_keys = list(row.index)
+    except Exception:
+        row_keys = []
+
+    normalized_lookup = {_norm_col(key): key for key in row_keys}
+    for name in names:
+        actual_name = normalized_lookup.get(_norm_col(name))
+        if actual_name is None:
+            continue
+        try:
+            val = row[actual_name]
+            if val is not None and not pd.isna(val):
+                return val
+        except (KeyError, TypeError):
+            pass
+    return first_present(row, names)
+
+
+def prefer_new_value(new_value: Any, old_value: Any) -> Any:
+    parsed = to_float(new_value)
+    if parsed is not None:
+        return parsed
+    return old_value
 
 
 def is_valid_frame(df: Any) -> bool:
@@ -268,6 +329,131 @@ def normalize_spot_frame(spot_df: Any) -> Any:
     return df[df["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
 
 
+def print_spot_valuation_summary(spot_df: Any) -> None:
+    print(f"AkShare 本次返回字段：{list(spot_df.columns)}", flush=True)
+    alias_norm_map: dict[str, str] = {
+        _norm_col(alias): alias
+        for target in ["市盈率-动态", "市净率", "总市值", "换手率"]
+        for alias in COLUMN_ALIASES[target]
+    }
+    for target in ["市盈率-动态", "市净率", "总市值", "换手率"]:
+        matched_col = next(
+            (col for col in spot_df.columns if _norm_col(col) in {_norm_col(a) for a in COLUMN_ALIASES[target]}),
+            None,
+        )
+        if matched_col is None:
+            print(f"  ⚠ {target}：未找到对应列（别名表：{COLUMN_ALIASES[target][:3]}…）", flush=True)
+        else:
+            count = int(spot_df[matched_col].map(to_float).notna().sum())
+            print(f"  ✓ {target} → 实际列名 [{matched_col}]，非空 {count} 行", flush=True)
+
+
+def fetch_eastmoney_valuation_pages() -> Any | None:
+    """补抓 PE/PB/市值/换手率。
+
+    AkShare 备用接口 stock_zh_a_spot 不包含估值字段；这里直接请求东财分页行情接口，
+    只用于补全缓存里的估值和交易字段，不改变财务抓取逻辑。
+    """
+    print("正在尝试补抓 PE/PB/市值/换手率字段...", flush=True)
+    try:
+        import requests
+    except Exception as exc:  # noqa: BLE001
+        print(f"  补抓失败：无法导入 requests。原因：{exc}", flush=True)
+        return None
+
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    fields = "f12,f14,f2,f3,f6,f9,f23,f8,f20,f21,f10,f7"
+    fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+    rows: list[dict[str, Any]] = []
+    page_size = 200
+
+    for page in range(1, 80):
+        params = {
+            "pn": page,
+            "pz": page_size,
+            "po": "1",
+            "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2",
+            "invt": "2",
+            "fid": "f3",
+            "fs": fs,
+            "fields": fields,
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=15, verify=False)
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            print(f"  补抓第 {page} 页失败：{exc}", flush=True)
+            break
+
+        diff = ((payload.get("data") or {}).get("diff") or [])
+        if not diff:
+            break
+        rows.extend(diff)
+        if len(diff) < page_size:
+            break
+
+    if not rows:
+        print("  补抓 PE/PB 失败：接口没有返回有效数据。", flush=True)
+        return None
+
+    df = pd.DataFrame(rows)
+    output = pd.DataFrame(
+        {
+            "代码": df.get("f12").map(normalize_code),
+            "名称": df.get("f14"),
+            "最新价": df.get("f2").map(to_float),
+            "涨跌幅": df.get("f3").map(to_float),
+            "成交额": df.get("f6").map(to_float),
+            "市盈率-动态": df.get("f9").map(to_float),
+            "市净率": df.get("f23").map(to_float),
+            "换手率": df.get("f8").map(to_float),
+            "总市值": df.get("f20").map(to_float),
+            "流通市值": df.get("f21").map(to_float),
+            "量比": df.get("f10").map(to_float),
+            "振幅": df.get("f7").map(to_float),
+        }
+    )
+    output = output[output["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
+    pe_count = int(output["市盈率-动态"].notna().sum())
+    pb_count = int(output["市净率"].notna().sum())
+    print(f"  补抓完成：{len(output)} 只，PE 非空 {pe_count}，PB 非空 {pb_count}。", flush=True)
+    return output
+
+
+def merge_valuation_fields(cache_df: Any, valuation_df: Any | None) -> Any:
+    if valuation_df is None or valuation_df.empty:
+        return cache_df
+
+    value_columns = ["名称", "最新价", "涨跌幅", "成交额", "市盈率-动态", "市净率", "换手率", "总市值", "流通市值", "量比", "振幅"]
+    valuation_idx = valuation_df.set_index("代码", drop=False).to_dict("index")
+    updated = cache_df.copy()
+    matched = 0
+
+    for idx, row in updated.iterrows():
+        code = normalize_code(row.get("代码"))
+        values = valuation_idx.get(code)
+        if not values:
+            continue
+        matched += 1
+        for column in value_columns:
+            new_value = values.get(column)
+            if column == "名称":
+                if new_value:
+                    updated.at[idx, column] = new_value
+                continue
+            parsed = to_float(new_value)
+            if parsed is not None:
+                updated.at[idx, column] = parsed
+
+    pe_count = int(updated["市盈率-动态"].map(to_float).notna().sum())
+    pb_count = int(updated["市净率"].map(to_float).notna().sum())
+    print(f"  估值字段已合并：匹配 {matched} 只，当前 PE 非空 {pe_count}，PB 非空 {pb_count}。", flush=True)
+    return updated
+
+
 def build_cache_rows(spot_df: Any, old_cache: Any) -> Any:
     old_idx = (
         old_cache.set_index("代码", drop=False).to_dict("index")
@@ -284,16 +470,16 @@ def build_cache_rows(spot_df: Any, old_cache: Any) -> Any:
         row: dict[str, Any] = {col: old.get(col) for col in CACHE_COLUMNS}
         row["代码"]       = code
         row["名称"]       = first_present(spot_row, COLUMN_ALIASES["名称"]) or old.get("名称") or code
-        row["最新价"]     = to_float(first_present(spot_row, COLUMN_ALIASES["最新价"]))
-        row["涨跌幅"]     = to_float(first_present(spot_row, COLUMN_ALIASES["涨跌幅"]))
-        row["成交额"]     = to_float(first_present(spot_row, COLUMN_ALIASES["成交额"]))
-        row["市盈率-动态"] = to_float(first_present(spot_row, COLUMN_ALIASES["市盈率-动态"]))
-        row["市净率"]     = to_float(first_present(spot_row, COLUMN_ALIASES["市净率"]))
-        row["换手率"]     = to_float(first_present(spot_row, COLUMN_ALIASES["换手率"]))
-        row["总市值"]     = to_float(first_present(spot_row, COLUMN_ALIASES["总市值"]))
-        row["流通市值"]   = to_float(first_present(spot_row, COLUMN_ALIASES["流通市值"]))
-        row["量比"]       = to_float(first_present(spot_row, COLUMN_ALIASES["量比"]))
-        row["振幅"]       = to_float(first_present(spot_row, COLUMN_ALIASES["振幅"]))
+        row["最新价"]     = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["最新价"]), old.get("最新价"))
+        row["涨跌幅"]     = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["涨跌幅"]), old.get("涨跌幅"))
+        row["成交额"]     = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["成交额"]), old.get("成交额"))
+        row["市盈率-动态"] = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["市盈率-动态"]), old.get("市盈率-动态"))
+        row["市净率"]     = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["市净率"]), old.get("市净率"))
+        row["换手率"]     = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["换手率"]), old.get("换手率"))
+        row["总市值"]     = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["总市值"]), old.get("总市值"))
+        row["流通市值"]   = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["流通市值"]), old.get("流通市值"))
+        row["量比"]       = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["量比"]), old.get("量比"))
+        row["振幅"]       = prefer_new_value(first_present_by_alias(spot_row, COLUMN_ALIASES["振幅"]), old.get("振幅"))
         row["所属行业"]   = old.get("所属行业") or "未知"
         row["内外盘比例"] = old.get("内外盘比例")
         for col in FINANCIAL_COLUMNS:         # 保留旧财务数据
@@ -754,11 +940,13 @@ def main() -> None:
         if spot_df.empty:
             print("行情数据没有有效股票代码，中止。", flush=True)
             return
+        print_spot_valuation_summary(spot_df)
         old_cache = read_existing_cache()
         output = build_cache_rows(spot_df, old_cache)
         if output.empty:
             print("生成的缓存数据为空，中止。", flush=True)
             return
+        output = merge_valuation_fields(output, fetch_eastmoney_valuation_pages())
     except Exception as exc:  # noqa: BLE001
         print(f"处理行情数据出错：{exc}", flush=True)
         return

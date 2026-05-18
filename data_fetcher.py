@@ -375,6 +375,37 @@ def _cache_to_analyzer_row(row: dict[str, Any] | None, code: str) -> dict[str, A
     }
 
 
+def _fetch_pe_pb_for_code(code: str) -> dict[str, Any]:
+    """从乐咕乐股（legulegu.com）获取单只股票的 PE/PB。
+    服务器与东财完全不同，东财 SSL 失败时仍可使用。
+    """
+    _apply_ssl_fix()
+    result: dict[str, Any] = {}
+    try:
+        import akshare as ak  # type: ignore
+
+        def _call() -> Any:
+            df = ak.stock_a_indicator_lg(symbol=code)
+            if df is None or df.empty:
+                raise ValueError("返回空数据")
+            return df
+
+        df = _retry(_call, retries=2, wait=2.0)
+        latest = df.iloc[-1]
+        for col in df.columns:
+            col_s = str(col)
+            val = _to_float(latest[col])
+            if val is None or val <= 0:
+                continue
+            if "市盈率" in col_s:
+                result["市盈率-动态"] = val
+            elif "市净率" in col_s:
+                result["市净率"] = val
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
 def _fetch_akshare_spot() -> pd.DataFrame | None:
     _apply_ssl_fix()
     try:
@@ -422,25 +453,49 @@ def refresh_current_holdings_cache(codes: list[str]) -> tuple[dict[str, Any], li
         return get_cache_summary(), ["没有可更新的股票代码。"]
 
     cache_df = _read_cache()
-    spot_df = _fetch_akshare_spot()
-    if spot_df is None:
-        return get_cache_summary(), ["实时行情更新失败，已使用本地缓存数据。"]
+    spot_df = _fetch_akshare_spot()  # 可能失败（东财SSL），返回 None 时降级
 
     updates: list[dict[str, Any]] = []
     missing: list[str] = []
+    pe_pb_enriched: int = 0
+
     for code in clean_codes:
-        matched = spot_df[spot_df["代码"] == code]
-        if matched.empty:
-            missing.append(code)
-            continue
-        updates.append(_spot_to_cache_row(matched.iloc[0], _cache_row(cache_df, code)))
+        cached = _cache_row(cache_df, code)
+
+        if spot_df is not None:
+            matched = spot_df[spot_df["代码"] == code]
+            if not matched.empty:
+                row = _spot_to_cache_row(matched.iloc[0], cached)
+            else:
+                missing.append(code)
+                row = {col: (cached.get(col) if cached else None) for col in CACHE_COLUMNS}
+                row["代码"] = code
+        else:
+            # 行情接口全部失败时，以旧缓存为基础
+            row = {col: (cached.get(col) if cached else None) for col in CACHE_COLUMNS}
+            row["代码"] = code
+
+        # 若 PE/PB 仍缺失，从乐咕乐股补充（不同服务器，不受东财 SSL 影响）
+        need_pe = _to_float(row.get("市盈率-动态")) is None
+        need_pb = _to_float(row.get("市净率")) is None
+        if need_pe or need_pb:
+            extra = _fetch_pe_pb_for_code(code)
+            if extra:
+                row.update({k: v for k, v in extra.items() if v is not None})
+                pe_pb_enriched += 1
+
+        updates.append(row)
 
     if updates:
         _write_cache(pd.concat([cache_df, pd.DataFrame(updates)], ignore_index=True))
 
     messages = [f"已更新 {len(updates)} 只当前持仓的行情缓存。"]
+    if pe_pb_enriched:
+        messages.append(f"通过备用源（乐咕乐股）补充了 {pe_pb_enriched} 只股票的 PE/PB 数据。")
+    if spot_df is None:
+        messages.append("东财行情暂时不可用，已保留本地价格缓存。")
     if missing:
-        messages.append("部分代码实时行情未找到，已保留本地缓存数据。")
+        messages.append("部分代码在行情接口中未找到，已保留本地缓存数据。")
     return get_cache_summary(), messages
 
 
