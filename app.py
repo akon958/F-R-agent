@@ -942,44 +942,33 @@ def html_escape(value: Any) -> str:
     return escape(str(value if value is not None else ""))
 
 
-def init_controls() -> None:
-    _, c1, c2, c3 = st.columns([8, 1, 1, 1])
-    if c1.button("A-", use_container_width=True):
-        st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
-        st.rerun()
-    if c2.button("A+", use_container_width=True):
-        st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
-        st.rerun()
-    label = "浅色" if st.session_state.dark_mode else "暗色"
-    if c3.button(label, use_container_width=True):
-        st.session_state.dark_mode = not st.session_state.dark_mode
-        st.rerun()
-
-
 def site_header() -> None:
-    brand_col, c1, c2, c3 = st.columns([7, 0.7, 0.7, 0.7])
-    with brand_col:
-        render_html(
-            """
-            <div class="brand" style="padding: 0.35rem 0 0.15rem;">
-                <div class="brand-mark">家</div>
-                <div>
-                    <div class="brand-cn">家庭投资助手</div>
-                    <div class="brand-en">Family Investment Agent</div>
-                </div>
+    render_html(
+        """
+        <div class="brand" style="padding: 0.2rem 0 0.05rem;">
+            <div class="brand-mark">家</div>
+            <div>
+                <div class="brand-cn">家庭投资助手</div>
+                <div class="brand-en">Family Investment Agent</div>
             </div>
-            """
-        )
-    if c1.button("A−", use_container_width=True, help="缩小字号"):
-        st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
-        st.rerun()
-    if c2.button("A＋", use_container_width=True, help="放大字号"):
-        st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
-        st.rerun()
-    theme_label = "☀" if st.session_state.dark_mode else "☾"
-    if c3.button(theme_label, use_container_width=True, help="切换深色/浅色"):
-        st.session_state.dark_mode = not st.session_state.dark_mode
-        st.rerun()
+        </div>
+        """
+    )
+
+
+def display_settings() -> None:
+    with st.expander("显示设置", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        if c1.button("A-", use_container_width=True, help="字号减小"):
+            st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
+            st.rerun()
+        if c2.button("A+", use_container_width=True, help="字号增大"):
+            st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
+            st.rerun()
+        label = "浅色模式" if st.session_state.dark_mode else "暗色模式"
+        if c3.button(label, use_container_width=True, help="切换深色/浅色"):
+            st.session_state.dark_mode = not st.session_state.dark_mode
+            st.rerun()
 
 
 def signed_change(value: float) -> str:
@@ -1977,6 +1966,7 @@ def analysis_page() -> None:
 init_state()
 inject_css()
 site_header()
+display_settings()
 
 if "analysis" in st.session_state:
     analysis_page()
