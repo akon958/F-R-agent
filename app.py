@@ -192,12 +192,13 @@ def inject_css() -> None:
             color: var(--accent);
         }}
         .stButton button, .stDownloadButton button, .stFormSubmitButton button {{
-            min-height: 2.9rem;
+            min-height: 2.2rem;
             border-radius: 999px;
             border: 1px solid var(--border-strong);
             background: var(--surface);
             color: var(--accent);
-            font-weight: 700;
+            font-weight: 600;
+            font-size: 0.88rem;
             font-family: var(--font-body);
             box-shadow: none;
             transition: all 160ms ease;
@@ -946,19 +947,29 @@ def init_controls() -> None:
 
 
 def site_header() -> None:
-    render_html(
-        """
-        <div class="site-header" style="grid-template-columns: 1fr;">
-            <div class="brand">
+    brand_col, c1, c2, c3 = st.columns([7, 0.7, 0.7, 0.7])
+    with brand_col:
+        render_html(
+            """
+            <div class="brand" style="padding: 0.35rem 0 0.15rem;">
                 <div class="brand-mark">家</div>
                 <div>
                     <div class="brand-cn">家庭投资助手</div>
                     <div class="brand-en">Family Investment Agent</div>
                 </div>
             </div>
-        </div>
-        """
-    )
+            """
+        )
+    if c1.button("A−", use_container_width=True, help="缩小字号"):
+        st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
+        st.rerun()
+    if c2.button("A＋", use_container_width=True, help="放大字号"):
+        st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
+        st.rerun()
+    theme_label = "☀" if st.session_state.dark_mode else "☾"
+    if c3.button(theme_label, use_container_width=True, help="切换深色/浅色"):
+        st.session_state.dark_mode = not st.session_state.dark_mode
+        st.rerun()
 
 
 def signed_change(value: float) -> str:
@@ -1451,8 +1462,8 @@ def ai_report_block(analysis: dict[str, Any]) -> None:
         <section class="block ai-report">
             <div class="block-head">
                 <div>
-                    <h2 class="block-title">✦ AI 分析报告</h2>
-                    <p class="block-subtitle">面向"家庭长期观察"视角生成 · 不构成具体买卖建议</p>
+                    <h2 class="block-title">综合体检结论</h2>
+                    <p class="block-subtitle">根据缓存数据自动评分 · 无需 AI 接口 · 不构成买卖建议</p>
                 </div>
                 <div class="muted">报告版本 v2026-05-17</div>
             </div>
@@ -1725,8 +1736,8 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
         <section class="block">
             <div class="block-head">
                 <div>
-                    <h2 class="block-title">给家人看的 AI 风险说明</h2>
-                    <p class="block-subtitle">可选功能：点击后调用 DeepSeek，把体检结果改写成更适合父母阅读的话。</p>
+                    <h2 class="block-title">AI 通俗说明（可选）</h2>
+                    <p class="block-subtitle">点击后调用 DeepSeek，把上面的体检结论改写成更适合父母阅读的话。需配置 API Key。</p>
                 </div>
             </div>
         </section>
@@ -1800,7 +1811,6 @@ def analysis_page() -> None:
 init_state()
 inject_css()
 site_header()
-init_controls()
 
 if "analysis" in st.session_state:
     analysis_page()
