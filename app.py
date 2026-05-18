@@ -18,6 +18,7 @@ from data_fetcher import (
     refresh_market_cache,
 )
 from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
+from storage import get_storage, make_note
 
 
 APP_TITLE = "家庭投资助手"
