@@ -223,11 +223,11 @@ def run_family_risk_agent(
         }
 
     codes = [item["code"] for item in clean_holdings]
-    debug_steps.append("读取 stock_metrics.csv 中已有行情/财务缓存")
+    debug_steps.append("读取本地数据。")
     stocks, fetch_warnings = get_stock_metrics(codes)
     warnings.extend(fetch_warnings)
 
-    debug_steps.append("尝试读取 realtime_data.py，失败则回退 stock_metrics.csv")
+    debug_steps.append("检查实时行情模块；不可用时使用本地数据。")
     realtime_file_exists = Path(__file__).with_name("realtime_data.py").exists()
     realtime_rows, realtime_message = _try_realtime_data(codes)
     warnings.append(realtime_message)
@@ -257,14 +257,14 @@ def run_family_risk_agent(
     debug_steps.append("识别行情、估值和财务数据缺失")
     missing_data = _collect_missing_data(stocks)
 
-    debug_steps.append("调用 analyzer.py 生成风险分析结果")
+    debug_steps.append("完成风险计算。")
     analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
 
-    debug_steps.append("组装 agent_context")
+    debug_steps.append("整理体检上下文。")
     data_status = analysis.get("data_status", "本地缓存")
     main_risks = analysis.get("risk_notes", [])[:8]
 
-    debug_steps.append("调用 ai_report.py 生成给爸妈看的风险说明")
+    debug_steps.append("生成家庭说明。")
     api_key = _get_deepseek_api_key()
     if api_key:
         try:
@@ -304,7 +304,7 @@ def run_family_risk_agent(
         "holdings": clean_holdings,
     }
 
-    debug_steps.append("保存 analysis_history.csv（如本地 storage.py 可用）")
+    debug_steps.append("保存本次体检记录。")
     agent_result["saved_history"] = _save_history(agent_result, analysis)
     agent_result["debug_info"]["保存历史记录"] = agent_result["saved_history"]
     agent_result["debug_info"]["saved_history"] = agent_result["saved_history"]

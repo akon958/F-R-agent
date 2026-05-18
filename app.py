@@ -1880,8 +1880,18 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         f"最大单只持仓占比为 {percent(float(summary.get('max_single_ratio', 0) or 0))}。"
         f"主要需要关注的是：{main_risks[0]}"
     )
+    data_source_label = "实时行情" if not agent_result.get("debug_info", {}).get("使用本地缓存", True) else "本地缓存"
     render_html(
         f"""
+        <section class="block" style="padding:1rem 1.1rem;">
+            <div class="block-head" style="margin-bottom:.35rem;">
+                <div>
+                    <h2 class="block-title" style="font-size:1.18rem;">智能体检已完成</h2>
+                    <p class="block-subtitle">已检查持仓结构、现金比例、数据完整性和主要风险。</p>
+                    <p class="muted">当前数据来源：{html_escape(data_source_label)}　｜　历史记录：{"已保存" if agent_result.get("saved_history") else "未保存"}</p>
+                </div>
+            </div>
+        </section>
         <section class="block ai-report">
             <div class="block-head">
                 <div>
@@ -1907,21 +1917,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    st.subheader("智能体检过程")
-    for step in agent_result.get("agent_steps", []):
-        if isinstance(step, dict):
-            status_icon = "✓" if step.get("status") == "已完成" else "⚠"
-            render_html(
-                f"""
-                <div class="plain-card" style="margin:.55rem 0;">
-                    <strong>{status_icon} {html_escape(step.get('status', '已完成'))}｜{html_escape(step.get('title', ''))}</strong>
-                    <p class="muted" style="margin:.25rem 0 0;">{html_escape(step.get('description', ''))}</p>
-                </div>
-                """
-            )
-        else:
-            st.write(f"✓ 已完成｜{step}")
-
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("主要风险")
@@ -1942,6 +1937,14 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     render_html('<div class="card" style="padding:1.4rem;">')
     st.markdown(agent_result.get("ai_report", "暂无 AI 风险说明。"))
     render_html("</div>")
+
+    with st.expander("查看体检过程", expanded=False):
+        for index, step in enumerate(agent_result.get("agent_steps", []), 1):
+            if isinstance(step, dict):
+                st.write(f"**{index}. {step.get('title', '')}**")
+                st.caption(step.get("description", ""))
+            else:
+                st.write(f"{index}. {step}")
 
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:
