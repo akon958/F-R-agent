@@ -66,6 +66,7 @@ def init_state() -> None:
         "dark_mode": False,
         "fit_open": False,
         "notes": [],
+        "notes_loaded": False,  # 用于只在 session 首次启动时从文件加载一次
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -74,6 +75,13 @@ def init_state() -> None:
         st.session_state.setdefault(f"code_{idx}", code)
     for idx, amount in enumerate(DEFAULT_AMOUNTS):
         st.session_state.setdefault(f"amount_{idx}", amount)
+    # 每个 session 只从本地文件读取一次，之后以 session_state 为准
+    if not st.session_state.notes_loaded:
+        try:
+            st.session_state.notes = get_storage().load_notes()
+        except Exception:  # noqa: BLE001
+            st.session_state.notes = []
+        st.session_state.notes_loaded = True
 
 
 def css_vars() -> dict[str, str]:
@@ -1698,9 +1706,14 @@ def discussion_block() -> None:
     )
     btn_col, tip_col = st.columns([2, 5])
     if btn_col.button("发布记录", use_container_width=True) and note_text.strip():
-        st.session_state.notes.insert(0, {"who": "我", "when": "刚刚", "body": note_text.strip(), "avatar": "我"})
+        note = make_note(note_text.strip(), who="我")
+        try:
+            get_storage().save_note(note)
+        except Exception:  # noqa: BLE001
+            pass  # 写文件失败时静默降级，记录仍会出现在当前会话
+        st.session_state.notes.insert(0, note)
         st.rerun()
-    tip_col.caption("记录仅保存在当前会话 · 关闭页面后清除 · 云端同步开发中")
+    tip_col.caption("记录保存在本地文件 · 本地运行时关闭页面后仍保留 · 云端同步开发中")
     if not st.session_state.notes:
         st.info("暂无观察记录。")
     else:

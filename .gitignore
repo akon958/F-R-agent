@@ -18,6 +18,7 @@ stock_metrics_backup.csv
 stock_metrics.csv.ckpt
 stock_metrics.csv.tmp
 failed_codes.csv
+family_notes.json
 
 .DS_Store
 Thumbs.db
