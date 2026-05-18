@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from analyzer import analyze_portfolio
+from agent import run_family_risk_agent
 from ai_report import generate_parent_friendly_report
 from data_fetcher import (
     get_cache_summary,
@@ -1143,13 +1144,26 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
     try:
         codes = [str(item["code"]) for item in holdings]
         loading_card(codes[0])
-        with st.spinner("正在查数据并做家庭长期持有视角分析..."):
-            stocks, fetch_warnings = get_stock_metrics(codes)
-            analysis = analyze_portfolio(cash, risk_profile, holdings, stocks)
+        with st.spinner("家庭持仓风险体检 Agent 正在执行..."):
+            agent_result = run_family_risk_agent(
+                holdings=holdings,
+                family_cash=cash,
+                risk_preference=risk_profile,
+                user_goal="检查家庭持仓风险",
+            )
+        if not agent_result.get("success"):
+            for warning in agent_result.get("warnings", []):
+                st.warning(warning)
+            st.error("智能体检没有完成，请检查持仓代码和金额。")
+            st.stop()
+
+        analysis = agent_result["analysis"]
+        stocks = agent_result["stocks"]
         st.session_state["analysis"] = analysis
         st.session_state["stocks"] = stocks
         st.session_state["holdings"] = holdings
-        st.session_state["fetch_warnings"] = fetch_warnings
+        st.session_state["fetch_warnings"] = agent_result.get("warnings", [])
+        st.session_state["agent_result"] = agent_result
         st.session_state.pop("ai_report", None)
         st.session_state.pop("ai_report_failed", None)
         st.rerun()
@@ -1862,6 +1876,65 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
         )
 
 
+def agent_result_block(agent_result: dict[str, Any]) -> None:
+    if not agent_result:
+        return
+
+    summary = agent_result.get("portfolio_summary", {})
+    render_html(
+        f"""
+        <section class="block ai-report">
+            <div class="block-head">
+                <div>
+                    <h2 class="block-title">家庭持仓风险体检 Agent</h2>
+                    <p class="block-subtitle">先给结论，再看原因；本工具不荐股、不预测涨跌、不自动交易。</p>
+                </div>
+                <div class="muted">历史保存：{"已保存" if agent_result.get("saved_history") else "未保存"}</div>
+            </div>
+            <div class="verdict-card">
+                <div>
+                    <div class="kicker">综合风险等级</div>
+                    <div class="verdict-title">{html_escape(agent_result.get("risk_level", "暂无"))}</div>
+                    <p class="muted">数据状态：{html_escape(agent_result.get("data_status", "未知"))}</p>
+                </div>
+                {score_dial(int(agent_result.get("risk_score", 0) or 0))}
+            </div>
+            <div class="metric-grid">
+                <article class="metric-card"><div class="metric-label">家庭总资产</div><div class="metric-value">{money(float(summary.get("total_assets", 0) or 0))}</div><div class="metric-note">现金 + 持仓金额</div></article>
+                <article class="metric-card"><div class="metric-label">现金比例</div><div class="metric-value">{percent(float(summary.get("cash_ratio", 0) or 0))}</div><div class="metric-note">备用金厚度</div></article>
+                <article class="metric-card"><div class="metric-label">股票/基金仓位</div><div class="metric-value">{percent(float(summary.get("stock_ratio", 0) or 0))}</div><div class="metric-note">家庭资金暴露比例</div></article>
+            </div>
+        </section>
+        """
+    )
+
+    with st.expander("Agent 执行步骤", expanded=True):
+        for step in agent_result.get("agent_steps", []):
+            st.write(f"- {step}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("主要风险")
+        risks = agent_result.get("main_risks", []) or ["当前没有明显刺眼的问题，但仍需定期复盘。"]
+        for risk in risks:
+            st.write(f"- {risk}")
+    with col2:
+        st.subheader("数据缺失")
+        missing_data = agent_result.get("missing_data", {})
+        has_missing = False
+        for title, items in missing_data.items():
+            if items:
+                has_missing = True
+                st.write(f"- {title}：{len(items)} 只")
+        if not has_missing:
+            st.write("- 暂未发现明显数据缺失。")
+
+    st.subheader("给爸妈看的说明")
+    render_html('<div class="card" style="padding:1.4rem;">')
+    st.markdown(agent_result.get("ai_report", "暂无 AI 风险说明。"))
+    render_html("</div>")
+
+
 def analysis_page() -> None:
     analysis = st.session_state["analysis"]
     fetch_warnings = st.session_state.get("fetch_warnings", [])
@@ -1869,21 +1942,25 @@ def analysis_page() -> None:
         st.session_state.pop("analysis", None)
         st.session_state.pop("stocks", None)
         st.session_state.pop("fetch_warnings", None)
+        st.session_state.pop("agent_result", None)
         st.rerun()
-    stock_header(analysis)
+    agent_result_block(st.session_state.get("agent_result", {}))
     for warning in fetch_warnings:
         st.warning(warning)
-    ai_report_block(analysis)
-    allocation_block(analysis)
-    metric_grid(analysis)
-    risk_grid(analysis)
-    with st.expander("持仓明细与数据来源", expanded=False):
-        holdings_detail(analysis)
-    with st.expander("近期新闻与公告（开发中）", expanded=False):
-        st.info("暂未接入新闻接口，后续开放。")
-        news_block()
-    discussion_block()
-    deepseek_block(analysis)
+
+    with st.expander("普通分析功能", expanded=False):
+        stock_header(analysis)
+        ai_report_block(analysis)
+        allocation_block(analysis)
+        metric_grid(analysis)
+        risk_grid(analysis)
+        with st.expander("持仓明细与数据来源", expanded=False):
+            holdings_detail(analysis)
+        with st.expander("近期新闻与公告（开发中）", expanded=False):
+            st.info("暂未接入新闻接口，后续开放。")
+            news_block()
+        discussion_block()
+        deepseek_block(analysis)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
 

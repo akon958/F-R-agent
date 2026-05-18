@@ -479,9 +479,9 @@ def _fetch_sina_spot_full() -> pd.DataFrame | None:
         if not all_rows:
             return None
 
-        def _market_cap_yi_to_yuan(value: Any) -> float | None:
+        def _market_cap_to_yuan(value: Any) -> float | None:
             number = _to_float(value)
-            return number * 100000000 if number is not None else None
+            return number * 10000 if number is not None else None
 
         output_rows: list[dict[str, Any]] = []
         for item in all_rows:
@@ -494,8 +494,8 @@ def _fetch_sina_spot_full() -> pd.DataFrame | None:
                     "成交额": _to_float(item.get("amount")),
                     "市盈率-动态": _to_float(item.get("per")),
                     "市净率": _to_float(item.get("pb")),
-                    "总市值": _market_cap_yi_to_yuan(item.get("mktcap")),
-                    "流通市值": _market_cap_yi_to_yuan(item.get("nmc")),
+                    "总市值": _market_cap_to_yuan(item.get("mktcap")),
+                    "流通市值": _market_cap_to_yuan(item.get("nmc")),
                     "换手率": _to_float(item.get("turnoverratio")),
                 }
             )

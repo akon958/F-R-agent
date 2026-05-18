@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import json
 import random
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -421,6 +423,122 @@ def fetch_eastmoney_valuation_pages() -> Any | None:
     pb_count = int(output["市净率"].notna().sum())
     print(f"  补抓完成：{len(output)} 只，PE 非空 {pe_count}，PB 非空 {pb_count}。", flush=True)
     return output
+
+
+def decode_sina_json(text: str) -> Any:
+    try:
+        from akshare.utils import demjson  # type: ignore
+
+        return demjson.decode(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        quoted = re.sub(r"([{,]\s*)([A-Za-z_]\w*)(\s*:)", r'\1"\2"\3', text)
+        return json.loads(quoted)
+
+
+def fetch_sina_valuation_pages() -> Any | None:
+    """从新浪 HTTP 原始接口补抓 PE/PB/市值/换手率。
+
+    AkShare 的 stock_zh_a_spot 会丢弃 per/pb/mktcap/nmc/turnoverratio，
+    这里直接读原始 JSON，保留这些字段。
+    """
+    print("东财补抓为空，改用新浪 HTTP 原始接口补抓 PE/PB...", flush=True)
+    try:
+        import requests
+    except Exception as exc:  # noqa: BLE001
+        print(f"  新浪补抓失败：无法导入 requests。原因：{exc}", flush=True)
+        return None
+
+    count_url = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount"
+    data_url = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+    page_size = 80
+
+    try:
+        count_resp = requests.get(count_url, params={"node": "hs_a"}, timeout=15)
+        count_resp.raise_for_status()
+        match = re.search(r"\d+", count_resp.text)
+        if not match:
+            print(f"  新浪补抓失败：count 接口返回异常：{count_resp.text[:80]}", flush=True)
+            return None
+        total_count = int(match.group())
+    except Exception as exc:  # noqa: BLE001
+        print(f"  新浪补抓失败：无法获取股票总数。原因：{exc}", flush=True)
+        return None
+
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    rows: list[dict[str, Any]] = []
+    failed_pages: list[int] = []
+
+    for page in range(1, total_pages + 1):
+        payload = {
+            "page": str(page),
+            "num": str(page_size),
+            "sort": "symbol",
+            "asc": "1",
+            "node": "hs_a",
+            "symbol": "",
+            "_s_r_a": "page",
+        }
+        try:
+            resp = requests.get(data_url, params=payload, timeout=20)
+            resp.raise_for_status()
+            data = decode_sina_json(resp.text.strip())
+            if not isinstance(data, list):
+                raise ValueError("返回格式不是列表")
+            rows.extend(data)
+        except Exception as exc:  # noqa: BLE001
+            failed_pages.append(page)
+            if len(failed_pages) <= 5:
+                print(f"  新浪第 {page} 页失败：{exc}", flush=True)
+            time.sleep(1.0)
+            continue
+        time.sleep(0.25)
+
+    if not rows:
+        print("  新浪补抓失败：接口没有返回有效数据。", flush=True)
+        return None
+
+    def ten_thousand_yuan_to_yuan(value: Any) -> float | None:
+        number = to_float(value)
+        return number * 10000 if number is not None else None
+
+    output = pd.DataFrame(
+        [
+            {
+                "代码": normalize_code(item.get("symbol") or item.get("code")),
+                "名称": item.get("name"),
+                "最新价": to_float(item.get("trade")),
+                "涨跌幅": to_float(item.get("changepercent")),
+                "成交额": to_float(item.get("amount")),
+                "市盈率-动态": to_float(item.get("per")),
+                "市净率": to_float(item.get("pb")),
+                "换手率": to_float(item.get("turnoverratio")),
+                "总市值": ten_thousand_yuan_to_yuan(item.get("mktcap")),
+                "流通市值": ten_thousand_yuan_to_yuan(item.get("nmc")),
+            }
+            for item in rows
+        ]
+    )
+    output = output[output["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
+    pe_count = int(output["市盈率-动态"].notna().sum())
+    pb_count = int(output["市净率"].notna().sum())
+    failed_text = f"，失败页 {len(failed_pages)} 个" if failed_pages else ""
+    print(f"  新浪补抓完成：{len(output)} 只，PE 非空 {pe_count}，PB 非空 {pb_count}{failed_text}。", flush=True)
+    return output
+
+
+def fetch_valuation_pages() -> Any | None:
+    valuation_df = fetch_eastmoney_valuation_pages()
+    if valuation_df is not None and not valuation_df.empty:
+        pe_count = int(valuation_df["市盈率-动态"].notna().sum())
+        pb_count = int(valuation_df["市净率"].notna().sum())
+        if pe_count > 0 or pb_count > 0:
+            return valuation_df
+    return fetch_sina_valuation_pages()
 
 
 def merge_valuation_fields(cache_df: Any, valuation_df: Any | None) -> Any:
@@ -946,7 +1064,7 @@ def main() -> None:
         if output.empty:
             print("生成的缓存数据为空，中止。", flush=True)
             return
-        output = merge_valuation_fields(output, fetch_eastmoney_valuation_pages())
+        output = merge_valuation_fields(output, fetch_valuation_pages())
     except Exception as exc:  # noqa: BLE001
         print(f"处理行情数据出错：{exc}", flush=True)
         return
