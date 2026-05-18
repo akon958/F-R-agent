@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from analyzer import analyze_portfolio
-from ai_report import generate_parent_friendly_report
+from ai_report import generate_agent_report
 from data_fetcher import get_stock_metrics, normalize_code
 
 
@@ -168,6 +168,68 @@ def _save_history(agent_result: dict[str, Any], analysis: dict[str, Any]) -> boo
         return False
 
 
+def _load_history_summary(limit: int = 3) -> str:
+    if not HISTORY_FILE.exists():
+        return ""
+    try:
+        with HISTORY_FILE.open(newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+    except Exception:  # noqa: BLE001
+        return ""
+    if not rows:
+        return ""
+    recent = rows[-limit:]
+    parts = []
+    for row in recent:
+        time_text = row.get("分析时间", "")
+        level = row.get("风险等级", "")
+        score = row.get("综合评分", "")
+        parts.append(f"{time_text} 评分 {score}，等级 {level}".strip())
+    return "；".join(parts)
+
+
+def _build_agent_context(
+    clean_holdings: list[dict[str, Any]],
+    cash: float,
+    risk_preference: str,
+    portfolio_summary: dict[str, Any],
+    analysis: dict[str, Any],
+    missing_data: dict[str, list[str]],
+    main_risks: list[str],
+) -> dict[str, Any]:
+    stock_results = analysis.get("stock_results", [])
+    name_by_code = {item.get("code"): item.get("name") for item in stock_results}
+    holdings_context = []
+    for item in clean_holdings:
+        code = item.get("code", "")
+        holdings_context.append(
+            {
+                "code": code,
+                "name": item.get("name") or name_by_code.get(code) or code,
+                "amount": item.get("amount", 0),
+                "position_ratio": (item.get("amount", 0) / portfolio_summary["total_assets"])
+                if portfolio_summary.get("total_assets", 0) > 0
+                else 0,
+            }
+        )
+
+    return {
+        "holdings": holdings_context,
+        "family_cash": cash,
+        "total_position_value": portfolio_summary.get("stock_total", 0),
+        "cash_ratio": portfolio_summary.get("cash_ratio", 0),
+        "stock_ratio": portfolio_summary.get("stock_ratio", 0),
+        "max_position_ratio": portfolio_summary.get("max_single_ratio", 0),
+        "risk_preference": risk_preference,
+        "risk_score": analysis.get("score", 0),
+        "risk_level": f"{analysis.get('level', '')}（{analysis.get('level_text', '')}）",
+        "main_risks": main_risks,
+        "missing_data": missing_data,
+        "data_status": analysis.get("data_status", "本地缓存"),
+        "history_summary": _load_history_summary(),
+    }
+
+
 def run_family_risk_agent(
     holdings: Any,
     family_cash: float,
@@ -263,19 +325,19 @@ def run_family_risk_agent(
     debug_steps.append("整理体检上下文。")
     data_status = analysis.get("data_status", "本地缓存")
     main_risks = analysis.get("risk_notes", [])[:8]
+    agent_context = _build_agent_context(
+        clean_holdings=clean_holdings,
+        cash=cash,
+        risk_preference=risk_preference,
+        portfolio_summary=portfolio_summary,
+        analysis=analysis,
+        missing_data=missing_data,
+        main_risks=main_risks,
+    )
 
     debug_steps.append("生成家庭说明。")
-    api_key = _get_deepseek_api_key()
-    if api_key:
-        try:
-            ai_report = _safe_ai_text(generate_parent_friendly_report(analysis, api_key))
-            ai_report_success = True
-        except Exception:  # noqa: BLE001
-            ai_report = "AI 分析暂时不可用，基础风险体检结果不受影响。"
-            ai_report_success = False
-    else:
-        ai_report = "未配置 AI 分析功能。\n\n" + _safe_ai_text(_fallback_ai_report(analysis, missing_data))
-        ai_report_success = False
+    ai_report = _safe_ai_text(generate_agent_report(agent_context))
+    ai_report_success = True
 
     agent_result = {
         "success": True,
@@ -290,6 +352,7 @@ def run_family_risk_agent(
         "warnings": warnings,
         "ai_report": ai_report,
         "saved_history": False,
+        "agent_context": agent_context,
         "debug_info": {
             "使用本地缓存": not bool(realtime_rows),
             "发现 realtime_data.py": realtime_file_exists,

@@ -10,7 +10,12 @@ import streamlit as st
 
 from analyzer import analyze_portfolio
 from agent import run_family_risk_agent
-from ai_report import generate_parent_friendly_report
+from ai_report import (
+    generate_agent_report,
+    generate_parent_friendly_report,
+    answer_followup_question,
+    FOLLOWUP_QUESTIONS,
+)
 from data_fetcher import (
     get_cache_summary,
     get_stock_metrics,
@@ -68,6 +73,8 @@ def init_state() -> None:
         "fit_open": False,
         "notes": [],
         "notes_loaded": False,  # 用于只在 session 首次启动时从文件加载一次
+        "report_mode": "爸妈版",
+        "followup_answers": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -1155,6 +1162,8 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
         st.session_state["agent_result"] = agent_result
         st.session_state.pop("ai_report", None)
         st.session_state.pop("ai_report_failed", None)
+        st.session_state.pop("followup_answers", None)
+        st.session_state["report_mode"] = "爸妈版"
         st.rerun()
     except Exception:  # noqa: BLE001
         st.error("体检时遇到问题，但页面没有崩。请稍后重试，或检查 stock_metrics.csv 是否存在。")
@@ -1865,6 +1874,43 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
         )
 
 
+def followup_block(agent_context: dict[str, Any]) -> None:
+    """继续追问区域：快捷问题按钮 + 保留回答历史。"""
+    render_html(
+        """
+        <section class="block">
+            <div class="block-head" style="margin-bottom:.6rem;">
+                <div>
+                    <h2 class="block-title" style="font-size:1.3rem;">继续追问这次体检</h2>
+                    <p class="block-subtitle">选一个问题，根据本次体检结果直接作答。不荐股，不预测涨跌。</p>
+                </div>
+            </div>
+        </section>
+        """
+    )
+    # 每行 2 个按钮，共 6 个问题
+    col_a, col_b = st.columns(2)
+    for qi, question in enumerate(FOLLOWUP_QUESTIONS):
+        col = col_a if qi % 2 == 0 else col_b
+        if col.button(question, use_container_width=True, key=f"fq_{qi}"):
+            answer = answer_followup_question(agent_context, question)
+            answers: list[dict[str, str]] = list(st.session_state.get("followup_answers", []))
+            existing = next((a for a in answers if a["question"] == question), None)
+            if existing:
+                existing["answer"] = answer
+            else:
+                answers.insert(0, {"question": question, "answer": answer})
+            st.session_state["followup_answers"] = answers
+            st.rerun()
+
+    followup_answers: list[dict[str, str]] = st.session_state.get("followup_answers", [])
+    if followup_answers:
+        st.markdown("---")
+        for item in followup_answers:
+            with st.expander(f"💬 {item['question']}", expanded=True):
+                st.markdown(item["answer"])
+
+
 def agent_result_block(agent_result: dict[str, Any]) -> None:
     if not agent_result:
         return
@@ -1873,50 +1919,74 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     main_risks = agent_result.get("main_risks", []) or ["当前没有明显刺眼的问题，但仍需定期复盘。"]
     missing_data = agent_result.get("missing_data", {})
     data_status = agent_result.get("data_status", "未知")
-    conclusion = (
-        "本次体检显示："
-        f"现金比例为 {percent(float(summary.get('cash_ratio', 0) or 0))}，"
-        f"股票/基金持仓比例为 {percent(float(summary.get('stock_ratio', 0) or 0))}，"
-        f"最大单只持仓占比为 {percent(float(summary.get('max_single_ratio', 0) or 0))}。"
-        f"主要需要关注的是：{main_risks[0]}"
+    agent_context = agent_result.get("agent_context", {})
+
+    # ── 1. 简洁状态卡（4 行以内，不含技术词）──────────────────
+    data_source_label = (
+        "实时行情"
+        if not agent_result.get("debug_info", {}).get("使用本地缓存", True)
+        else "本地缓存"
     )
-    data_source_label = "实时行情" if not agent_result.get("debug_info", {}).get("使用本地缓存", True) else "本地缓存"
     render_html(
         f"""
         <section class="block" style="padding:1rem 1.1rem;">
             <div class="block-head" style="margin-bottom:.35rem;">
                 <div>
                     <h2 class="block-title" style="font-size:1.18rem;">智能体检已完成</h2>
-                    <p class="block-subtitle">已检查持仓结构、现金比例、数据完整性和主要风险。</p>
+                    <p class="block-subtitle">已检查持仓结构、现金比例、集中风险和数据完整性。</p>
                     <p class="muted">当前数据来源：{html_escape(data_source_label)}　｜　历史记录：{"已保存" if agent_result.get("saved_history") else "未保存"}</p>
                 </div>
             </div>
         </section>
+        """
+    )
+
+    # ── 2. 综合体检结论：评分 + 三项指标 ──────────────────────
+    conclusion = (
+        f"现金比例 {percent(float(summary.get('cash_ratio', 0) or 0))}，"
+        f"股票/基金持仓 {percent(float(summary.get('stock_ratio', 0) or 0))}，"
+        f"最大单只占比 {percent(float(summary.get('max_single_ratio', 0) or 0))}。"
+        f"主要关注点：{main_risks[0]}"
+    )
+    render_html(
+        f"""
         <section class="block ai-report">
             <div class="block-head">
                 <div>
                     <h2 class="block-title">本次智能体检结论</h2>
                     <p class="block-subtitle">{html_escape(conclusion)}</p>
                 </div>
-                <div class="muted">历史保存：{"已保存" if agent_result.get("saved_history") else "未保存"}</div>
             </div>
             <div class="verdict-card">
                 <div>
                     <div class="kicker">综合风险等级</div>
                     <div class="verdict-title">{html_escape(agent_result.get("risk_level", "暂无"))}</div>
-                    <p class="muted">数据状态：{html_escape(data_status)}</p>
+                    <p class="muted">{html_escape(data_status)}</p>
                 </div>
                 {score_dial(int(agent_result.get("risk_score", 0) or 0))}
             </div>
             <div class="metric-grid">
-                <article class="metric-card"><div class="metric-label">家庭总资产</div><div class="metric-value">{money(float(summary.get("total_assets", 0) or 0))}</div><div class="metric-note">现金 + 持仓金额</div></article>
-                <article class="metric-card"><div class="metric-label">现金比例</div><div class="metric-value">{percent(float(summary.get("cash_ratio", 0) or 0))}</div><div class="metric-note">备用金厚度</div></article>
-                <article class="metric-card"><div class="metric-label">股票/基金仓位</div><div class="metric-value">{percent(float(summary.get("stock_ratio", 0) or 0))}</div><div class="metric-note">家庭资金暴露比例</div></article>
+                <article class="metric-card">
+                    <div class="metric-label">家庭总资产</div>
+                    <div class="metric-value">{money(float(summary.get("total_assets", 0) or 0))}</div>
+                    <div class="metric-note">现金 + 持仓金额</div>
+                </article>
+                <article class="metric-card">
+                    <div class="metric-label">现金比例</div>
+                    <div class="metric-value">{percent(float(summary.get("cash_ratio", 0) or 0))}</div>
+                    <div class="metric-note">备用金厚度</div>
+                </article>
+                <article class="metric-card">
+                    <div class="metric-label">股票/基金仓位</div>
+                    <div class="metric-value">{percent(float(summary.get("stock_ratio", 0) or 0))}</div>
+                    <div class="metric-note">家庭资金暴露比例</div>
+                </article>
             </div>
         </section>
         """
     )
 
+    # ── 3. 主要风险 + 数据缺失两栏 ────────────────────────────
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("主要风险")
@@ -1924,27 +1994,59 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             st.write(f"- {risk}")
     with col2:
         st.subheader("数据缺失")
-        missing_data = agent_result.get("missing_data", {})
         has_missing = False
         for title, items in missing_data.items():
             if items:
                 has_missing = True
-                st.write(f"- {title}：{len(items)} 只")
+                if "估值" in title:
+                    st.write("- 估值数据暂缺，本次不评价估值高低。")
+                else:
+                    st.write(f"- {title}：{len(items)} 只")
         if not has_missing:
             st.write("- 暂未发现明显数据缺失。")
 
-    st.subheader("给爸妈看的说明")
+    # ── 4. 给爸妈看的说明 + 报告模式选择 ──────────────────────
+    st.markdown("---")
+    render_html(
+        """
+        <div class="block-head" style="margin-bottom:.5rem;">
+            <div>
+                <h2 class="block-title">给爸妈看的说明</h2>
+                <p class="block-subtitle">根据本次体检数据生成 · 不构成买卖建议</p>
+            </div>
+        </div>
+        """
+    )
+    mode = st.radio(
+        "报告模式",
+        options=["爸妈版", "简洁版", "详细版"],
+        horizontal=True,
+        key="report_mode",
+    )
+    display_report = (
+        generate_agent_report(agent_context, mode)
+        if agent_context
+        else agent_result.get("ai_report", "暂无风险说明。")
+    )
     render_html('<div class="card" style="padding:1.4rem;">')
-    st.markdown(agent_result.get("ai_report", "暂无 AI 风险说明。"))
+    st.markdown(display_report)
     render_html("</div>")
 
+    # ── 5. 继续追问 ────────────────────────────────────────────
+    if agent_context:
+        followup_block(agent_context)
+
+    # ── 6. 查看体检过程（用户视角 4 步，无技术词）─────────────
     with st.expander("查看体检过程", expanded=False):
-        for index, step in enumerate(agent_result.get("agent_steps", []), 1):
-            if isinstance(step, dict):
-                st.write(f"**{index}. {step.get('title', '')}**")
-                st.caption(step.get("description", ""))
-            else:
-                st.write(f"{index}. {step}")
+        _USER_STEPS = [
+            ("识别家庭持仓", "确认持仓金额、家庭现金和风险承受能力。"),
+            ("检查数据完整性", "检查行情、估值和财务数据是否足够支持本次判断。"),
+            ("评估家庭风险", "计算持仓占比、现金比例、集中度风险和主要数据缺口。"),
+            ("生成家庭说明", "把体检结果转成爸妈能看懂的风险说明。"),
+        ]
+        for idx, (title, desc) in enumerate(_USER_STEPS, 1):
+            st.write(f"**{idx}. {title}**")
+            st.caption(desc)
 
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:

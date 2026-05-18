@@ -6,6 +6,15 @@ from typing import Any
 
 DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
 
+FOLLOWUP_QUESTIONS = [
+    "为什么说这个组合风险不高？",
+    "现金比例怎么看？",
+    "哪只标的最需要关注？",
+    "数据缺失会影响判断吗？",
+    "给爸妈一句话怎么说？",
+    "如果只是长期观察，重点看什么？",
+]
+
 
 def _safe_text(value: Any, default: str = "") -> str:
     if value is None:
@@ -57,8 +66,42 @@ def _flatten_missing_data(missing_data: dict[str, Any]) -> str:
     return "；".join(parts) if parts else "这次体检没有发现明显的数据缺口。"
 
 
-def generate_agent_report(agent_context: dict[str, Any]) -> str:
-    """Generate a family-facing report strictly from the agent_context fields."""
+# ─────────────────────────────────────────────────────────────────
+# 三种报告模式的内部实现
+# ─────────────────────────────────────────────────────────────────
+
+def _generate_brief_report(agent_context: dict[str, Any]) -> str:
+    """简洁版：300 字以内，只讲结论、主要风险、重点关注点。"""
+    risk_score = agent_context.get("risk_score", 0)
+    risk_level = agent_context.get("risk_level", "暂无")
+    cash_ratio = agent_context.get("cash_ratio", 0)
+    max_position_ratio = agent_context.get("max_position_ratio", 0)
+    main_risks = agent_context.get("main_risks", []) or []
+    missing_data = agent_context.get("missing_data", {}) or {}
+
+    primary_risk = main_risks[0] if main_risks else "目前没有特别突出的风险点。"
+    valuation_missing = bool(missing_data.get("估值数据缺失"))
+    valuation_note = " 估值数据暂缺，本次不评价估值高低。" if valuation_missing else ""
+
+    if max_position_ratio >= 0.40:
+        conclusion = "集中度偏高，需多留意单只占比。"
+    elif cash_ratio < 0.15:
+        conclusion = "现金比例偏低，备用金需优先关注。"
+    else:
+        conclusion = "整体结构暂无极端问题。"
+
+    report = (
+        f"【结论】综合评分 {risk_score}/100，风险等级{risk_level}。{conclusion}\n\n"
+        f"【主要风险】{primary_risk}\n\n"
+        f"【重点关注】现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}。"
+        f"{valuation_note}\n\n"
+        f"【免责声明】{DISCLAIMER}"
+    )
+    return _sanitize_report_text(report)
+
+
+def _generate_detailed_report(agent_context: dict[str, Any]) -> str:
+    """详细版：600-800 字，解释现金比例、持仓占比、财务指标和数据缺失。"""
     holdings = agent_context.get("holdings", []) or []
     main_risks = agent_context.get("main_risks", []) or []
     missing_data = agent_context.get("missing_data", {}) or {}
@@ -70,41 +113,302 @@ def generate_agent_report(agent_context: dict[str, Any]) -> str:
     risk_preference = agent_context.get("risk_preference", "稳健")
     data_status = agent_context.get("data_status", "本地缓存")
     history_summary = agent_context.get("history_summary", "")
+    family_cash = agent_context.get("family_cash", 0)
+    total_position_value = agent_context.get("total_position_value", 0)
 
-    if max_position_ratio >= 0.40:
-        overall = "这个组合需要多留心，主要是单只标的占比偏高，家庭资金集中度不低。"
-    elif stock_ratio >= 0.75:
-        overall = "这个组合的股票/基金占比较高，遇到市场波动时，家里感受到的压力可能会更明显。"
-    elif cash_ratio >= 0.30:
-        overall = "这个组合整体现金垫比较厚，短期用钱压力相对小一些。"
-    else:
-        overall = "这个组合整体风险不算极端，但仍要重点看现金垫、单只占比和数据是否完整。"
-
-    primary_risk = main_risks[0] if main_risks else "目前没有特别刺眼的风险点，但仍建议定期复盘。"
     holding_names = "、".join(
         f"{item.get('code', '')} {item.get('name', '')}".strip()
         for item in holdings[:5]
     ) or "当前持仓"
 
+    max_holding = max(holdings, key=lambda x: x.get("amount", 0), default={}) if holdings else {}
+    max_name = f"{max_holding.get('code', '')} {max_holding.get('name', '')}".strip() if max_holding else ""
+
+    if max_position_ratio >= 0.40:
+        overall = (
+            f"这个组合最突出的特征是集中度偏高——{max_name} 单只占比达到 {_fmt_percent(max_position_ratio)}，"
+            f"超过了家庭总资产的 40%，遇到个股变化时家庭感受会比较直接。"
+        )
+    elif stock_ratio >= 0.75:
+        overall = (
+            f"这个组合股票/基金占比达到 {_fmt_percent(stock_ratio)}，"
+            f"整体仓位较重，市场波动时对家庭的影响会比较明显。"
+        )
+    elif cash_ratio >= 0.30:
+        overall = (
+            f"这个组合现金比例达到 {_fmt_percent(cash_ratio)}，"
+            f"流动性较好，短期用钱压力相对小一些。"
+        )
+    else:
+        overall = "这个组合整体结构暂无极端问题，但仍需关注集中度和现金是否够用。"
+
+    risk_list = "；".join(main_risks[:4]) if main_risks else "目前没有特别突出的风险。"
     missing_text = _flatten_missing_data(missing_data)
-    history_text = f"最近历史记录提示：{history_summary}" if history_summary else "目前没有可参考的历史体检摘要。"
+    history_text = f"\n\n近期历史记录：{history_summary}" if history_summary else ""
+
+    try:
+        cash_str = f"{int(family_cash):,} 元"
+        position_str = f"{int(total_position_value):,} 元"
+    except (TypeError, ValueError):
+        cash_str = "暂无"
+        position_str = "暂无"
 
     report = f"""【整体判断】
-爸妈看这个结果时，先记住一句话：这次体检只是在看家庭持仓风险，不是在判断明天涨跌。当前组合涉及 {holding_names}，综合评分为 {risk_score}/100，风险等级是{risk_level}。按“{risk_preference}”的风险承受能力看，现金比例约为 {_fmt_percent(cash_ratio)}，股票/基金持仓比例约为 {_fmt_percent(stock_ratio)}，最大单只持仓占比约为 {_fmt_percent(max_position_ratio)}。{overall}
+当前组合持仓为 {holding_names}，综合评分 {risk_score}/100，风险等级为{risk_level}。按"{risk_preference}"风险承受能力衡量，家庭现金约 {cash_str}（占比 {_fmt_percent(cash_ratio)}），持仓市值约 {position_str}（占比 {_fmt_percent(stock_ratio)}）。{overall}
 
 【主要风险】
-这次最需要关注的是：{primary_risk} 如果钱集中在少数标的或同一类行业上，家里对单一变化会更敏感。后续讨论时可以重点关注这一点，同时把家庭备用金放在前面考虑。
+需要关注的主要风险：{risk_list}。其中最优先考虑的是现金储备是否足够应对家庭突发支出，其次才是组合结构问题。
 
 【数据缺失说明】
-当前数据状态：{data_status}。{missing_text} 如果某些数据暂时没有，本次就只做保守体检，不把缺失部分当成好消息，也不编造没有的数据。
+数据来源：{data_status}。{missing_text} 数据缺失的部分不作为判断依据，只对有数据支撑的部分做评估。
 
 【给爸妈重点看的地方】
-爸妈看这个结果时，不用盯着复杂指标，先看三件事：第一，现金够不够应付家里临时用钱；第二，单只标的占比会不会太高；第三，公司的经营和财务数据是否够完整。{history_text} 这个结果适合拿来做家庭讨论和复盘，不适合当成操作指令。
+建议关注三件事：第一，家庭现金够不够应急；第二，单只标的占比有没有太高；第三，财务数据是否完整，数据越完整判断越可靠。{history_text}
+
+这份报告适合作为家庭讨论和定期复盘的参考，不适合作为临时操作的依据。
 
 【免责声明】
 {DISCLAIMER}"""
     return _sanitize_report_text(report)
 
+
+def _generate_parent_report(agent_context: dict[str, Any]) -> str:
+    """爸妈版（默认）：语言最简单，像子女给爸妈解释，少用专业词。"""
+    holdings = agent_context.get("holdings", []) or []
+    main_risks = agent_context.get("main_risks", []) or []
+    missing_data = agent_context.get("missing_data", {}) or {}
+    risk_score = agent_context.get("risk_score", 0)
+    risk_level = agent_context.get("risk_level", "暂无")
+    cash_ratio = agent_context.get("cash_ratio", 0)
+    stock_ratio = agent_context.get("stock_ratio", 0)
+    max_position_ratio = agent_context.get("max_position_ratio", 0)
+    history_summary = agent_context.get("history_summary", "")
+
+    holding_names = "、".join(
+        f"{item.get('name', '') or item.get('code', '')}"
+        for item in holdings[:3]
+    ) or "这些持仓"
+
+    if max_position_ratio >= 0.40:
+        overall = "有一只股票放的钱比较多，家里对它的变化会比较敏感。"
+    elif stock_ratio >= 0.75:
+        overall = "家里大部分钱放在股票里了，如果行情不好，感受会比较明显。"
+    elif cash_ratio >= 0.30:
+        overall = "家里现金还比较充足，不容易出现急用钱却没钱的情况。"
+    else:
+        overall = "整体问题不算大，有几个地方值得定期关注。"
+
+    primary_risk = main_risks[0] if main_risks else "暂时没有特别需要担心的事，但要记得定期看一看。"
+    valuation_missing = bool(missing_data.get("估值数据缺失"))
+    missing_note = "估值数据暂缺，本次不评价估值高低。" if valuation_missing else "这次体检数据基本齐全。"
+    history_note = f"上次体检：{history_summary.split('；')[0]}。" if history_summary else ""
+
+    report = f"""【整体判断】
+爸妈，{holding_names} 这个组合体检完了。评分是 {risk_score} 分（满分 100），等级是"{risk_level}"。{overall}现金占比大约 {_fmt_percent(cash_ratio)}，股票/基金占比大约 {_fmt_percent(stock_ratio)}。
+
+【主要风险】
+最需要留心的一点是：{primary_risk} 不用马上做什么，但心里要有数。
+
+【数据缺失说明】
+{missing_note} 没有的数据我们不猜，只把有把握的部分放进结论里。
+
+【给爸妈重点看的地方】
+只需要记三件事：一，家里留的现金够不够用；二，有没有哪只股票放了太多钱；三，这个结果是参考，不是指令。{history_note} 有疑问可以继续问，或者等下次定期复盘再看。
+
+【免责声明】
+{DISCLAIMER}"""
+    return _sanitize_report_text(report)
+
+
+# ─────────────────────────────────────────────────────────────────
+# 主入口：模式分发
+# ─────────────────────────────────────────────────────────────────
+
+def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版") -> str:
+    """Generate a family-facing report strictly from agent_context fields.
+
+    mode: "爸妈版" (default) | "简洁版" | "详细版"
+    All three modes are strictly based on agent_context — no fabrication.
+    """
+    if mode == "简洁版":
+        return _generate_brief_report(agent_context)
+    if mode == "详细版":
+        return _generate_detailed_report(agent_context)
+    return _generate_parent_report(agent_context)
+
+
+# ─────────────────────────────────────────────────────────────────
+# 追问回答：严格基于 agent_context，200-400 字
+# ─────────────────────────────────────────────────────────────────
+
+def answer_followup_question(agent_context: dict[str, Any], question: str) -> str:
+    """Answer a follow-up question strictly based on agent_context.
+
+    Returns 200-400 Chinese characters. Never fabricates data.
+    Always ends with DISCLAIMER.
+    """
+    risk_score = agent_context.get("risk_score", 0)
+    risk_level = agent_context.get("risk_level", "暂无")
+    cash_ratio = agent_context.get("cash_ratio", 0)
+    stock_ratio = agent_context.get("stock_ratio", 0)
+    max_position_ratio = agent_context.get("max_position_ratio", 0)
+    main_risks = agent_context.get("main_risks", []) or []
+    holdings = agent_context.get("holdings", []) or []
+    missing_data = agent_context.get("missing_data", {}) or {}
+
+    sorted_holdings = sorted(holdings, key=lambda x: x.get("amount", 0), reverse=True)
+    top = sorted_holdings[0] if sorted_holdings else {}
+    top_name = (top.get("name") or top.get("code") or "最大持仓") if top else "暂无"
+    top_ratio = top.get("position_ratio", max_position_ratio) if top else max_position_ratio
+
+    valuation_missing = bool(missing_data.get("估值数据缺失"))
+    finance_missing = bool(missing_data.get("财务数据缺失"))
+
+    q = question.strip()
+
+    if "风险不高" in q or ("风险" in q and ("低" in q or "不高" in q)):
+        if risk_score >= 70:
+            body = (
+                f"这次体检综合评分是 {risk_score}/100，等级为{risk_level}，评分相对中等偏上。"
+                f"主要原因是：现金占比约 {_fmt_percent(cash_ratio)}，"
+                f"最大单只持仓占比约 {_fmt_percent(max_position_ratio)}，"
+                f"整体结构没有出现极端集中。"
+                f"不过评分只基于当前可用数据，"
+                f"{main_risks[0] if main_risks else '仍需关注持仓结构的后续变化'}，"
+                f"所以不能说完全没有风险，只是目前体检结果还好。"
+            )
+        else:
+            body = (
+                f"实际上，这次体检综合评分是 {risk_score}/100，等级为{risk_level}，"
+                f"主要关注点是：{main_risks[0] if main_risks else '集中度或现金比例'}。"
+                f"当前结果并不是说风险很低，建议先重点关注现金比例（{_fmt_percent(cash_ratio)}）"
+                f"和最大单只占比（{_fmt_percent(max_position_ratio)}），"
+                f"这两个数字直接影响家庭抗风险能力。"
+            )
+
+    elif "现金比例" in q:
+        if cash_ratio >= 0.30:
+            level_desc, advice = "比较充足", "短期用钱压力相对小，但也不必全部闲置，可定期复盘是否合适。"
+        elif cash_ratio >= 0.15:
+            level_desc, advice = "基本合理", "整体在合理范围内，如有大额支出计划，提前留出流动资金比较稳妥。"
+        else:
+            level_desc, advice = "偏低", "如果家里突然有大额支出，可能会比较被动，建议把备用金放在第一优先位。"
+        body = (
+            f"这次体检显示，家庭现金占比约 {_fmt_percent(cash_ratio)}，属于「{level_desc}」。"
+            f"通常家庭投资组合保留 15%–30% 现金是比较常见的参考范围（各家情况不同）。"
+            f"{advice}"
+            f"现金比例不是越高越好，也不是越低越好，关键是能不能覆盖家里突发的用钱需求。"
+        )
+
+    elif "哪只" in q or ("标的" in q and "关注" in q):
+        if top:
+            body = (
+                f"从持仓金额看，{top_name} 目前占比最高，约为家庭总资产的 {_fmt_percent(top_ratio)}。"
+            )
+            if top_ratio >= 0.40:
+                body += (
+                    f"这个比例已经偏高（超过 40%），单只集中度风险比较突出，"
+                    f"如果这只标的出现比较大的变化，家庭感受会比较直接，需要多留意。"
+                )
+            elif top_ratio >= 0.25:
+                body += (
+                    f"占比处于中等水平，不算极端，但建议关注这只标的的基本面是否有变化，"
+                    f"定期复盘比较稳妥。"
+                )
+            else:
+                body += f"占比目前不算极端，保持关注即可，不需要特别担心。"
+            if finance_missing:
+                body += " 另外这次财务数据有缺失，对公司质量的判断会有一定局限。"
+        else:
+            body = "当前没有有效持仓数据，无法判断哪只标的最需要关注。请确认持仓信息填写正确。"
+
+    elif "数据缺失" in q:
+        missing_parts = []
+        for title, items in missing_data.items():
+            if items:
+                if "估值" in title:
+                    missing_parts.append("估值数据（PE/PB）暂缺，本次不评价估值高低")
+                elif "财务" in title:
+                    missing_parts.append(f"财务数据（ROE、净利率等）暂缺，涉及 {len(items)} 只")
+                else:
+                    missing_parts.append(f"{title}涉及 {len(items)} 只")
+        if not missing_parts:
+            body = (
+                "这次体检的数据基本完整，没有发现明显缺口，判断的可靠性相对较高。"
+                "数据完整时，我们能对现金比例、持仓结构和公司基本面都做出评估，"
+                "这是最理想的体检状态。"
+            )
+        else:
+            body = (
+                f"这次发现：{'；'.join(missing_parts)}。"
+                f"缺失的数据不会被编造进结论，只做保守体检。"
+            )
+            if finance_missing:
+                body += (
+                    "财务数据缺失时，对公司盈利能力和资产质量的判断会有局限，"
+                    "只能依靠持仓结构层面的判断，需要多留心。"
+                )
+            if valuation_missing:
+                body += "估值（PE/PB）数据缺失时，不对股价贵不贵做任何评价。"
+
+    elif "一句话" in q:
+        if risk_score >= 75:
+            sentence = (
+                f"这个组合评分 {risk_score} 分，整体暂时没有特别刺眼的问题，"
+                f"按现在节奏定期复盘就行。"
+            )
+        elif risk_score >= 55:
+            sentence = (
+                f"这个组合评分 {risk_score} 分，"
+                f"有几个地方要留意，特别是{main_risks[0] if main_risks else '持仓集中度'}，"
+                f"不用慌，但要认真对待。"
+            )
+        else:
+            sentence = (
+                f"这个组合评分 {risk_score} 分，"
+                f"需要重点看{main_risks[0] if main_risks else '集中度和现金比例'}，"
+                f"建议家人一起讨论一下。"
+            )
+        body = f"给爸妈的一句话：{sentence}\n\n（这只是本次体检的参考，不是操作建议。）"
+
+    elif "长期观察" in q or "长期" in q:
+        top_note = (
+            f"{top_name} 占比约 {_fmt_percent(top_ratio)}，"
+            f"{'偏高，需特别关注。' if top_ratio >= 0.4 else '目前在可接受范围内。'}"
+        ) if top else "持仓集中度需要定期检查。"
+        cash_note = (
+            f"现金比例约 {_fmt_percent(cash_ratio)}，"
+            f"{'充足，短期用钱压力小。' if cash_ratio >= 0.20 else '偏低，要注意留够应急资金。'}"
+        )
+        data_note = (
+            "财务数据有缺失，建议等数据补全后再做更全面的判断。"
+            if finance_missing
+            else "数据基本完整，可以参考财务指标做判断。"
+        )
+        body = (
+            f"长期观察建议重点关注三件事：\n"
+            f"1. 持仓集中度：{top_note}\n"
+            f"2. 现金比例：{cash_note}\n"
+            f"3. 数据完整性：{data_note}\n\n"
+            f"长期观察不需要频繁操作，重要的是每隔一段时间做一次体检复盘，"
+            f"确认持仓结构没有出现超出预期的变化。"
+        )
+
+    else:
+        body = (
+            f"根据这次体检：评分 {risk_score}/100，等级{risk_level}。"
+            f"主要关注点：{main_risks[0] if main_risks else '持仓结构整体无极端问题'}。"
+            f"现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}。"
+            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else ''}"
+            f"如需更具体的解答，可以从上方的快捷问题中选择。"
+        )
+
+    return _sanitize_report_text(f"{body}\n\n{DISCLAIMER}")
+
+
+# ─────────────────────────────────────────────────────────────────
+# 以下为旧式 DeepSeek 接口（保留在"普通分析/调试入口"中使用）
+# ─────────────────────────────────────────────────────────────────
 
 def _build_ai_context(analysis: dict[str, Any]) -> dict[str, Any]:
     stock_items = []
@@ -222,15 +526,13 @@ def generate_parent_friendly_report(analysis: dict[str, Any], api_key: str) -> s
         + json.dumps(context, ensure_ascii=False, indent=2)
     )
 
-    # deepseek-reasoner (R1) 推理模型：分析更深入，响应约慢 3-5 倍，费用约贵 15 倍。
-    # 如需切回快速版，把 model 改为 "deepseek-chat"，temperature 改回 0.35。
     response = client.chat.completions.create(
         model="deepseek-reasoner",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.6,   # R1 官方推荐区间 0.5-0.7
+        temperature=0.6,
         max_tokens=2048,
     )
 
