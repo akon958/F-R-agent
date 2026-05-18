@@ -82,7 +82,7 @@ def generate_parent_friendly_report(analysis: dict[str, Any], api_key: str) -> s
         "   振幅（今天股价最高最低相差多少）\n"
         "   市盈率（按现在股价买，需要多少年回本）\n"
         "   市净率（股价相对公司账面资产贵不贵）",
-        "4. 总字数控制在 500 字以内，说清楚就好，不要凑字数，爸妈一口气能看完最好。",
+        "4. 总字数控制在 600～700 字，内容要扎实，但不要凑字数，爸妈一口气能看完最好。",
         "5. 按下面五段结构输出，每段加标题，顺序不变，不增减段落：\n"
         "   【整体感觉】\n   【主要风险】\n   【数据缺失说明】\n   【爸妈重点看什么】\n   【免责声明】",
         "6. 【免责声明】那段原文照抄，一字不改：" + DISCLAIMER,
@@ -110,14 +110,16 @@ def generate_parent_friendly_report(analysis: dict[str, Any], api_key: str) -> s
         + json.dumps(context, ensure_ascii=False, indent=2)
     )
 
+    # deepseek-reasoner (R1) 推理模型：分析更深入，响应约慢 3-5 倍，费用约贵 15 倍。
+    # 如需切回快速版，把 model 改为 "deepseek-chat"，temperature 改回 0.35。
     response = client.chat.completions.create(
-        model="deepseek-chat",
+        model="deepseek-reasoner",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.35,
-        max_tokens=1000,
+        temperature=0.6,   # R1 官方推荐区间 0.5-0.7
+        max_tokens=2048,
     )
 
     content = _safe_text(response.choices[0].message.content).strip()
