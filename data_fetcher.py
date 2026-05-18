@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -406,6 +408,105 @@ def _fetch_pe_pb_for_code(code: str) -> dict[str, Any]:
     return result
 
 
+def _decode_sina_json(text: str) -> Any:
+    try:
+        from akshare.utils import demjson  # type: ignore
+
+        return demjson.decode(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        quoted = re.sub(r"([{,]\s*)([A-Za-z_]\w*)(\s*:)", r'\1"\2"\3', text)
+        return json.loads(quoted)
+
+
+def _fetch_sina_spot_full() -> pd.DataFrame | None:
+    """Fetch A-share spot data from Sina HTTP JSON without losing PE/PB fields."""
+
+    count_url = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount"
+    data_url = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+    page_size = 80
+
+    try:
+        import requests
+
+        def _fetch_count() -> int:
+            response = requests.get(count_url, params={"node": "hs_a"}, timeout=15)
+            response.raise_for_status()
+            response.encoding = response.apparent_encoding or "utf-8"
+            match = re.search(r"\d+", response.text)
+            if not match:
+                raise ValueError("新浪 count 接口没有返回数字")
+            return int(match.group())
+
+        total_count = _retry(_fetch_count, retries=3, wait=2.0)
+        total_pages = max(1, (int(total_count) + page_size - 1) // page_size)
+
+        all_rows: list[dict[str, Any]] = []
+        failed_pages: list[int] = []
+        for page in range(1, total_pages + 1):
+            def _fetch_page(page_no: int = page) -> list[dict[str, Any]]:
+                payload = {
+                    "page": str(page_no),
+                    "num": str(page_size),
+                    "sort": "symbol",
+                    "asc": "1",
+                    "node": "hs_a",
+                    "symbol": "",
+                    "_s_r_a": "page",
+                }
+                response = requests.get(data_url, params=payload, timeout=20)
+                response.raise_for_status()
+                response.encoding = response.apparent_encoding or "utf-8"
+                data = _decode_sina_json(response.text.strip())
+                if not isinstance(data, list):
+                    raise ValueError("新浪分页接口返回格式不是列表")
+                return data
+
+            try:
+                rows = _retry(_fetch_page, retries=6, wait=3.0)
+            except Exception:  # noqa: BLE001
+                failed_pages.append(page)
+                continue
+            if not rows:
+                continue
+            all_rows.extend(rows)
+            time.sleep(0.35)
+
+        if not all_rows:
+            return None
+
+        def _market_cap_yi_to_yuan(value: Any) -> float | None:
+            number = _to_float(value)
+            return number * 100000000 if number is not None else None
+
+        output_rows: list[dict[str, Any]] = []
+        for item in all_rows:
+            output_rows.append(
+                {
+                    "代码": normalize_code(item.get("symbol") or item.get("code")),
+                    "名称": item.get("name"),
+                    "最新价": _to_float(item.get("trade")),
+                    "涨跌幅": _to_float(item.get("changepercent")),
+                    "成交额": _to_float(item.get("amount")),
+                    "市盈率-动态": _to_float(item.get("per")),
+                    "市净率": _to_float(item.get("pb")),
+                    "总市值": _market_cap_yi_to_yuan(item.get("mktcap")),
+                    "流通市值": _market_cap_yi_to_yuan(item.get("nmc")),
+                    "换手率": _to_float(item.get("turnoverratio")),
+                }
+            )
+
+        output = pd.DataFrame(output_rows)
+        output = output[output["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
+        return output if not output.empty else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _fetch_akshare_spot() -> pd.DataFrame | None:
     _apply_ssl_fix()
     try:
@@ -421,7 +522,7 @@ def _fetch_akshare_spot() -> pd.DataFrame | None:
         spot["代码"] = spot["代码"].astype(str).map(normalize_code)
         return spot
     except Exception:  # noqa: BLE001
-        return None
+        return _fetch_sina_spot_full()
 
 
 def get_stock_metrics(codes: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
