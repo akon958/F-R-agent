@@ -51,6 +51,14 @@ _LAST_FAMILY_COMMENT_SAVE_STATUS: dict[str, Any] = {
     "message": "暂无家庭观察记录保存状态",
     "error": "",
 }
+_LAST_FAMILY_COMMENT_READ_STATUS: dict[str, Any] = {
+    "backend": "local_csv",
+    "connected": False,
+    "count": 0,
+    "message": "暂无家庭观察记录读取状态",
+    "error": "",
+}
+_LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS
 
 
 def get_family_id() -> str:
@@ -198,7 +206,11 @@ def get_last_analysis_save_status() -> dict[str, Any]:
 
 
 def get_last_family_comment_save_status() -> dict[str, Any]:
-    return dict(_LAST_FAMILY_COMMENT_SAVE_STATUS)
+    return dict(_LAST_COMMENT_SAVE_STATUS)
+
+
+def get_last_family_comment_read_status() -> dict[str, Any]:
+    return dict(_LAST_FAMILY_COMMENT_READ_STATUS)
 
 
 def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
@@ -412,29 +424,28 @@ def _comment_payload(comment: dict[str, Any]) -> dict[str, Any]:
 
 def save_family_comment(comment: dict[str, Any]) -> bool:
     """Save one family observation comment. Supabase first, local CSV fallback."""
-    global _LAST_FAMILY_COMMENT_SAVE_STATUS
+    global _LAST_COMMENT_SAVE_STATUS, _LAST_FAMILY_COMMENT_SAVE_STATUS
     payload = _comment_payload(comment)
     client = get_supabase_client()
     if client is not None:
+        minimal_payload = {
+            "family_id": payload["family_id"],
+            "member": payload["member"],
+            "comment_type": payload["comment_type"],
+            "focus": payload["focus"],
+            "stance": payload["stance"],
+            "content": payload["content"],
+            "run_id": payload["run_id"],
+        }
+        compatible_payload = {
+            **minimal_payload,
+            "author_name": payload["author_name"],
+            "focus_tag": payload["focus_tag"],
+            "comment_text": payload["comment_text"],
+        }
         try:
-            insert_payload = {
-                "family_id": payload["family_id"],
-                "member": payload["member"],
-                "author_name": payload["author_name"],
-                "comment_type": payload["comment_type"],
-                "focus": payload["focus"],
-                "focus_tag": payload["focus_tag"],
-                "stance": payload["stance"],
-                "content": payload["content"],
-                "comment_text": payload["comment_text"],
-                "run_id": payload["run_id"],
-            }
-            if payload.get("related_analysis_id") is not None:
-                insert_payload["related_analysis_id"] = payload["related_analysis_id"]
-            if payload.get("ai_summary"):
-                insert_payload["ai_summary"] = payload["ai_summary"]
-            client.table("family_comments").insert(insert_payload).execute()
-            _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+            client.table("family_comments").insert(compatible_payload).execute()
+            _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
                 "backend": "supabase",
                 "connected": True,
                 "saved": True,
@@ -443,7 +454,21 @@ def save_family_comment(comment: dict[str, Any]) -> bool:
             }
             return True
         except Exception as exc:  # noqa: BLE001
-            cloud_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            first_error = f"{type(exc).__name__}: {str(exc)[:220]}"
+            try:
+                client.table("family_comments").insert(minimal_payload).execute()
+                _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+                    "backend": "supabase",
+                    "connected": True,
+                    "saved": True,
+                    "message": "观察记录已保存到 Supabase 云数据库",
+                    "error": f"兼容字段写入失败，已改用标准字段写入：{first_error}",
+                }
+                return True
+            except Exception as retry_exc:  # noqa: BLE001
+                cloud_error = f"{type(retry_exc).__name__}: {str(retry_exc)[:220]}"
+                if first_error:
+                    cloud_error = f"{cloud_error}；首次错误：{first_error}"
     else:
         cloud_error = "未配置 Supabase，使用本地 CSV 兜底"
 
@@ -452,7 +477,7 @@ def save_family_comment(comment: dict[str, Any]) -> bool:
     if local_row.get("related_analysis_id") is None:
         local_row["related_analysis_id"] = ""
     saved = _append_csv_row(FAMILY_COMMENTS_FILE, local_row)
-    _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+    _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
         "backend": "local_csv",
         "connected": False,
         "saved": saved,
@@ -486,6 +511,7 @@ def _normalize_comment_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
     """Return recent family comments, newest first."""
+    global _LAST_FAMILY_COMMENT_READ_STATUS
     client = get_supabase_client()
     if client is not None:
         try:
@@ -498,11 +524,68 @@ def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
                 .execute()
             )
             rows = result.data if isinstance(result.data, list) else []
-            return [_normalize_comment_row(r) for r in rows]
-        except Exception:  # noqa: BLE001
-            pass
+            normalized = [_normalize_comment_row(r) for r in rows]
+            if normalized:
+                _LAST_FAMILY_COMMENT_READ_STATUS = {
+                    "backend": "supabase",
+                    "connected": True,
+                    "count": len(normalized),
+                    "message": "已从 Supabase 读取家庭观察记录",
+                    "error": "",
+                }
+                return normalized
+            local_rows = list(reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)))
+            if local_rows:
+                fallback = [_normalize_comment_row(r) for r in local_rows[:limit]]
+                _LAST_FAMILY_COMMENT_READ_STATUS = {
+                    "backend": "local_csv",
+                    "connected": False,
+                    "count": len(fallback),
+                    "message": "Supabase 暂无记录，已显示本地 CSV 记录",
+                    "error": "",
+                }
+                return fallback
+            _LAST_FAMILY_COMMENT_READ_STATUS = {
+                "backend": "supabase",
+                "connected": True,
+                "count": 0,
+                "message": "Supabase 暂无家庭观察记录",
+                "error": "",
+            }
+            return []
+        except Exception as exc:  # noqa: BLE001
+            read_error = f"{type(exc).__name__}: {str(exc)[:220]}"
+    else:
+        read_error = "未配置 Supabase，读取本地 CSV"
     rows = list(reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)))
-    return [_normalize_comment_row(r) for r in rows[:limit]]
+    normalized = [_normalize_comment_row(r) for r in rows[:limit]]
+    _LAST_FAMILY_COMMENT_READ_STATUS = {
+        "backend": "local_csv",
+        "connected": False,
+        "count": len(normalized),
+        "message": "已从本地 CSV 读取家庭观察记录",
+        "error": read_error if client is not None else "",
+    }
+    return normalized
+
+
+def test_family_comment_storage() -> dict[str, Any]:
+    """Write and immediately read a test family comment."""
+    test_comment = {
+        "member": "测试",
+        "comment_type": "备注",
+        "focus": "cash",
+        "stance": "neutral",
+        "content": "测试观察记录",
+        "run_id": "test",
+    }
+    write_ok = save_family_comment(test_comment)
+    rows = load_recent_family_comments(limit=20)
+    return {
+        "write_ok": bool(write_ok),
+        "read_count": len(rows),
+        "last_error": get_last_family_comment_save_status().get("error", ""),
+    }
 
 
 def load_comments_by_run_id(run_id: str) -> list[dict[str, Any]]:

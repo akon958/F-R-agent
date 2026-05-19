@@ -399,6 +399,7 @@ from data_fetcher import (
 from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
 from storage import (
     format_datetime_for_display,
+    get_last_family_comment_read_status,
     get_last_family_comment_save_status,
     get_storage,
     get_storage_status,
@@ -2792,14 +2793,20 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
             if call_path:
                 st.caption(f"调用路径：{call_path}")
         comment_status = st.session_state.get("family_comment_last_save") or get_last_family_comment_save_status()
+        comment_read_status = get_last_family_comment_read_status()
         comment_backend = comment_status.get("backend") or get_storage_status().get("backend", "local_csv")
+        comment_read_backend = comment_read_status.get("backend") or "local_csv"
         comment_backend_label = "Supabase" if comment_backend == "supabase" else "本地 CSV"
+        comment_read_label = "Supabase" if comment_read_backend == "supabase" else "local_csv"
         st.write("**家庭观察记录**")
         st.write(f"- 家庭观察记录存储方式：{comment_backend_label}")
+        st.write(f"- 当前读取来源：{comment_read_label}")
         st.write(f"- 最近读取到的观察记录数量：{st.session_state.get('family_comments_last_count', 0)}")
         st.write(f"- 最后一条保存状态：{comment_status.get('message', '')}")
         if comment_status.get("error"):
             st.write(f"- 保存失败原因：{comment_status.get('error')}")
+        if comment_read_status.get("error"):
+            st.write(f"- 读取失败原因：{comment_read_status.get('error')}")
         agent_context = agent_result.get("agent_context", {}) if agent_result else {}
 
         col_t1, col_t2 = st.columns(2)

@@ -96,6 +96,8 @@ create table if not exists family_comments (
 
 -- 若表已存在（比如用了旧建表），用 add column if not exists 补字段
 alter table family_comments add column if not exists member              text;
+alter table family_comments add column if not exists family_id           text default 'default_family';
+alter table family_comments add column if not exists created_at          timestamptz default now();
 alter table family_comments add column if not exists comment_type        text;
 alter table family_comments add column if not exists focus               text;
 alter table family_comments add column if not exists stance              text;
