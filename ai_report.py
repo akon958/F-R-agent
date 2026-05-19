@@ -576,20 +576,45 @@ def _unrelated_followup_answer() -> str:
     return f"{UNRELATED_FOLLOWUP_TEXT}\n\n{DISCLAIMER}"
 
 
+def _raw_exception_chain(exc: BaseException) -> str:
+    """Walk the exception cause chain and produce a compact dotted trace.
+
+    Returns something like "RuntimeError: DeepSeek API 调用异常：xxx <- APIStatusError: 401 ...".
+    Truncated to 500 chars; never reveals API key (caller never puts key into message).
+    """
+    parts: list[str] = []
+    cur: BaseException | None = exc
+    depth = 0
+    while cur is not None and depth < 6:
+        cls = type(cur).__name__
+        msg = str(cur).strip() or "(no message)"
+        parts.append(f"{cls}: {msg}")
+        cur = cur.__cause__ or cur.__context__
+        depth += 1
+    chain = " <- ".join(parts)
+    return chain[:500]
+
+
 def _safe_followup_error(exc: Exception) -> str:
-    text = str(exc).strip()
-    if not text:
-        text = type(exc).__name__
+    """Short, human-readable summary of follow-up failure.
+
+    Keeps original exception class name + raw text so cloud debugging
+    is not blocked by aggressive pattern matching.
+    """
+    cls = type(exc).__name__
+    text = str(exc).strip() or "(no message)"
     lower = text.lower()
-    if "未配置 deepseek_api_key" in lower or "未配置" in text:
+    # Only pattern-match for very specific signals; otherwise show raw class + text.
+    if "未配置 deepseek_api_key" in lower or "deepseek_api_key 未配置" in lower:
         return "未配置 DEEPSEEK_API_KEY"
-    if "openai client 创建失败" in lower or "client" in lower:
-        return f"OpenAI client 创建失败：{text[:160]}"
+    if "openai 包" in text or "no module named 'openai'" in lower:
+        return f"OpenAI 包未安装：{cls}: {text[:160]}"
     if "timeout" in lower or "timed out" in lower or "超时" in text:
-        return "DeepSeek API 调用超时"
-    if "返回为空" in text or "empty" in lower:
+        return f"DeepSeek API 调用超时：{cls}: {text[:160]}"
+    if "返回为空" in text:
         return "DeepSeek 返回为空"
-    return f"DeepSeek 调用异常：{text[:180]}"
+    # Default: keep class name AND raw text so we can see the real error
+    return f"{cls}: {text[:250]}"
 
 
 def _call_deepseek_followup(agent_context: dict[str, Any], question: str) -> str:
@@ -882,25 +907,88 @@ def _generate_local_followup_answer(agent_context: dict[str, Any], question: str
     return _sanitize_report_text(f"{body}\n\n{DISCLAIMER}")
 
 
+def deepseek_self_test() -> dict[str, Any]:
+    """Direct probe of _call_deepseek with a trivial prompt.
+
+    If main report works but follow-up does not, run this — if this returns
+    ok=True then the DeepSeek client is fine and the failure is somewhere in
+    _call_deepseek_followup (prompt assembly, agent_context serialization, etc).
+    """
+    try:
+        api_key_present = bool(_get_deepseek_api_key())
+    except Exception:  # noqa: BLE001
+        api_key_present = False
+    try:
+        content = _call_deepseek(
+            [
+                {"role": "system", "content": "You are a connectivity probe. Reply with exactly: pong"},
+                {"role": "user", "content": "ping"},
+            ],
+            temperature=0.0,
+            timeout=20,
+            max_tokens=20,
+        )
+        return {
+            "ok": True,
+            "api_key_present": api_key_present,
+            "shared_call_deepseek_id": id(_call_deepseek),
+            "response_preview": content[:80],
+            "error": "",
+            "raw_error": "",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "api_key_present": api_key_present,
+            "shared_call_deepseek_id": id(_call_deepseek),
+            "response_preview": "",
+            "error": _safe_followup_error(exc),
+            "raw_error": _raw_exception_chain(exc),
+        }
+
+
 def answer_followup_question(agent_context: dict[str, Any], question: str) -> dict[str, str]:
+    """Return dict: {answer, source, error, raw_error, call_path}.
+
+    source = "deepseek" on success; "local_fallback" otherwise.
+    raw_error preserves the full exception chain for cloud debugging.
+    call_path always == "ai_report.answer_followup_question -> _call_deepseek_followup -> _call_deepseek"
+    so app.py can verify main report and follow-up share the same DeepSeek client.
+    """
+    call_path = "ai_report.answer_followup_question -> _call_deepseek_followup -> _call_deepseek"
     q = question.strip()
     if not q:
-        return {"answer": _unrelated_followup_answer(), "source": "local_fallback", "error": "问题为空"}
+        return {
+            "answer": _unrelated_followup_answer(),
+            "source": "local_fallback",
+            "error": "问题为空",
+            "raw_error": "question is empty after strip()",
+            "call_path": call_path,
+        }
     if not agent_context:
-        return {"answer": _unrelated_followup_answer(), "source": "local_fallback", "error": "缺少本次体检上下文"}
+        return {
+            "answer": _unrelated_followup_answer(),
+            "source": "local_fallback",
+            "error": "缺少本次体检上下文",
+            "raw_error": "agent_context is falsy",
+            "call_path": call_path,
+        }
 
     try:
         return {
             "answer": _call_deepseek_followup(agent_context, q),
             "source": "deepseek",
             "error": "",
+            "raw_error": "",
+            "call_path": call_path,
         }
     except Exception as exc:  # noqa: BLE001
-        error = _safe_followup_error(exc)
         return {
             "answer": _generate_local_followup_answer(agent_context, q),
             "source": "local_fallback",
-            "error": error,
+            "error": _safe_followup_error(exc),
+            "raw_error": _raw_exception_chain(exc),
+            "call_path": call_path,
         }
 
 

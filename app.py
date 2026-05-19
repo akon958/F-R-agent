@@ -17,7 +17,7 @@ from agent import run_family_risk_agent
 # 不依赖云端 ai_report.py 的版本，永远可用。
 # ─────────────────────────────────────────────────────────────────
 _DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
-FOLLOWUP_VERSION = "v3_deepseek_shared_client"
+FOLLOWUP_VERSION = "v4_raw_error_diagnostic"
 
 
 def _fmt_pct(value: Any) -> str:
@@ -2324,13 +2324,22 @@ def followup_source_label(source: str) -> str:
     return "DeepSeek AI" if source == "deepseek" else "本地规则兜底"
 
 
-def unpack_followup_result(result: Any) -> tuple[str, str, str]:
+def unpack_followup_result(result: Any) -> tuple[str, str, str, str, str]:
+    """Return (answer, source, error, raw_error, call_path)."""
     if isinstance(result, dict):
         answer = str(result.get("answer", "") or "")
         source = str(result.get("source", "local_fallback") or "local_fallback")
         error = str(result.get("error", "") or "")
-        return answer or _AI_REPORT_FALLBACK_MSG, source, error
-    return str(result or _AI_REPORT_FALLBACK_MSG), "local_fallback", "追问函数返回旧字符串格式"
+        raw_error = str(result.get("raw_error", "") or "")
+        call_path = str(result.get("call_path", "") or "")
+        return answer or _AI_REPORT_FALLBACK_MSG, source, error, raw_error, call_path
+    return (
+        str(result or _AI_REPORT_FALLBACK_MSG),
+        "local_fallback",
+        "追问函数返回旧字符串格式",
+        "ai_report.answer_followup_question returned a str instead of dict",
+        "(unknown — legacy return shape)",
+    )
 
 
 def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
@@ -2338,25 +2347,37 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
     if not clean_question:
         return
     try:
-        answer, source, error = unpack_followup_result(answer_followup_question(agent_context, clean_question))
-    except Exception:  # noqa: BLE001
+        answer, source, error, raw_error, call_path = unpack_followup_result(
+            answer_followup_question(agent_context, clean_question)
+        )
+    except Exception as exc:  # noqa: BLE001
         answer = _AI_REPORT_FALLBACK_MSG
         source = "local_fallback"
-        error = "追问调用异常，已使用本地兜底"
+        error = f"追问调用异常：{type(exc).__name__}"
+        raw_error = f"{type(exc).__name__}: {exc}"[:500]
+        call_path = "save_followup_answer caught top-level exception"
 
     answers: list[dict[str, str]] = list(st.session_state.get("followup_answers", []))
     existing = next((a for a in answers if a["question"] == clean_question), None)
+    record = {
+        "question": clean_question,
+        "answer": answer,
+        "source": source,
+        "error": error,
+        "raw_error": raw_error,
+        "call_path": call_path,
+    }
     if existing:
-        existing["answer"] = answer
-        existing["source"] = source
-        existing["error"] = error
+        existing.update(record)
     else:
-        answers.insert(0, {"question": clean_question, "answer": answer, "source": source, "error": error})
+        answers.insert(0, record)
     if source == "local_fallback":
         st.session_state["last_followup_error"] = {
             "question": clean_question,
             "source": source,
             "error": error or "DeepSeek 未返回可用结果",
+            "raw_error": raw_error,
+            "call_path": call_path,
         }
     else:
         st.session_state.pop("last_followup_error", None)
@@ -2371,10 +2392,11 @@ def followup_block(agent_context: dict[str, Any]) -> None:
     """继续追问区域：动态问题按钮（每次体检结果不同，问题随之变化） + 保留回答历史。"""
     existing_answers = list(st.session_state.get("followup_answers", []))
     if existing_answers and any(
-        "source" not in item or "error" not in item
+        "source" not in item or "error" not in item or "raw_error" not in item
         for item in existing_answers
         if isinstance(item, dict)
     ):
+        # 旧版本字段不全（v3 之前），全部清掉，避免诊断信息缺失
         st.session_state["followup_answers"] = []
 
     st.markdown("---")
@@ -2429,7 +2451,16 @@ def followup_block(agent_context: dict[str, Any]) -> None:
             with st.container():
                 st.markdown(f"**问题：** {item['question']}")
                 st.markdown(f"**AI 回答：**\n\n{item['answer']}")
-                st.caption(f"回答来源：{followup_source_label(item.get('source', 'local_fallback'))}")
+                source = item.get("source", "local_fallback")
+                st.caption(f"回答来源：{followup_source_label(source)}")
+                if source == "local_fallback":
+                    raw = item.get("raw_error", "") or item.get("error", "")
+                    if raw:
+                        with st.expander("为什么进入本地兜底？（开发者诊断）", expanded=False):
+                            st.code(raw, language="text")
+                            cp = item.get("call_path", "")
+                            if cp:
+                                st.caption(f"调用路径：{cp}")
         if len(followup_answers) > 3:
             with st.expander("查看全部追问记录", expanded=False):
                 for item in followup_answers[3:]:
@@ -2618,29 +2649,77 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
             st.write("**最近一次追问兜底**")
             st.write(f"- 追问回答来源：{followup_source_label(followup_error.get('source', 'local_fallback'))}")
             st.write(f"- 兜底原因：{followup_error.get('error', '')}")
+            raw_err = followup_error.get("raw_error", "")
+            if raw_err:
+                st.code(raw_err, language="text")
+            call_path = followup_error.get("call_path", "")
+            if call_path:
+                st.caption(f"调用路径：{call_path}")
         agent_context = agent_result.get("agent_context", {}) if agent_result else {}
-        if st.button("测试 DeepSeek 追问接口", key="test_deepseek_followup_api"):
-            if agent_context:
-                try:
-                    st.session_state["followup_self_test"] = answer_followup_question(agent_context, "1+1是多少")
-                except Exception as exc:  # noqa: BLE001
+
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            if st.button("测试 DeepSeek 追问接口", key="test_deepseek_followup_api"):
+                if agent_context:
+                    try:
+                        st.session_state["followup_self_test"] = answer_followup_question(
+                            agent_context, "1+1是多少"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        st.session_state["followup_self_test"] = {
+                            "answer": "",
+                            "source": "local_fallback",
+                            "error": f"追问自检调用异常：{type(exc).__name__}",
+                            "raw_error": f"{type(exc).__name__}: {exc}",
+                            "call_path": "app.developer_debug_block test button (top-level except)",
+                        }
+                else:
                     st.session_state["followup_self_test"] = {
                         "answer": "",
                         "source": "local_fallback",
-                        "error": f"追问自检调用异常：{exc}",
+                        "error": "缺少本次体检上下文，请先完成一键智能体检",
+                        "raw_error": "agent_context missing",
+                        "call_path": "n/a",
                     }
-            else:
-                st.session_state["followup_self_test"] = {
-                    "answer": "",
-                    "source": "local_fallback",
-                    "error": "缺少本次体检上下文，请先完成一键智能体检",
-                }
+        with col_t2:
+            if st.button("DeepSeek 直连自检（绕过 followup）", key="test_deepseek_direct"):
+                try:
+                    from ai_report import deepseek_self_test as _ds_probe  # type: ignore
+                    st.session_state["deepseek_direct_test"] = _ds_probe()
+                except Exception as exc:  # noqa: BLE001
+                    st.session_state["deepseek_direct_test"] = {
+                        "ok": False,
+                        "api_key_present": False,
+                        "shared_call_deepseek_id": None,
+                        "response_preview": "",
+                        "error": f"deepseek_self_test 调用异常：{type(exc).__name__}",
+                        "raw_error": f"{type(exc).__name__}: {exc}",
+                    }
         self_test = st.session_state.get("followup_self_test")
         if self_test:
-            st.write("**DeepSeek 追问自检结果**")
+            st.write("**追问自检结果（answer_followup_question）**")
             st.write(f"- source: {self_test.get('source', '')}")
             st.write(f"- error: {self_test.get('error', '')}")
-            st.write(f"- answer: {self_test.get('answer', '')}")
+            raw = self_test.get("raw_error", "")
+            if raw:
+                st.code(raw, language="text")
+            st.write(f"- call_path: {self_test.get('call_path', '')}")
+            st.write(f"- answer: {self_test.get('answer', '')[:400]}")
+        direct_test = st.session_state.get("deepseek_direct_test")
+        if direct_test:
+            st.write("**DeepSeek 直连自检结果（_call_deepseek 直接探测）**")
+            st.write(f"- ok: {direct_test.get('ok', False)}")
+            st.write(f"- api_key_present: {direct_test.get('api_key_present', False)}")
+            st.write(f"- shared_call_deepseek_id: {direct_test.get('shared_call_deepseek_id', '')}")
+            st.write(f"- response_preview: {direct_test.get('response_preview', '')}")
+            st.write(f"- error: {direct_test.get('error', '')}")
+            raw = direct_test.get("raw_error", "")
+            if raw:
+                st.code(raw, language="text")
+            st.caption(
+                "如果『直连自检』ok=True 但『追问自检』source=local_fallback，"
+                "说明 DeepSeek 通的，问题在 _call_deepseek_followup 的 prompt 组装或 agent_context 序列化。"
+            )
         debug_info = agent_result.get("debug_info", {})
         if debug_info:
             for key, value in debug_info.items():
