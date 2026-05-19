@@ -270,7 +270,12 @@ def get_last_analysis_history() -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def save_followup_history(question: str, answer: str, related_analysis_id: int | None = None) -> bool:
+def save_followup_history(
+    question: str,
+    answer: str,
+    related_analysis_id: int | None = None,
+    source: str = "",
+) -> bool:
     payload = {
         "family_id": get_family_id(),
         "question": str(question),
@@ -287,6 +292,7 @@ def save_followup_history(question: str, answer: str, related_analysis_id: int |
 
     local_row = dict(payload)
     local_row["created_at"] = _now_iso()
+    local_row["source"] = source
     return _append_csv_row(FOLLOWUP_HISTORY_FILE, local_row)
 
 

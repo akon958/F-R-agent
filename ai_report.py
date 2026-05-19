@@ -521,6 +521,7 @@ def _followup_question_is_related(agent_context: dict[str, Any], question: str) 
         "pe", "pb", "市盈率", "市净率", "估值", "数据", "缺失", "财务", "roe",
         "净利率", "毛利率", "负债", "利润", "营收", "行业", "组合", "股票",
         "基金", "标的", "公司", "波动", "备用", "主要问题", "主要风险",
+        "值得", "买吗", "卖吗", "要不要", "能不能", "该不该", "适合",
     ]
     lower_q = q.lower()
     if any(keyword.lower() in lower_q for keyword in keywords):
@@ -635,6 +636,17 @@ def _generate_local_followup_answer(agent_context: dict[str, Any], question: str
             f"这次体检显示，家庭现金占比约 {_fmt_percent(cash_ratio)}，整体感觉属于「{level_desc}」。\n\n"
             f"通常家庭保留 15%–30% 现金是比较常见的参考范围，但每家情况不同，"
             f"关键是能不能覆盖突发的用钱需求。\n\n{advice}"
+        )
+
+    # ── 买卖类问题：不下结论，只回到风险体检维度 ───────────────
+    elif any(term in q for term in ["值得买吗", "能买吗", "要不要买", "要不要卖", "该买吗", "该卖吗", "能不能买", "适合买", "卖吗"]):
+        primary = main_risks[0] if main_risks else "持仓结构暂无特别突出的风险点"
+        body = (
+            f"你问的是：“{q}”。这个工具不能给买卖结论，也不判断明天涨跌。\n\n"
+            f"只能从风险体检角度看：当前评分 {risk_score}/100，等级{risk_level}；"
+            f"现金比例约 {_fmt_percent(cash_ratio)}，最大单只占比约 {_fmt_percent(max_position_ratio)}。"
+            f"主要需要关注的是：{primary}。"
+            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else '如果估值、财务和持仓结构数据都完整，可以一起作为观察参考。'}"
         )
 
     # ── 问题 2：持仓集中度相关（含动态变体） ────────────────────
@@ -827,18 +839,26 @@ def _generate_local_followup_answer(agent_context: dict[str, Any], question: str
     return _sanitize_report_text(f"{body}\n\n{DISCLAIMER}")
 
 
-def answer_followup_question(agent_context: dict[str, Any], question: str) -> str:
+def answer_followup_question(agent_context: dict[str, Any], question: str) -> dict[str, str]:
     q = question.strip()
-    if not _followup_question_is_related(agent_context, q):
-        return _unrelated_followup_answer()
+    if not q:
+        return {"answer": _unrelated_followup_answer(), "source": "local_fallback"}
+    if not agent_context:
+        return {"answer": _unrelated_followup_answer(), "source": "local_fallback"}
 
     api_key = _get_deepseek_api_key()
     if api_key:
         try:
-            return _call_deepseek_followup(agent_context, q, api_key)
+            return {
+                "answer": _call_deepseek_followup(agent_context, q, api_key),
+                "source": "deepseek",
+            }
         except Exception:  # noqa: BLE001
             pass
-    return _generate_local_followup_answer(agent_context, q)
+    return {
+        "answer": _generate_local_followup_answer(agent_context, q),
+        "source": "local_fallback",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────

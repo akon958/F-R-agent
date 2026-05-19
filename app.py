@@ -135,7 +135,7 @@ def get_dynamic_questions(agent_context: dict) -> list[str]:
     return questions
 
 
-def answer_followup_question(agent_context: dict, question: str) -> str:
+def _legacy_local_answer_followup_question(agent_context: dict, question: str) -> str:
     """根据 agent_context 回答追问（本地实现，不依赖 ai_report.py）。"""
     risk_score = int(agent_context.get("risk_score", 0) or 0)
     risk_level = agent_context.get("risk_level", "暂无") or "暂无"
@@ -363,9 +363,34 @@ try:
     from ai_report import answer_followup_question as _ai_answer, FOLLOWUP_QUESTIONS, get_dynamic_questions as _ai_get_q  # type: ignore
     answer_followup_question = _ai_answer  # type: ignore[assignment]
     get_dynamic_questions = _ai_get_q  # type: ignore[assignment]
+    FOLLOWUP_ANSWER_IMPL = "ai_report.answer_followup_question"
 except ImportError:
     FOLLOWUP_QUESTIONS: list[str] = _FALLBACK_QUESTIONS  # type: ignore[assignment]
-    # answer_followup_question 和 get_dynamic_questions 已在上方本地定义，直接使用
+    FOLLOWUP_ANSWER_IMPL = "app.local_fallback"
+
+    def _app_fallback_answer_followup_question(agent_context: dict, question: str) -> dict[str, str]:
+        q = question.strip()
+        unrelated = (
+            "这个追问区主要回答本次投资体检相关问题。"
+            "你可以问现金比例、持仓集中度、PE/PB、数据缺失或主要风险。"
+        )
+        if not q:
+            return {"answer": f"{unrelated}\n\n{_DISCLAIMER}", "source": "local_fallback"}
+        if "现金" in q:
+            answer = f"这次体检显示，现金比例约 {_fmt_pct(agent_context.get('cash_ratio', 0))}。可以重点看备用金是否够覆盖家庭近期支出。"
+        elif "PE" in q or "PB" in q or "估值" in q:
+            answer = "PE/PB 主要帮助观察估值高低。如果数据暂缺，本次不评价估值高低，只看现金、仓位和集中度。"
+        elif any(word in q for word in ["茅台", "占比", "集中", "持仓"]):
+            answer = f"这次体检显示，最大单只占比约 {_fmt_pct(agent_context.get('max_position_ratio', 0))}。占比越高，组合越容易受单只标的影响。"
+        elif "数据" in q or "缺失" in q:
+            answer = "数据缺失会让判断更保守。缺失的数据不会被编造进结论，只对已有数据做风险体检。"
+        elif any(word in q for word in ["值得买吗", "能买吗", "要不要买", "要不要卖", "卖吗"]):
+            answer = "这个工具不能给买卖结论，也不预测涨跌。可以从占比、现金比例、估值数据是否完整和主要风险几个角度观察。"
+        else:
+            answer = unrelated
+        return {"answer": f"{answer}\n\n{_DISCLAIMER}", "source": "local_fallback"}
+
+    answer_followup_question = _app_fallback_answer_followup_question  # type: ignore[assignment]
 
 
 from data_fetcher import (
@@ -2296,23 +2321,37 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
     )
 
 
+def followup_source_label(source: str) -> str:
+    return "DeepSeek AI" if source == "deepseek" else "本地规则兜底"
+
+
+def unpack_followup_result(result: Any) -> tuple[str, str]:
+    if isinstance(result, dict):
+        answer = str(result.get("answer", "") or "")
+        source = str(result.get("source", "local_fallback") or "local_fallback")
+        return answer or _AI_REPORT_FALLBACK_MSG, source
+    return str(result or _AI_REPORT_FALLBACK_MSG), "local_fallback"
+
+
 def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
     clean_question = question.strip()
     if not clean_question:
         return
     try:
-        answer = answer_followup_question(agent_context, clean_question)
+        answer, source = unpack_followup_result(answer_followup_question(agent_context, clean_question))
     except Exception:  # noqa: BLE001
         answer = _AI_REPORT_FALLBACK_MSG
+        source = "local_fallback"
 
     answers: list[dict[str, str]] = list(st.session_state.get("followup_answers", []))
     existing = next((a for a in answers if a["question"] == clean_question), None)
     if existing:
         existing["answer"] = answer
+        existing["source"] = source
     else:
-        answers.insert(0, {"question": clean_question, "answer": answer})
+        answers.insert(0, {"question": clean_question, "answer": answer, "source": source})
     try:
-        save_followup_history(question=clean_question, answer=answer)
+        save_followup_history(question=clean_question, answer=answer, source=source)
     except Exception:  # noqa: BLE001
         pass
     st.session_state["followup_answers"] = answers
@@ -2320,6 +2359,10 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
 
 def followup_block(agent_context: dict[str, Any]) -> None:
     """继续追问区域：动态问题按钮（每次体检结果不同，问题随之变化） + 保留回答历史。"""
+    existing_answers = list(st.session_state.get("followup_answers", []))
+    if existing_answers and any("source" not in item for item in existing_answers if isinstance(item, dict)):
+        st.session_state["followup_answers"] = []
+
     st.markdown("---")
     render_html(
         """
@@ -2372,11 +2415,13 @@ def followup_block(agent_context: dict[str, Any]) -> None:
             with st.container():
                 st.markdown(f"**问题：** {item['question']}")
                 st.markdown(f"**AI 回答：**\n\n{item['answer']}")
+                st.caption(f"回答来源：{followup_source_label(item.get('source', 'local_fallback'))}")
         if len(followup_answers) > 3:
             with st.expander("查看全部追问记录", expanded=False):
                 for item in followup_answers[3:]:
                     st.markdown(f"**问题：** {item['question']}")
                     st.markdown(f"**AI 回答：**\n\n{item['answer']}")
+                    st.caption(f"回答来源：{followup_source_label(item.get('source', 'local_fallback'))}")
                     st.markdown("---")
 
 
