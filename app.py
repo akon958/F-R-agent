@@ -25,16 +25,25 @@ except ImportError:
     def generate_parent_friendly_report(analysis: dict, api_key: str) -> str:  # type: ignore[misc]
         return _AI_REPORT_FALLBACK_MSG
 
+_FALLBACK_QUESTIONS: list[str] = [
+    "现金比例怎么看？",
+    "哪只标的最需要关注？",
+    "PE/PB 对这次判断有什么帮助？",
+    "数据缺失会影响判断吗？",
+    "为什么这个组合还需要继续观察？",
+    "给爸妈一句话怎么说？",
+]
+
 try:
     from ai_report import answer_followup_question, FOLLOWUP_QUESTIONS, get_dynamic_questions  # type: ignore
 except ImportError:
-    FOLLOWUP_QUESTIONS: list[str] = []
+    FOLLOWUP_QUESTIONS: list[str] = _FALLBACK_QUESTIONS
 
     def answer_followup_question(ctx: dict, question: str) -> str:  # type: ignore[misc]
         return _AI_REPORT_FALLBACK_MSG
 
     def get_dynamic_questions(ctx: dict) -> list[str]:  # type: ignore[misc]
-        return FOLLOWUP_QUESTIONS
+        return _FALLBACK_QUESTIONS
 
 
 from data_fetcher import (
@@ -1909,13 +1918,22 @@ def followup_block(agent_context: dict[str, Any]) -> None:
         </section>
         """
     )
-    # 根据 agent_context 动态生成当次最相关的 6 个问题
-    questions = get_dynamic_questions(agent_context) if agent_context else FOLLOWUP_QUESTIONS
+    # 根据 agent_context 动态生成当次最相关的 6 个问题（失败时降级为固定列表）
+    try:
+        questions: list[str] = get_dynamic_questions(agent_context) if agent_context else _FALLBACK_QUESTIONS
+        if not questions:
+            questions = _FALLBACK_QUESTIONS
+    except Exception:  # noqa: BLE001
+        questions = _FALLBACK_QUESTIONS
+
     col_a, col_b = st.columns(2)
     for qi, question in enumerate(questions):
         col = col_a if qi % 2 == 0 else col_b
         if col.button(question, use_container_width=True, key=f"fq_{qi}"):
-            answer = answer_followup_question(agent_context, question)
+            try:
+                answer = answer_followup_question(agent_context, question)
+            except Exception:  # noqa: BLE001
+                answer = _AI_REPORT_FALLBACK_MSG
             answers: list[dict[str, str]] = list(st.session_state.get("followup_answers", []))
             existing = next((a for a in answers if a["question"] == question), None)
             if existing:
