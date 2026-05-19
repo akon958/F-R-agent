@@ -376,7 +376,13 @@ from data_fetcher import (
     refresh_market_cache,
 )
 from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
-from storage import get_storage, make_note
+from storage import (
+    get_storage,
+    get_storage_status,
+    load_recent_analysis_history,
+    make_note,
+    save_followup_history,
+)
 
 
 APP_TITLE = "家庭投资助手"
@@ -2099,13 +2105,14 @@ def news_block() -> None:
 
 
 def discussion_block() -> None:
+    storage_status = get_storage_status()
     render_html(
         """
         <section class="block">
             <div class="block-head">
                 <div>
                     <h2 class="block-title">家庭观察记录</h2>
-                    <p class="block-subtitle">记录家人对这只标的的看法，方便回顾和共同决策。云端同步开发中。</p>
+                    <p class="block-subtitle">记录家人对这只标的的看法，方便回顾和共同决策。</p>
                 </div>
             </div>
         </section>
@@ -2125,7 +2132,7 @@ def discussion_block() -> None:
             pass  # 写文件失败时静默降级，记录仍会出现在当前会话
         st.session_state.notes.insert(0, note)
         st.rerun()
-    tip_col.caption("记录保存在本地文件 · 本地运行时关闭页面后仍保留 · 云端同步开发中")
+    tip_col.caption(storage_status.get("message", "当前使用本地 CSV 兜底"))
     if not st.session_state.notes:
         st.info("暂无观察记录。")
     else:
@@ -2220,6 +2227,10 @@ def followup_block(agent_context: dict[str, Any]) -> None:
                 existing["answer"] = answer
             else:
                 answers.insert(0, {"question": question, "answer": answer})
+            try:
+                save_followup_history(question=question, answer=answer)
+            except Exception:  # noqa: BLE001
+                pass
             st.session_state["followup_answers"] = answers
             st.rerun()
 
@@ -2259,6 +2270,17 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         if not agent_result.get("debug_info", {}).get("使用本地缓存", True)
         else "本地缓存"
     )
+    storage_status = agent_result.get("storage_status") or get_storage_status()
+    storage_backend = storage_status.get("backend", "local_csv")
+    storage_label = "Supabase 云数据库" if storage_backend == "supabase" else "本地 CSV 兜底"
+    saved_label = "已保存" if agent_result.get("saved_history") else "未保存"
+    storage_note = (
+        "记录已保存到云端，重新打开页面后仍可读取。"
+        if storage_backend == "supabase" and agent_result.get("saved_history")
+        else "本地 CSV 仅适合开发测试，Streamlit Cloud 重启或重新部署后可能丢失。"
+        if agent_result.get("saved_history")
+        else "本次历史记录暂未保存，不影响体检结果。"
+    )
     render_html(
         f"""
         <section class="block" style="padding:1rem 1.1rem;">
@@ -2266,7 +2288,8 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 <div>
                     <h2 class="block-title" style="font-size:1.18rem;">智能体检已完成</h2>
                     <p class="block-subtitle">已检查持仓结构、现金比例、集中风险和数据完整性。</p>
-                    <p class="muted">当前数据来源：{html_escape(data_source_label)}　｜　历史记录：{"已保存" if agent_result.get("saved_history") else "未保存"}</p>
+                    <p class="muted">当前数据来源：{html_escape(data_source_label)}　｜　存储方式：{html_escape(storage_label)}　｜　历史记录：{html_escape(saved_label)}</p>
+                    <p class="muted">{html_escape(storage_note)}</p>
                 </div>
             </div>
         </section>
@@ -2406,6 +2429,33 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
         st.write(f"- data_status: {agent_result.get('data_status')}")
 
 
+def history_records_block() -> None:
+    with st.expander("历史体检记录", expanded=False):
+        status = get_storage_status()
+        st.caption(status.get("message", "当前使用本地 CSV 兜底"))
+        try:
+            rows = load_recent_analysis_history(limit=5)
+        except Exception:  # noqa: BLE001
+            rows = []
+        if not rows:
+            st.info("暂无历史体检记录。完成一次一键智能体检后，这里会显示最近记录。")
+            return
+        for row in rows:
+            created_at = str(row.get("created_at") or row.get("分析时间") or "")[:16].replace("T", " ")
+            score = row.get("risk_score") or row.get("综合评分") or ""
+            level = row.get("risk_level") or row.get("风险等级") or ""
+            cash_ratio = row.get("cash_ratio") or row.get("现金比例") or 0
+            stock_ratio = row.get("stock_ratio") or row.get("股票仓位") or 0
+            with st.container(border=True):
+                st.write(f"**{created_at or '最近一次体检'}｜评分 {score}｜{level}**")
+                st.caption(f"现金比例：{percent(float(cash_ratio or 0))} ｜ 股票/基金仓位：{percent(float(stock_ratio or 0))}")
+                risks = row.get("main_risks") or row.get("主要风险") or []
+                if isinstance(risks, str):
+                    st.caption(risks[:120])
+                elif risks:
+                    st.caption("；".join(str(item) for item in risks[:2]))
+
+
 def analysis_page() -> None:
     analysis = st.session_state["analysis"]
     fetch_warnings = st.session_state.get("fetch_warnings", [])
@@ -2416,6 +2466,7 @@ def analysis_page() -> None:
         st.session_state.pop("agent_result", None)
         st.rerun()
     agent_result_block(st.session_state.get("agent_result", {}))
+    history_records_block()
     for warning in fetch_warnings:
         if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
             st.info(warning)

@@ -16,6 +16,12 @@ FEEDBACK_HISTORY_FILE = BASE_DIR / "feedback_history.csv"
 FAMILY_PROFILE_FILE = BASE_DIR / "family_profile.csv"
 NOTES_FILE = BASE_DIR / "family_notes.json"
 MAX_NOTES = 200
+_LAST_ANALYSIS_SAVE_STATUS: dict[str, Any] = {
+    "backend": "local_csv",
+    "connected": False,
+    "saved": False,
+    "message": "尚未保存历史记录",
+}
 
 
 def get_family_id() -> str:
@@ -125,6 +131,10 @@ def get_storage_status() -> dict[str, Any]:
     }
 
 
+def get_last_analysis_save_status() -> dict[str, Any]:
+    return dict(_LAST_ANALYSIS_SAVE_STATUS)
+
+
 def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "family_id": get_family_id(),
@@ -147,11 +157,18 @@ def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_analysis_history(record: dict[str, Any]) -> bool:
+    global _LAST_ANALYSIS_SAVE_STATUS
     payload = _analysis_payload(record)
     client = get_supabase_client()
     if client is not None:
         try:
             client.table("analysis_history").insert(payload).execute()
+            _LAST_ANALYSIS_SAVE_STATUS = {
+                "backend": "supabase",
+                "connected": True,
+                "saved": True,
+                "message": "记录已保存到云端，重新打开页面后仍可读取。",
+            }
             return True
         except Exception:  # noqa: BLE001
             pass
@@ -160,7 +177,18 @@ def save_analysis_history(record: dict[str, Any]) -> bool:
     local_row["created_at"] = _now_iso()
     for key in ("main_risks", "missing_data", "data_status", "full_agent_result"):
         local_row[key] = _json_text(local_row.get(key))
-    return _append_csv_row(ANALYSIS_HISTORY_FILE, local_row)
+    saved = _append_csv_row(ANALYSIS_HISTORY_FILE, local_row)
+    _LAST_ANALYSIS_SAVE_STATUS = {
+        "backend": "local_csv",
+        "connected": False,
+        "saved": saved,
+        "message": (
+            "本地 CSV 仅适合开发测试，Streamlit Cloud 重启或重新部署后可能丢失。"
+            if saved
+            else "历史记录暂时保存失败，不影响本次体检结果。"
+        ),
+    }
+    return saved
 
 
 def _normalize_analysis_row(row: dict[str, Any]) -> dict[str, Any]:

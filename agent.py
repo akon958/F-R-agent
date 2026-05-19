@@ -17,7 +17,7 @@ except ImportError:
             "report_source": "local_fallback",
         }
 from data_fetcher import get_stock_metrics, normalize_code
-from storage import load_recent_analysis_history, save_analysis_history
+from storage import get_last_analysis_save_status, load_recent_analysis_history, save_analysis_history
 
 
 def _to_float(value: Any) -> float:
@@ -309,6 +309,12 @@ def run_family_risk_agent(
             "report_source": "local_fallback",
             "agent_context": {},
             "saved_history": False,
+            "storage_status": {
+                "backend": "local_csv",
+                "connected": False,
+                "saved": False,
+                "message": "输入不完整，未保存历史记录。",
+            },
         }
 
     codes = [item["code"] for item in clean_holdings]
@@ -417,6 +423,8 @@ def run_family_risk_agent(
 
     debug_steps.append("保存本次体检记录。")
     agent_result["saved_history"] = _save_history(agent_result, analysis)
+    agent_result["storage_status"] = get_last_analysis_save_status()
     agent_result["debug_info"]["保存历史记录"] = agent_result["saved_history"]
+    agent_result["debug_info"]["存储方式"] = agent_result["storage_status"].get("backend")
     agent_result["debug_info"]["saved_history"] = agent_result["saved_history"]
     return agent_result
