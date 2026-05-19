@@ -26,12 +26,15 @@ except ImportError:
         return _AI_REPORT_FALLBACK_MSG
 
 try:
-    from ai_report import answer_followup_question, FOLLOWUP_QUESTIONS  # type: ignore
+    from ai_report import answer_followup_question, FOLLOWUP_QUESTIONS, get_dynamic_questions  # type: ignore
 except ImportError:
     FOLLOWUP_QUESTIONS: list[str] = []
 
     def answer_followup_question(ctx: dict, question: str) -> str:  # type: ignore[misc]
         return _AI_REPORT_FALLBACK_MSG
+
+    def get_dynamic_questions(ctx: dict) -> list[str]:  # type: ignore[misc]
+        return FOLLOWUP_QUESTIONS
 
 
 from data_fetcher import (
@@ -1893,22 +1896,23 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
 
 
 def followup_block(agent_context: dict[str, Any]) -> None:
-    """继续追问区域：快捷问题按钮 + 保留回答历史。"""
+    """继续追问区域：动态问题按钮（每次体检结果不同，问题随之变化） + 保留回答历史。"""
     render_html(
         """
         <section class="block">
             <div class="block-head" style="margin-bottom:.6rem;">
                 <div>
                     <h2 class="block-title" style="font-size:1.3rem;">继续追问这次体检</h2>
-                    <p class="block-subtitle">选一个问题，根据本次体检结果直接作答。不荐股，不预测涨跌。</p>
+                    <p class="block-subtitle">问题根据本次体检数据自动生成，点击直接作答。不荐股，不预测涨跌。</p>
                 </div>
             </div>
         </section>
         """
     )
-    # 每行 2 个按钮，共 6 个问题
+    # 根据 agent_context 动态生成当次最相关的 6 个问题
+    questions = get_dynamic_questions(agent_context) if agent_context else FOLLOWUP_QUESTIONS
     col_a, col_b = st.columns(2)
-    for qi, question in enumerate(FOLLOWUP_QUESTIONS):
+    for qi, question in enumerate(questions):
         col = col_a if qi % 2 == 0 else col_b
         if col.button(question, use_container_width=True, key=f"fq_{qi}"):
             answer = answer_followup_question(agent_context, question)

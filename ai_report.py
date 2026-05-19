@@ -16,6 +16,79 @@ FOLLOWUP_QUESTIONS = [
 ]
 
 
+def get_dynamic_questions(agent_context: dict[str, Any]) -> list[str]:
+    """根据 agent_context 生成 6 个最相关的追问问题。
+
+    规则：
+    - 每类问题只选一个，共 6 个槽位
+    - 问题文字嵌入真实数字，让人感觉是针对"这次体检"
+    - 关键词设计保证 answer_followup_question 能正确路由
+    """
+    cash_ratio = float(agent_context.get("cash_ratio", 0) or 0)
+    stock_ratio = float(agent_context.get("stock_ratio", 0) or 0)
+    max_pos = float(agent_context.get("max_position_ratio", 0) or 0)
+    risk_score = int(agent_context.get("risk_score", 0) or 0)
+    holdings = list(agent_context.get("holdings", []) or [])
+    missing_data = dict(agent_context.get("missing_data", {}) or {})
+
+    sorted_h = sorted(holdings, key=lambda x: x.get("amount", 0), reverse=True)
+    top = sorted_h[0] if sorted_h else {}
+    top_name = (top.get("name") or top.get("code") or "") if top else ""
+    top_pct = f"{max_pos * 100:.0f}%"
+    cash_pct = f"{cash_ratio * 100:.0f}%"
+    stock_pct = f"{stock_ratio * 100:.0f}%"
+
+    valuation_missing = bool(missing_data.get("估值数据缺失"))
+    finance_missing = bool(missing_data.get("财务数据缺失"))
+
+    questions: list[str] = []
+
+    # ── 槽 1：现金相关 ──────────────────────────────────────────
+    if cash_ratio < 0.10:
+        questions.append(f"现金只剩 {cash_pct}，备用金够用吗？")
+    elif cash_ratio < 0.15:
+        questions.append(f"现金比例 {cash_pct} 偏低，需要担心吗？")
+    elif cash_ratio >= 0.45:
+        questions.append(f"现金留了 {cash_pct}，是不是太保守了？")
+    else:
+        questions.append("现金比例怎么看？")
+
+    # ── 槽 2：持仓集中度 ────────────────────────────────────────
+    if top_name and max_pos >= 0.40:
+        questions.append(f"{top_name} 占了 {top_pct}，集中度高有什么风险？")
+    elif top_name and max_pos >= 0.25:
+        questions.append(f"{top_name} 占比最高，需要重点关注吗？")
+    elif len(holdings) == 1:
+        questions.append("只有一只标的，风险是不是太集中了？")
+    else:
+        questions.append("哪只标的最需要关注？")
+
+    # ── 槽 3：PE/PB 估值 ────────────────────────────────────────
+    if valuation_missing:
+        questions.append("PE/PB 数据缺失，这次体检受影响吗？")
+    else:
+        questions.append("PE/PB 对这次判断有什么帮助？")
+
+    # ── 槽 4：数据完整性 ────────────────────────────────────────
+    if finance_missing:
+        questions.append("财务数据有缺失，还能判断公司好坏吗？")
+    else:
+        questions.append("数据缺失会影响判断吗？")
+
+    # ── 槽 5：评分/仓位/观察原因 ────────────────────────────────
+    if risk_score < 50:
+        questions.append(f"评分 {risk_score} 分偏低，主要原因是什么？")
+    elif stock_ratio >= 0.85:
+        questions.append(f"股票/基金仓位已达 {stock_pct}，算重仓吗？")
+    else:
+        questions.append("为什么这个组合还需要继续观察？")
+
+    # ── 槽 6：给爸妈总结（固定，每次都显示） ───────────────────
+    questions.append("给爸妈一句话怎么说？")
+
+    return questions
+
+
 def _safe_text(value: Any, default: str = "") -> str:
     if value is None:
         return default
@@ -280,8 +353,8 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> st
 
     q = question.strip()
 
-    # ── 问题 1：现金比例怎么看？ ─────────────────────────────────
-    if "现金比例" in q:
+    # ── 问题 1：现金相关（含动态变体） ──────────────────────────
+    if "现金" in q or "备用金" in q:
         if cash_ratio >= 0.30:
             level_desc = "比较充足"
             advice = "短期用钱压力相对小，不必过于紧张；但现金闲置太多也未必是最优安排，可以定期复盘是否合适。"
@@ -297,8 +370,8 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> st
             f"关键是能不能覆盖突发的用钱需求。\n\n{advice}"
         )
 
-    # ── 问题 2：哪只标的最需要关注？ ────────────────────────────
-    elif "哪只" in q or ("标的" in q and "关注" in q):
+    # ── 问题 2：持仓集中度相关（含动态变体） ────────────────────
+    elif "哪只" in q or "集中" in q or ("占" in q and "%" in q) or ("标的" in q) or ("一只" in q):
         if not top:
             body = "当前没有有效持仓数据，无法判断哪只标的最需要关注。请确认持仓信息填写正确。"
         else:
@@ -342,8 +415,8 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> st
                 "有了 PE/PB，这次体检的结论在估值层面会更有依据，整体可信度相对更高。"
             )
 
-    # ── 问题 4：数据缺失会影响判断吗？ ─────────────────────────
-    elif "数据缺失" in q:
+    # ── 问题 4：数据完整性相关（含动态变体） ───────────────────
+    elif "数据缺失" in q or ("数据" in q and ("影响" in q or "缺" in q)) or ("财务" in q and "判断" in q):
         missing_parts: list[str] = []
         for title, items in missing_data.items():
             if items:
@@ -371,8 +444,57 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> st
                 impacts.append("估值（PE/PB）数据缺失时，不对股价贵不贵做任何评价，以免误导判断。")
             body += "\n".join(impacts) if impacts else "当前缺失影响有限，主要结论仍然有效。"
 
-    # ── 问题 5：为什么这个组合还需要继续观察？ ──────────────────
-    elif "继续观察" in q or ("为什么" in q and "组合" in q):
+    # ── 问题 5a：评分偏低原因（动态变体） ──────────────────────
+    elif "评分" in q and ("低" in q or "原因" in q or "分" in q):
+        primary = main_risks[0] if main_risks else "持仓结构有待优化"
+        if risk_score < 50:
+            score_desc = "偏低"
+            detail = (
+                f"评分主要由三部分影响：持仓集中度、现金比例和财务数据质量。\n\n"
+                f"这次评分 {risk_score}/100 属于{score_desc}，最主要的拉分项是：{primary}。\n\n"
+                f"现金占比约 {_fmt_percent(cash_ratio)}，"
+                f"最大单只占比约 {_fmt_percent(max_position_ratio)}——"
+                f"{'这两项都给评分带来了一定压力。' if cash_ratio < 0.15 and max_position_ratio > 0.35 else '其中集中度是主要影响因素。'}"
+                f"{'财务数据缺失也会让体检保守降分。' if finance_missing else ''}"
+            )
+        else:
+            score_desc = "中等"
+            detail = (
+                f"评分 {risk_score}/100 属于{score_desc}，整体没有特别极端的问题。"
+                f"主要关注点是：{primary}。"
+                f"现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}，"
+                f"总体结构尚可，但仍有优化空间。"
+            )
+        body = detail
+
+    # ── 问题 5b：重仓/仓位相关（动态变体） ─────────────────────
+    elif "仓位" in q or "重仓" in q:
+        if stock_ratio >= 0.85:
+            vibe = "已经属于比较重的仓位"
+            note = (
+                f"股票/基金占比 {_fmt_percent(stock_ratio)}，{vibe}。"
+                f"在这种情况下，市场整体波动时对家庭的影响会比较明显——"
+                f"不只是单只标的的问题，而是整个资产的波动幅度都会比较大。\n\n"
+                f"家庭的备用金只有 {_fmt_percent(cash_ratio)}，"
+                f"{'这个比例偏低，遇到急用钱时可能比较被动。' if cash_ratio < 0.15 else '这个比例尚可，短期用钱压力相对可控。'}"
+            )
+        elif stock_ratio >= 0.70:
+            vibe = "处于中等偏高水平"
+            note = (
+                f"股票/基金占比 {_fmt_percent(stock_ratio)}，{vibe}。"
+                f"大部分资金在权益类资产里，遇到市场波动时感受会比较明显，"
+                f"但只要家庭现金（{_fmt_percent(cash_ratio)}）够应急，整体还在可接受范围内。"
+            )
+        else:
+            note = (
+                f"当前股票/基金占比 {_fmt_percent(stock_ratio)}，整体仓位不算极端。"
+                f"保持现金比例（{_fmt_percent(cash_ratio)}）充足是最重要的保障，"
+                f"仓位本身不是越低越好，关键是结构合不合理。"
+            )
+        body = note
+
+    # ── 问题 5c：为什么需要继续观察（原有+扩展） ────────────────
+    elif "继续观察" in q or ("为什么" in q and "组合" in q) or ("需要" in q and "观察" in q):
         reasons: list[str] = []
         # 现金比例
         if cash_ratio < 0.15:
