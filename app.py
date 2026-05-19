@@ -2326,18 +2326,23 @@ def discussion_block(run_id: str = "") -> None:
             "content": content.strip(),
             "run_id": run_id,
         }
-        saved = False
+        result: dict[str, Any] = {"success": False, "backend": "local_csv", "error": ""}
         try:
-            saved = save_family_comment(comment)
+            result = save_family_comment(comment)
             st.session_state["family_comment_last_save"] = get_last_family_comment_save_status()
         except Exception as exc:  # noqa: BLE001
             st.session_state["family_comment_last_save"] = {
+                "success": False,
                 "backend": "local_csv",
                 "connected": False,
                 "saved": False,
                 "message": "观察记录保存失败，不影响体检结果。",
                 "error": f"{type(exc).__name__}: {str(exc)[:160]}",
             }
+            result = {"success": False, "backend": "local_csv", "error": st.session_state["family_comment_last_save"]["error"]}
+        if result.get("success") and result.get("backend") == "supabase":
+            for stale_key in ("comment_error", "save_error", "family_comment_error"):
+                st.session_state.pop(stale_key, None)
         # 也写旧版 note（保持 session_state.notes 展示兼容）
         note = make_note(content.strip(), who=member)
         try:
@@ -2350,7 +2355,9 @@ def discussion_block(run_id: str = "") -> None:
             st.session_state["family_comments_cache"] = st.session_state["family_comments"]
             st.session_state["family_comments_last_count"] = len(st.session_state["family_comments"])
         except Exception as exc:  # noqa: BLE001
-            st.session_state["family_comments"] = [comment] if saved else []
+            save_status_for_fallback = st.session_state.get("family_comment_last_save", {})
+            locally_available = bool(save_status_for_fallback.get("saved"))
+            st.session_state["family_comments"] = [comment] if locally_available else []
             st.session_state["family_comments_cache"] = st.session_state["family_comments"]
             st.session_state["family_comments_last_count"] = len(st.session_state["family_comments"])
             st.session_state["family_comment_last_save"] = {
@@ -2358,10 +2365,10 @@ def discussion_block(run_id: str = "") -> None:
                 "error": f"保存后重新读取失败：{type(exc).__name__}",
             }
         save_status = st.session_state.get("family_comment_last_save", {})
-        if saved and save_status.get("backend") == "supabase":
-            st.session_state["family_comment_notice"] = "观察记录已保存"
-        elif saved:
-            st.session_state["family_comment_notice"] = save_status.get("message") or "观察记录保存到云端失败，已尝试本地保存。"
+        if result.get("success") and result.get("backend") == "supabase":
+            st.session_state["family_comment_notice"] = "观察记录已保存到云端"
+        elif result.get("backend") == "local_csv" and save_status.get("saved"):
+            st.session_state["family_comment_notice"] = "观察记录已保存到本地，云端同步失败"
         else:
             st.session_state["family_comment_notice"] = "观察记录保存失败，不影响体检结果。"
         st.rerun()
@@ -2799,7 +2806,9 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
         comment_backend_label = "Supabase" if comment_backend == "supabase" else "本地 CSV"
         comment_read_label = "Supabase" if comment_read_backend == "supabase" else "local_csv"
         st.write("**家庭观察记录**")
-        st.write(f"- 家庭观察记录存储方式：{comment_backend_label}")
+        save_state_label = "成功" if comment_status.get("saved") or comment_status.get("success") else "失败"
+        st.write(f"- 最近一次观察记录保存状态：{save_state_label}")
+        st.write(f"- 保存位置：{comment_backend_label}")
         st.write(f"- 当前读取来源：{comment_read_label}")
         st.write(f"- 最近读取到的观察记录数量：{st.session_state.get('family_comments_last_count', 0)}")
         st.write(f"- 最后一条保存状态：{comment_status.get('message', '')}")

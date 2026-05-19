@@ -422,7 +422,7 @@ def _comment_payload(comment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def save_family_comment(comment: dict[str, Any]) -> bool:
+def save_family_comment(comment: dict[str, Any]) -> dict[str, Any]:
     """Save one family observation comment. Supabase first, local CSV fallback."""
     global _LAST_COMMENT_SAVE_STATUS, _LAST_FAMILY_COMMENT_SAVE_STATUS
     payload = _comment_payload(comment)
@@ -446,25 +446,27 @@ def save_family_comment(comment: dict[str, Any]) -> bool:
         try:
             client.table("family_comments").insert(compatible_payload).execute()
             _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+                "success": True,
                 "backend": "supabase",
                 "connected": True,
                 "saved": True,
                 "message": "观察记录已保存到 Supabase 云数据库",
                 "error": "",
             }
-            return True
+            return {"success": True, "backend": "supabase", "error": ""}
         except Exception as exc:  # noqa: BLE001
             first_error = f"{type(exc).__name__}: {str(exc)[:220]}"
             try:
                 client.table("family_comments").insert(minimal_payload).execute()
                 _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+                    "success": True,
                     "backend": "supabase",
                     "connected": True,
                     "saved": True,
                     "message": "观察记录已保存到 Supabase 云数据库",
-                    "error": f"兼容字段写入失败，已改用标准字段写入：{first_error}",
+                    "error": "",
                 }
-                return True
+                return {"success": True, "backend": "supabase", "error": ""}
             except Exception as retry_exc:  # noqa: BLE001
                 cloud_error = f"{type(retry_exc).__name__}: {str(retry_exc)[:220]}"
                 if first_error:
@@ -478,6 +480,7 @@ def save_family_comment(comment: dict[str, Any]) -> bool:
         local_row["related_analysis_id"] = ""
     saved = _append_csv_row(FAMILY_COMMENTS_FILE, local_row)
     _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+        "success": False,
         "backend": "local_csv",
         "connected": False,
         "saved": saved,
@@ -488,7 +491,11 @@ def save_family_comment(comment: dict[str, Any]) -> bool:
         ),
         "error": "" if saved and client is None else cloud_error,
     }
-    return saved
+    return {
+        "success": False,
+        "backend": "local_csv",
+        "error": "" if saved and client is None else cloud_error,
+    }
 
 
 def _normalize_comment_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -579,10 +586,10 @@ def test_family_comment_storage() -> dict[str, Any]:
         "content": "测试观察记录",
         "run_id": "test",
     }
-    write_ok = save_family_comment(test_comment)
+    result = save_family_comment(test_comment)
     rows = load_recent_family_comments(limit=20)
     return {
-        "write_ok": bool(write_ok),
+        "write_ok": bool(result.get("success") or get_last_family_comment_save_status().get("saved")),
         "read_count": len(rows),
         "last_error": get_last_family_comment_save_status().get("error", ""),
     }
