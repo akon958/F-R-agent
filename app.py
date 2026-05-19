@@ -402,7 +402,9 @@ from storage import (
     get_storage,
     get_storage_status,
     load_recent_analysis_history,
+    load_recent_family_comments,
     make_note,
+    save_family_comment,
     save_followup_history,
 )
 
@@ -457,6 +459,7 @@ def init_state() -> None:
         "followup_answers": [],
         "followup_questions": [],  # 每次体检生成一次，rerun 时保持不变
         "followup_version": FOLLOWUP_VERSION,
+        "family_comments_cache": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -2237,7 +2240,37 @@ def news_block() -> None:
     )
 
 
-def discussion_block() -> None:
+_MEMBER_OPTIONS = ["我", "爸爸", "妈妈", "其他"]
+_TYPE_OPTIONS = ["疑问", "担心", "观察", "备注", "已讨论"]
+_FOCUS_LABELS = ["现金比例", "持仓集中", "PE/PB估值", "财务数据", "数据缺失", "风险承受", "其他"]
+_FOCUS_MAP = {
+    "现金比例": "cash",
+    "持仓集中": "concentration",
+    "PE/PB估值": "valuation",
+    "财务数据": "financial",
+    "数据缺失": "data_missing",
+    "风险承受": "risk_tolerance",
+    "其他": "other",
+}
+_STANCE_LABELS = ["偏谨慎", "偏进取", "中性 / 只是记录"]
+_STANCE_MAP = {
+    "偏谨慎": "conservative",
+    "偏进取": "aggressive",
+    "中性 / 只是记录": "neutral",
+}
+
+
+def _comment_stance_label(stance: str) -> str:
+    reverse = {v: k for k, v in _STANCE_MAP.items()}
+    return reverse.get(stance, stance)
+
+
+def _comment_focus_label(focus: str) -> str:
+    reverse = {v: k for k, v in _FOCUS_MAP.items()}
+    return reverse.get(focus, focus)
+
+
+def discussion_block(run_id: str = "") -> None:
     storage_status = get_storage_status()
     render_html(
         """
@@ -2245,46 +2278,95 @@ def discussion_block() -> None:
             <div class="block-head">
                 <div>
                     <h2 class="block-title">家庭观察记录</h2>
-                    <p class="block-subtitle">记录家人对这只标的的看法，方便回顾和共同决策。</p>
+                    <p class="block-subtitle">记录家人对这次体检的看法，方便回顾和共同讨论。不作为任何操作建议。</p>
                 </div>
             </div>
         </section>
         """
     )
-    note_text = st.text_area(
-        "新增观察记录",
-        placeholder="记录你的看法，例如：觉得估值偏高，先观察一个季度再说。",
-        label_visibility="collapsed",
-    )
-    btn_col, tip_col = st.columns([2, 5])
-    if btn_col.button("发布记录", use_container_width=True) and note_text.strip():
-        note = make_note(note_text.strip(), who="我")
+
+    with st.form("family_comment_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            member = st.selectbox("成员", _MEMBER_OPTIONS, key="comment_member")
+            comment_type = st.selectbox("类型", _TYPE_OPTIONS, key="comment_type")
+        with col2:
+            focus_label = st.selectbox("关注点", _FOCUS_LABELS, key="comment_focus")
+            stance_label = st.selectbox("立场", _STANCE_LABELS, key="comment_stance")
+        content = st.text_area(
+            "观察内容",
+            placeholder="例如：觉得估值偏高，先观察一个季度再说。",
+            label_visibility="visible",
+            key="comment_content",
+        )
+        submitted = st.form_submit_button("发布观察记录", use_container_width=True)
+
+    if submitted and content.strip():
+        comment = {
+            "member": member,
+            "comment_type": comment_type,
+            "focus": _FOCUS_MAP.get(focus_label, "other"),
+            "stance": _STANCE_MAP.get(stance_label, "neutral"),
+            "content": content.strip(),
+            "run_id": run_id,
+        }
+        try:
+            save_family_comment(comment)
+        except Exception:  # noqa: BLE001
+            pass
+        # 也写旧版 note（保持 session_state.notes 展示兼容）
+        note = make_note(content.strip(), who=member)
         try:
             get_storage().save_note(note)
         except Exception:  # noqa: BLE001
-            pass  # 写文件失败时静默降级，记录仍会出现在当前会话
+            pass
         st.session_state.notes.insert(0, note)
+        st.session_state.pop("family_comments_cache", None)  # 清缓存，下次重新加载
         st.rerun()
-    tip_col.caption(storage_status.get("message", "当前使用本地 CSV 兜底"))
-    if not st.session_state.notes:
-        st.info("暂无观察记录。")
-    else:
-        note_cards = []
-        for note in st.session_state.notes:
-            note_cards.append(
-                f"""
-                <article class="note-card">
-                    <div class="note-head">
-                        <div style="display:flex; gap:.7rem; align-items:center;">
-                            <div class="note-avatar">{html_escape(note["avatar"])}</div>
-                            <div><strong>{html_escape(note["who"])}</strong><div class="muted">{html_escape(note["when"])}</div></div>
-                        </div>
-                    </div>
-                    <p class="muted">{html_escape(note["body"])}</p>
-                </article>
-                """
-            )
-        render_html(f'<div class="news-grid">{"".join(note_cards)}</div>')
+
+    st.caption(storage_status.get("message", "当前使用本地 CSV 兜底"))
+
+    # 读取并展示最近观察记录
+    comments: list[dict[str, Any]] = st.session_state.get("family_comments_cache") or []
+    if not comments:
+        try:
+            comments = load_recent_family_comments(limit=20)
+        except Exception:  # noqa: BLE001
+            comments = []
+        st.session_state["family_comments_cache"] = comments
+
+    if not comments:
+        st.info("暂无观察记录。填写上方表单即可新增。")
+        return
+
+    def _render_comment(c: dict[str, Any]) -> None:
+        member_disp = html_escape(c.get("member") or "我")
+        ctype = html_escape(c.get("comment_type") or "备注")
+        focus_disp = html_escape(_comment_focus_label(c.get("focus") or "other"))
+        stance_disp = html_escape(_comment_stance_label(c.get("stance") or "neutral"))
+        text = html_escape(c.get("content") or c.get("comment_text") or "")
+        when = format_datetime_for_display(c.get("created_at"))
+        render_html(
+            f"""
+            <article class="note-card" style="margin-bottom:.7rem;">
+                <div class="note-head" style="margin-bottom:.3rem;">
+                    <span style="font-weight:600;">{member_disp}</span>
+                    <span class="muted">｜{ctype}｜{focus_disp}｜{stance_disp}</span>
+                    <span class="muted" style="float:right;font-size:.78rem;">{when}</span>
+                </div>
+                <p class="muted" style="margin:0;">"{text}"</p>
+            </article>
+            """
+        )
+
+    recent = comments[:3]
+    for c in recent:
+        _render_comment(c)
+
+    if len(comments) > 3:
+        with st.expander(f"查看全部 {len(comments)} 条观察记录", expanded=False):
+            for c in comments[3:]:
+                _render_comment(c)
 
 
 def get_deepseek_api_key() -> str:
@@ -2802,7 +2884,8 @@ def analysis_page() -> None:
         with st.expander("近期新闻与公告（开发中）", expanded=False):
             st.info("暂未接入新闻接口，后续开放。")
             news_block()
-        discussion_block()
+        _cur_run_id = str(st.session_state.get("agent_result", {}).get("run_id", "") or "")
+        discussion_block(run_id=_cur_run_id)
         deepseek_block(analysis)
     developer_debug_block(st.session_state.get("agent_result", {}))
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')

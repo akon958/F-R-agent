@@ -16,6 +16,7 @@ ANALYSIS_HISTORY_FILE = BASE_DIR / "analysis_history.csv"
 FOLLOWUP_HISTORY_FILE = BASE_DIR / "followup_history.csv"
 FEEDBACK_HISTORY_FILE = BASE_DIR / "feedback_history.csv"
 FAMILY_PROFILE_FILE = BASE_DIR / "family_profile.csv"
+FAMILY_COMMENTS_FILE = BASE_DIR / "family_comments.csv"
 NOTES_FILE = BASE_DIR / "family_notes.json"
 MAX_NOTES = 200
 _LAST_ANALYSIS_SAVE_STATUS: dict[str, Any] = {
@@ -171,7 +172,7 @@ def get_last_analysis_save_status() -> dict[str, Any]:
 
 
 def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "family_id": get_family_id(),
         "holdings_summary": str(record.get("holdings_summary", "")),
         "family_cash": _to_float(record.get("family_cash")),
@@ -188,7 +189,15 @@ def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
         "financial_status": str(record.get("financial_status", "")),
         "ai_report_summary": str(record.get("ai_report_summary", "")),
         "full_agent_result": _safe_json(record.get("full_agent_result", {})),
+        # 第 2 步新增字段
+        "run_id": str(record.get("run_id") or ""),
+        "watch_tasks": _safe_json(record.get("watch_tasks") or []),
     }
+    # industry_conc / data_credit 可为 None，不强转以免 None → 0.0 误导
+    for key in ("industry_conc", "data_credit"):
+        raw = record.get(key)
+        payload[key] = _to_float(raw) if raw is not None else None
+    return payload
 
 
 def save_analysis_history(record: dict[str, Any]) -> bool:
@@ -340,6 +349,131 @@ def save_feedback_history(
     local_row["created_at"] = _now_iso()
     local_row["feedback_tags"] = _json_text(local_row["feedback_tags"])
     return _append_csv_row(FEEDBACK_HISTORY_FILE, local_row)
+
+
+def _comment_payload(comment: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a family comment into a canonical payload dict."""
+    # 优先用新字段，兼容旧字段
+    member = str(comment.get("member") or comment.get("author_name") or "我")
+    content = str(comment.get("content") or comment.get("comment_text") or "")
+    focus = str(comment.get("focus") or comment.get("focus_tag") or "other")
+    return {
+        "family_id": get_family_id(),
+        "member": member,
+        "author_name": member,            # 兼容旧字段冗余写一份
+        "comment_type": str(comment.get("comment_type") or "备注"),
+        "focus": focus,
+        "focus_tag": focus,               # 旧字段兼容
+        "stance": str(comment.get("stance") or "neutral"),
+        "content": content,
+        "comment_text": content,          # 旧字段兼容
+        "run_id": str(comment.get("run_id") or ""),
+        "related_analysis_id": comment.get("related_analysis_id"),
+        "ai_summary": str(comment.get("ai_summary") or ""),
+    }
+
+
+def save_family_comment(comment: dict[str, Any]) -> bool:
+    """Save one family observation comment. Supabase first, local CSV fallback."""
+    payload = _comment_payload(comment)
+    client = get_supabase_client()
+    if client is not None:
+        try:
+            insert_payload = {k: v for k, v in payload.items() if v not in (None, "")}
+            client.table("family_comments").insert(insert_payload).execute()
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+
+    local_row = dict(payload)
+    local_row["created_at"] = _now_iso()
+    if local_row.get("related_analysis_id") is None:
+        local_row["related_analysis_id"] = ""
+    return _append_csv_row(FAMILY_COMMENTS_FILE, local_row)
+
+
+def _normalize_comment_row(row: dict[str, Any]) -> dict[str, Any]:
+    r = dict(row)
+    r["member"] = r.get("member") or r.get("author_name") or "我"
+    r["content"] = r.get("content") or r.get("comment_text") or ""
+    r["focus"] = r.get("focus") or r.get("focus_tag") or "other"
+    r["stance"] = r.get("stance") or "neutral"
+    r["comment_type"] = r.get("comment_type") or "备注"
+    r["run_id"] = r.get("run_id") or ""
+    r["created_at"] = r.get("created_at") or ""
+    return r
+
+
+def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
+    """Return recent family comments, newest first."""
+    client = get_supabase_client()
+    if client is not None:
+        try:
+            result = (
+                client.table("family_comments")
+                .select("*")
+                .eq("family_id", get_family_id())
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            rows = result.data if isinstance(result.data, list) else []
+            return [_normalize_comment_row(r) for r in rows]
+        except Exception:  # noqa: BLE001
+            pass
+    rows = list(reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)))
+    return [_normalize_comment_row(r) for r in rows[:limit]]
+
+
+def load_comments_by_run_id(run_id: str) -> list[dict[str, Any]]:
+    """Return all comments associated with a specific run_id."""
+    if not run_id:
+        return []
+    client = get_supabase_client()
+    if client is not None:
+        try:
+            result = (
+                client.table("family_comments")
+                .select("*")
+                .eq("family_id", get_family_id())
+                .eq("run_id", run_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            rows = result.data if isinstance(result.data, list) else []
+            return [_normalize_comment_row(r) for r in rows]
+        except Exception:  # noqa: BLE001
+            pass
+    all_rows = _read_csv_rows(FAMILY_COMMENTS_FILE)
+    return [_normalize_comment_row(r) for r in all_rows if r.get("run_id") == run_id]
+
+
+def load_comments_by_analysis(analysis_id: Any) -> list[dict[str, Any]]:
+    """Return all comments linked to a specific analysis_history id."""
+    if not analysis_id:
+        return []
+    aid = str(analysis_id)
+    client = get_supabase_client()
+    if client is not None:
+        try:
+            result = (
+                client.table("family_comments")
+                .select("*")
+                .eq("family_id", get_family_id())
+                .eq("related_analysis_id", aid)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            rows = result.data if isinstance(result.data, list) else []
+            return [_normalize_comment_row(r) for r in rows]
+        except Exception:  # noqa: BLE001
+            pass
+    all_rows = _read_csv_rows(FAMILY_COMMENTS_FILE)
+    return [
+        _normalize_comment_row(r)
+        for r in all_rows
+        if str(r.get("related_analysis_id", "")) == aid
+    ]
 
 
 def save_family_profile(profile: dict[str, Any]) -> bool:

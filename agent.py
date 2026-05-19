@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -179,6 +180,11 @@ def _save_history(agent_result: dict[str, Any], analysis: dict[str, Any]) -> boo
             "financial_status": agent_context.get("financial_status", ""),
             "ai_report_summary": str(agent_result.get("ai_report", ""))[:500],
             "full_agent_result": agent_result,
+            # 第 2 步新增字段
+            "run_id": agent_result.get("run_id", ""),
+            "watch_tasks": agent_result.get("watch_tasks", []),
+            "industry_conc": agent_result.get("industry_conc"),
+            "data_credit": agent_result.get("data_credit"),
         }
         return save_analysis_history(record)
     except Exception:  # noqa: BLE001
@@ -267,6 +273,8 @@ def run_family_risk_agent(
     user_goal: str = "检查家庭持仓风险",
     progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
+    run_id: str = uuid.uuid4().hex  # 本次体检唯一编号
+
     def emit(step: str, percent: int) -> None:
         if progress_callback:
             try:
@@ -407,10 +415,12 @@ def run_family_risk_agent(
     agent_context["ai_report"] = ai_report  # 回填，让追问函数可读取本次报告内容
     agent_context["report_source"] = report_source
     agent_context["report_mode"] = "爸妈版"
+    agent_context["run_id"] = run_id  # 每次体检唯一编号
     ai_report_success = True
 
     agent_result = {
         "success": True,
+        "run_id": run_id,
         "agent_steps": agent_steps,
         "debug_steps": debug_steps,
         "portfolio_summary": portfolio_summary,
@@ -423,6 +433,9 @@ def run_family_risk_agent(
         "ai_report": ai_report,
         "report_source": report_source,
         "report_mode": "爸妈版",
+        "watch_tasks": [],       # 第 6/8 步生成结构化任务，先占位
+        "industry_conc": None,   # 后续行业集中度计算
+        "data_credit": None,     # 后续数据可信度评分
         "saved_history": False,
         "agent_context": agent_context,
         "debug_info": {
