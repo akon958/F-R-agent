@@ -8,7 +8,10 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except ImportError:
+    ZoneInfo = None  # type: ignore[assignment,misc]
 
 
 BASE_DIR = Path(__file__).resolve().parent
