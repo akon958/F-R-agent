@@ -22,6 +22,22 @@ FAMILY_PROFILE_FILE = BASE_DIR / "family_profile.csv"
 FAMILY_COMMENTS_FILE = BASE_DIR / "family_comments.csv"
 NOTES_FILE = BASE_DIR / "family_notes.json"
 MAX_NOTES = 200
+COMMENT_FOCUS_MAP = {
+    "现金比例": "cash",
+    "持仓集中": "concentration",
+    "PE/PB估值": "valuation",
+    "财务数据": "financial",
+    "数据缺失": "data_missing",
+    "风险承受": "risk_tolerance",
+    "其他": "other",
+}
+COMMENT_FOCUS_VALUES = set(COMMENT_FOCUS_MAP.values())
+COMMENT_STANCE_MAP = {
+    "偏谨慎": "conservative",
+    "偏进取": "aggressive",
+    "中性 / 只是记录": "neutral",
+}
+COMMENT_STANCE_VALUES = set(COMMENT_STANCE_MAP.values())
 _LAST_ANALYSIS_SAVE_STATUS: dict[str, Any] = {
     "backend": "local_csv",
     "connected": False,
@@ -359,7 +375,14 @@ def _comment_payload(comment: dict[str, Any]) -> dict[str, Any]:
     # 优先用新字段，兼容旧字段
     member = str(comment.get("member") or comment.get("author_name") or "我")
     content = str(comment.get("content") or comment.get("comment_text") or "")
-    focus = str(comment.get("focus") or comment.get("focus_tag") or "other")
+    raw_focus = str(comment.get("focus") or comment.get("focus_tag") or "other")
+    focus = COMMENT_FOCUS_MAP.get(raw_focus, raw_focus)
+    if focus not in COMMENT_FOCUS_VALUES:
+        focus = "other"
+    raw_stance = str(comment.get("stance") or "neutral")
+    stance = COMMENT_STANCE_MAP.get(raw_stance, raw_stance)
+    if stance not in COMMENT_STANCE_VALUES:
+        stance = "neutral"
     return {
         "family_id": get_family_id(),
         "member": member,
@@ -367,7 +390,7 @@ def _comment_payload(comment: dict[str, Any]) -> dict[str, Any]:
         "comment_type": str(comment.get("comment_type") or "备注"),
         "focus": focus,
         "focus_tag": focus,               # 旧字段兼容
-        "stance": str(comment.get("stance") or "neutral"),
+        "stance": stance,
         "content": content,
         "comment_text": content,          # 旧字段兼容
         "run_id": str(comment.get("run_id") or ""),
@@ -399,8 +422,14 @@ def _normalize_comment_row(row: dict[str, Any]) -> dict[str, Any]:
     r = dict(row)
     r["member"] = r.get("member") or r.get("author_name") or "我"
     r["content"] = r.get("content") or r.get("comment_text") or ""
-    r["focus"] = r.get("focus") or r.get("focus_tag") or "other"
-    r["stance"] = r.get("stance") or "neutral"
+    raw_focus = str(r.get("focus") or r.get("focus_tag") or "other")
+    r["focus"] = COMMENT_FOCUS_MAP.get(raw_focus, raw_focus)
+    if r["focus"] not in COMMENT_FOCUS_VALUES:
+        r["focus"] = "other"
+    raw_stance = str(r.get("stance") or "neutral")
+    r["stance"] = COMMENT_STANCE_MAP.get(raw_stance, raw_stance)
+    if r["stance"] not in COMMENT_STANCE_VALUES:
+        r["stance"] = "neutral"
     r["comment_type"] = r.get("comment_type") or "备注"
     r["run_id"] = r.get("run_id") or ""
     r["created_at"] = r.get("created_at") or ""
