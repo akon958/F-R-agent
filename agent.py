@@ -10,11 +10,14 @@ from analyzer import analyze_portfolio
 try:
     from ai_report import generate_agent_report  # type: ignore
 except ImportError:
-    def generate_agent_report(agent_context: dict, mode: str = "爸妈版") -> str:  # type: ignore[misc]
-        return (
-            "AI 报告模块需要重新部署最新版本。\n\n"
-            "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
-        )
+    def generate_agent_report(agent_context: dict, mode: str = "爸妈版") -> dict[str, str]:  # type: ignore[misc]
+        return {
+            "ai_report": (
+                "AI 报告模块需要重新部署最新版本。\n\n"
+                "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+            ),
+            "report_source": "local_fallback",
+        }
 from data_fetcher import get_stock_metrics, normalize_code
 
 
@@ -81,6 +84,9 @@ def _try_realtime_data(codes: list[str]) -> tuple[list[dict[str, Any]] | None, s
 
 
 def _safe_ai_text(text: str) -> str:
+    disclaimer = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+    disclaimer_token = "__FIXED_DISCLAIMER__"
+    safe = text.replace(disclaimer, disclaimer_token)
     replacements = {
         "买入": "继续观察",
         "卖出": "重点复盘",
@@ -90,10 +96,9 @@ def _safe_ai_text(text: str) -> str:
         "预测涨跌": "判断短期方向",
         "我们可能需要慢慢调整": "后续讨论时可以重点关注这一点",
     }
-    safe = text
     for old, new in replacements.items():
         safe = safe.replace(old, new)
-    return safe
+    return safe.replace(disclaimer_token, disclaimer)
 
 
 def _has_any_value(stock: dict[str, Any], fields: list[str]) -> bool:
@@ -305,6 +310,8 @@ def run_family_risk_agent(
             "missing_data": {},
             "warnings": warnings,
             "ai_report": "",
+            "report_source": "local_fallback",
+            "agent_context": {},
             "saved_history": False,
         }
 
@@ -360,8 +367,25 @@ def run_family_risk_agent(
     )
 
     debug_steps.append("生成家庭说明。")
-    ai_report = _safe_ai_text(generate_agent_report(agent_context))
+    report_source = "local_fallback"
+    try:
+        report_result = generate_agent_report(agent_context, mode="爸妈版")
+    except Exception:  # noqa: BLE001
+        report_result = {
+            "ai_report": _fallback_ai_report(analysis, missing_data),
+            "report_source": "local_fallback",
+        }
+    if isinstance(report_result, dict):
+        ai_report = _safe_ai_text(str(report_result.get("ai_report", "") or ""))
+        report_source = str(report_result.get("report_source", "local_fallback") or "local_fallback")
+    else:
+        ai_report = _safe_ai_text(str(report_result or ""))
+    if not ai_report:
+        ai_report = _safe_ai_text(_fallback_ai_report(analysis, missing_data))
+        report_source = "local_fallback"
     agent_context["ai_report"] = ai_report  # 回填，让追问函数可读取本次报告内容
+    agent_context["report_source"] = report_source
+    agent_context["report_mode"] = "爸妈版"
     ai_report_success = True
 
     agent_result = {
@@ -376,6 +400,8 @@ def run_family_risk_agent(
         "missing_data": missing_data,
         "warnings": warnings,
         "ai_report": ai_report,
+        "report_source": report_source,
+        "report_mode": "爸妈版",
         "saved_history": False,
         "agent_context": agent_context,
         "debug_info": {
@@ -384,6 +410,7 @@ def run_family_risk_agent(
             "保存历史记录": False,
             "analyzer.py 调用成功": True,
             "ai_report.py 调用成功": ai_report_success,
+            "报告来源": report_source,
             "saved_history": False,
             "data_status 原始值": data_status,
         },

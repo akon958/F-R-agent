@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from typing import Any
 
@@ -176,11 +177,14 @@ def _fmt_percent(value: Any) -> str:
 
 
 def _sanitize_report_text(text: str) -> str:
+    disclaimer_token = "__FIXED_DISCLAIMER__"
+    safe = text.replace(DISCLAIMER, disclaimer_token)
     replacements = {
         "买入": "继续观察",
         "卖出": "重点复盘",
         "加仓": "增加投入前先讨论",
         "减仓": "控制集中度",
+        "推荐": "提示",
         "强烈": "明显",
         "抄底": "低位判断",
         "必涨": "确定上涨",
@@ -189,10 +193,9 @@ def _sanitize_report_text(text: str) -> str:
         "预测涨跌": "判断短期方向",
         "我们可能需要慢慢调整": "后续讨论时可以重点关注这一点",
     }
-    safe = text
     for old, new in replacements.items():
         safe = safe.replace(old, new)
-    return safe
+    return safe.replace(disclaimer_token, DISCLAIMER)
 
 
 def _flatten_missing_data(missing_data: dict[str, Any]) -> str:
@@ -367,20 +370,140 @@ def _generate_parent_report(agent_context: dict[str, Any]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────
-# 主入口：模式分发
+# 主入口：DeepSeek 优先，本地模板兜底
 # ─────────────────────────────────────────────────────────────────
 
-def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版") -> str:
-    """Generate a family-facing report strictly from agent_context fields.
+def _ensure_disclaimer(text: str) -> str:
+    """Append the fixed disclaimer without letting safety replacements alter it."""
+    safe = _safe_text(text).strip()
+    if not safe:
+        safe = "本次报告暂时无法生成完整说明。"
+    # 兼容早期兜底里曾把“推荐”替换成“提示”的情况，固定免责声明保持原文。
+    safe = safe.replace(DISCLAIMER.replace("推荐", "提示"), DISCLAIMER)
+    if DISCLAIMER not in safe:
+        if "【免责声明】" in safe:
+            safe = f"{safe.rstrip()}\n{DISCLAIMER}"
+        else:
+            safe = f"{safe.rstrip()}\n\n【免责声明】\n{DISCLAIMER}"
+    return safe
 
-    mode: "爸妈版" (default) | "简洁版" | "详细版"
-    All three modes are strictly based on agent_context — no fabrication.
-    """
+
+def _get_deepseek_api_key() -> str:
+    try:
+        import streamlit as st
+
+        key = str(st.secrets.get("DEEPSEEK_API_KEY", "")).strip()
+        if key:
+            return key
+    except Exception:  # noqa: BLE001
+        pass
+    return os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+
+def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = [
+        "holdings",
+        "family_cash",
+        "total_position_value",
+        "cash_ratio",
+        "stock_ratio",
+        "max_position_ratio",
+        "risk_preference",
+        "risk_score",
+        "risk_level",
+        "main_risks",
+        "missing_data",
+        "data_status",
+        "history_summary",
+        "pe_pb_status",
+        "financial_status",
+    ]
+    return {key: agent_context.get(key) for key in allowed_keys}
+
+
+def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str, api_key: str) -> str:
+    """Call DeepSeek for the one-click Agent report, strictly from agent_context."""
+    from openai import OpenAI
+
+    context = _agent_context_for_prompt(agent_context)
+    valuation_missing = bool((context.get("missing_data") or {}).get("估值数据缺失"))
+    valuation_rule = (
+        "如果估值数据缺失，必须只写：估值数据暂缺，本次不评价估值高低。"
+        if valuation_missing
+        else "如果估值数据没有缺失，可以说明估值数据已纳入体检，但仍不能据此做买卖判断。"
+    )
+
+    system_prompt = f"""
+你是“家庭持仓风险体检 Agent”的报告生成器。你只能根据用户提供的 agent_context 写报告，不能编造任何缺失数据。
+
+输出对象是爸妈或普通家庭成员，语言要自然、简单，不像券商研报。
+
+必须遵守：
+1. 不荐股，不预测涨跌，不承诺收益。
+2. 不给买入、卖出、加仓、减仓等操作指令。
+3. 不使用“您家”“贵家庭”“您的家庭资产”。
+4. 必须结合现金比例、股票/基金持仓比例、最大单只持仓占比、主要风险和数据缺失情况。
+5. {valuation_rule}
+6. 报告控制在 500-800 字。
+7. 固定五段结构，标题必须为：
+   【整体判断】
+   【主要风险】
+   【数据缺失说明】
+   【给爸妈重点看的地方】
+   【免责声明】
+8. 【免责声明】必须一字不改：{DISCLAIMER}
+""".strip()
+
+    user_prompt = (
+        f"报告模式：{mode}\n\n"
+        "请严格基于下面的 agent_context 生成报告，不允许自由发挥，不允许补充没有出现的数据。\n\n"
+        + json.dumps(context, ensure_ascii=False, indent=2)
+    )
+
+    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=30.0)
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.3,
+        max_tokens=1600,
+    )
+    content = _safe_text(response.choices[0].message.content).strip()
+    if not content:
+        raise RuntimeError("empty deepseek response")
+    return _ensure_disclaimer(_sanitize_report_text(content))
+
+
+def generate_local_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版") -> str:
+    """Generate the local fallback report strictly from agent_context fields."""
     if mode == "简洁版":
-        return _generate_brief_report(agent_context)
+        return _ensure_disclaimer(_generate_brief_report(agent_context))
     if mode == "详细版":
-        return _generate_detailed_report(agent_context)
-    return _generate_parent_report(agent_context)
+        return _ensure_disclaimer(_generate_detailed_report(agent_context))
+    return _ensure_disclaimer(_generate_parent_report(agent_context))
+
+
+def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版") -> dict[str, str]:
+    """Generate the one-click Agent report.
+
+    DeepSeek is the primary report source. Local template generation is used only
+    when the API key is missing or the API call is temporarily unavailable.
+    """
+    api_key = _get_deepseek_api_key()
+    if api_key:
+        try:
+            return {
+                "ai_report": _call_deepseek_agent_report(agent_context, mode, api_key),
+                "report_source": "deepseek",
+            }
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "ai_report": generate_local_agent_report(agent_context, mode),
+        "report_source": "local_fallback",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -634,7 +757,7 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> st
 
 
 # ─────────────────────────────────────────────────────────────────
-# 以下为旧式 DeepSeek 接口（保留在"普通分析/调试入口"中使用）
+# 以下为旧式 DeepSeek 接口（兼容保留；普通分析入口不再调用）
 # ─────────────────────────────────────────────────────────────────
 
 def _build_ai_context(analysis: dict[str, Any]) -> dict[str, Any]:
