@@ -3,10 +3,12 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -30,6 +32,39 @@ def get_family_id() -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _shanghai_tz() -> timezone | ZoneInfo:
+    try:
+        return ZoneInfo("Asia/Shanghai")
+    except Exception:  # noqa: BLE001
+        return timezone(timedelta(hours=8))
+
+
+def format_datetime_for_display(value: Any) -> str:
+    """Format UTC/Supabase timestamps as Beijing time for page display."""
+    if value in (None, ""):
+        return "时间未知"
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            raw = str(value).strip()
+            if not raw:
+                return "时间未知"
+            normalized = raw.replace("Z", "+00:00")
+            if re.search(r"[+-]\d{2}$", normalized):
+                normalized = f"{normalized}:00"
+            try:
+                dt = datetime.fromisoformat(normalized)
+            except ValueError:
+                dt = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_shanghai_tz()).strftime("%Y-%m-%d %H:%M")
+    except Exception:  # noqa: BLE001
+        text = str(value).strip()
+        return text if text else "时间未知"
 
 
 def _safe_json(value: Any) -> Any:

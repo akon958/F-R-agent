@@ -378,6 +378,7 @@ from data_fetcher import (
 )
 from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
 from storage import (
+    format_datetime_for_display,
     get_storage,
     get_storage_status,
     load_recent_analysis_history,
@@ -2557,7 +2558,7 @@ def history_records_block() -> None:
             st.info("暂无历史体检记录。完成一次一键智能体检后，这里会显示最近记录。")
             return
         for row in rows:
-            created_at = str(row.get("created_at") or row.get("分析时间") or "")[:16].replace("T", " ")
+            created_at = format_datetime_for_display(row.get("created_at") or row.get("分析时间"))
             score = row.get("risk_score") or row.get("综合评分") or ""
             level = row.get("risk_level") or row.get("风险等级") or ""
             cash_ratio = row.get("cash_ratio") or row.get("现金比例") or 0

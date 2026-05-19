@@ -17,7 +17,12 @@ except ImportError:
             "report_source": "local_fallback",
         }
 from data_fetcher import get_stock_metrics, normalize_code
-from storage import get_last_analysis_save_status, load_recent_analysis_history, save_analysis_history
+from storage import (
+    format_datetime_for_display,
+    get_last_analysis_save_status,
+    load_recent_analysis_history,
+    save_analysis_history,
+)
 
 
 def _to_float(value: Any) -> float:
@@ -189,7 +194,7 @@ def _load_history_summary(limit: int = 3) -> str:
         return ""
     parts = []
     for row in rows[:limit]:
-        time_text = str(row.get("created_at") or row.get("分析时间") or "")[:16].replace("T", " ")
+        time_text = format_datetime_for_display(row.get("created_at") or row.get("分析时间"))
         level = row.get("risk_level") or row.get("风险等级") or ""
         score = row.get("risk_score") or row.get("综合评分") or ""
         parts.append(f"{time_text} 评分 {score}，等级 {level}".strip())
