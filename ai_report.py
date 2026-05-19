@@ -198,6 +198,66 @@ def _sanitize_report_text(text: str) -> str:
     return safe.replace(disclaimer_token, DISCLAIMER)
 
 
+DINNER_TALK_FALLBACK = "这次结果主要提醒我们一起看看风险分布，不急着做决定，先把家里对风险的看法聊清楚。"
+DINNER_TALK_BANNED = [
+    "买入",
+    "卖出",
+    "加仓",
+    "减仓",
+    "推荐",
+    "预测上涨",
+    "必涨",
+    "稳赚",
+    "保证收益",
+]
+
+
+def sanitize_dinner_talk(text: str, agent_context: dict[str, Any] | None = None) -> str:
+    """Keep dinner talk short, plain, and free of trade-like wording."""
+    talk = _safe_text(text).strip()
+    if not talk:
+        talk = _local_dinner_talk(agent_context or {})
+    talk = talk.replace("【饭桌版】", "").strip(" \n：:")
+    if any(word in talk for word in DINNER_TALK_BANNED):
+        talk = DINNER_TALK_FALLBACK
+    if len(talk) > 80:
+        talk = talk[:76].rstrip("，。；、 ") + "。"
+    if not any(tail in talk for tail in ("一起再看看", "一起商量一下", "聊清楚", "商量一下")):
+        suffix = "要不要我们一起商量一下？"
+        talk = (talk[: max(0, 80 - len(suffix))].rstrip("，。；、 ") + "，" + suffix).strip("，")
+    if any(word in talk for word in DINNER_TALK_BANNED):
+        return DINNER_TALK_FALLBACK
+    return talk[:80]
+
+
+def _local_dinner_talk(agent_context: dict[str, Any]) -> str:
+    cash_ratio = float(agent_context.get("cash_ratio", 0) or 0)
+    max_position_ratio = float(agent_context.get("max_position_ratio", 0) or 0)
+    disagreement = agent_context.get("family_disagreement") or {}
+    if isinstance(disagreement, dict) and disagreement.get("has_conflict"):
+        return "这次主要不是谁对谁错，是家里对风险感受不太一样。要不要我们周末一起聊清楚？"
+    if max_position_ratio >= 0.3:
+        return "这次整体先别急，主要有一只占比不低，波动起来家里感受会明显。要不要周末一起再看看？"
+    if cash_ratio < 0.15:
+        return "这次提醒我们现金备用可能偏少，先把家里急用钱安排想清楚。要不要一起商量一下？"
+    if cash_ratio >= 0.35:
+        return "这次看下来现金比较充足，整体不乱，重点是别被短期情绪带着走。要不要我们一起再看看？"
+    return DINNER_TALK_FALLBACK
+
+
+def _split_agent_report_sections(text: str, agent_context: dict[str, Any]) -> tuple[str, str]:
+    raw = _safe_text(text).strip()
+    formal = raw
+    dinner = ""
+    if "【饭桌版】" in raw:
+        before, after = raw.split("【饭桌版】", 1)
+        formal = before.replace("【正式报告】", "").strip()
+        dinner = after.strip()
+    elif "【正式报告】" in raw:
+        formal = raw.replace("【正式报告】", "").strip()
+    return _ensure_disclaimer(_sanitize_report_text(formal)), sanitize_dinner_talk(dinner, agent_context)
+
+
 def _flatten_missing_data(missing_data: dict[str, Any]) -> str:
     if not missing_data:
         return "这次体检没有发现明显的数据缺口。"
@@ -528,11 +588,13 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
    【给爸妈重点看的地方】
    【免责声明】
 9. 【免责声明】必须一字不改：{DISCLAIMER}
+10. 请在正式报告之外，额外生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在“要不要我们一起再看看/商量一下”这种开放式表达。
 """.strip()
 
     user_prompt = (
         f"报告模式：{mode}\n\n"
-        "请严格基于下面的 agent_context 生成报告，不允许自由发挥，不允许补充没有出现的数据。\n\n"
+        "请严格基于下面的 agent_context 生成报告，不允许自由发挥，不允许补充没有出现的数据。\n"
+        "输出格式必须是：\n【正式报告】\n...正式报告...\n\n【饭桌版】\n...80字以内口语说明...\n\n"
         + json.dumps(context, ensure_ascii=False, indent=2)
     )
 
@@ -545,7 +607,7 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
         timeout=30,
         max_tokens=1600,
     )
-    return _ensure_disclaimer(_sanitize_report_text(content))
+    return _sanitize_report_text(content)
 
 
 def generate_local_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版") -> str:
@@ -564,14 +626,21 @@ def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版"
     when the API key is missing or the API call is temporarily unavailable.
     """
     try:
+        combined_report = _call_deepseek_agent_report(agent_context, mode)
+        main_report, dinner_talk = _split_agent_report_sections(combined_report, agent_context)
         return {
-            "ai_report": _call_deepseek_agent_report(agent_context, mode),
+            "ai_report": main_report,
+            "main_report": main_report,
+            "dinner_talk": dinner_talk,
             "report_source": "deepseek",
         }
     except Exception:  # noqa: BLE001
         pass
+    local_report = generate_local_agent_report(agent_context, mode)
     return {
-        "ai_report": generate_local_agent_report(agent_context, mode),
+        "ai_report": local_report,
+        "main_report": local_report,
+        "dinner_talk": sanitize_dinner_talk(_local_dinner_talk(agent_context), agent_context),
         "report_source": "local_fallback",
     }
 

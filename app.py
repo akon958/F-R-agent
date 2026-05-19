@@ -2634,12 +2634,13 @@ def followup_block(agent_context: dict[str, Any]) -> None:
                     st.markdown("---")
 
 
-def _unpack_agent_report(report_result: Any) -> tuple[str, str]:
+def _unpack_agent_report(report_result: Any) -> tuple[str, str, str]:
     if isinstance(report_result, dict):
         text = str(report_result.get("ai_report", "") or report_result.get("report", "") or "")
+        dinner = str(report_result.get("dinner_talk", "") or "")
         source = str(report_result.get("report_source", "local_fallback") or "local_fallback")
-        return text or _AI_REPORT_FALLBACK_MSG, source
-    return str(report_result or _AI_REPORT_FALLBACK_MSG), "local_fallback"
+        return text or _AI_REPORT_FALLBACK_MSG, source, dinner
+    return str(report_result or _AI_REPORT_FALLBACK_MSG), "local_fallback", ""
 
 
 def _report_source_label(report_source: str) -> str:
@@ -2808,12 +2809,14 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     cached_mode = str(agent_result.get("report_mode", "爸妈版") or "爸妈版")
     if agent_context and mode != cached_mode:
         with st.spinner("正在按新的报告模式生成说明..."):
-            report_text, report_source = _unpack_agent_report(generate_agent_report(agent_context, mode))
+            report_text, report_source, dinner_talk = _unpack_agent_report(generate_agent_report(agent_context, mode))
         display_report = report_text
         agent_result["ai_report"] = display_report
+        agent_result["dinner_talk"] = dinner_talk
         agent_result["report_source"] = report_source
         agent_result["report_mode"] = mode
         agent_context["ai_report"] = display_report
+        agent_context["dinner_talk"] = dinner_talk
         agent_context["report_source"] = report_source
         agent_context["report_mode"] = mode
         agent_result["agent_context"] = agent_context
@@ -2822,6 +2825,21 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     render_html('<div class="card" style="padding:1.4rem;">')
     st.markdown(display_report)
     render_html("</div>")
+
+    dinner_talk = str(agent_result.get("dinner_talk") or agent_context.get("dinner_talk") or "")
+    if dinner_talk:
+        render_html(
+            f"""
+            <section class="block" style="padding:1rem 1.1rem;">
+                <div class="block-head" style="margin-bottom:.35rem;">
+                    <div>
+                        <h2 class="block-title" style="font-size:1.18rem;">🗣️ 今晚可以这样跟爸妈说</h2>
+                        <p class="block-subtitle">{html_escape(dinner_talk)}</p>
+                    </div>
+                </div>
+            </section>
+            """
+        )
 
     # ── 5. 继续追问 ────────────────────────────────────────────
     if agent_context:

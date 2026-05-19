@@ -27,6 +27,27 @@ from storage import (
 )
 
 
+def _safe_dinner_talk(text: str, agent_context: dict[str, Any] | None = None) -> str:
+    try:
+        from ai_report import sanitize_dinner_talk  # type: ignore
+
+        return sanitize_dinner_talk(text, agent_context or {})
+    except Exception:  # noqa: BLE001
+        fallback = "这次结果主要提醒我们一起看看风险分布，不急着做决定，先把家里对风险的看法聊清楚。"
+        return fallback[:80]
+
+
+def _fallback_dinner_talk(agent_context: dict[str, Any]) -> str:
+    disagreement = agent_context.get("family_disagreement") or {}
+    if isinstance(disagreement, dict) and disagreement.get("has_conflict"):
+        text = "这次主要不是谁对谁错，是家里对风险感受不太一样。要不要我们周末一起聊清楚？"
+    elif float(agent_context.get("max_position_ratio", 0) or 0) >= 0.3:
+        text = "这次主要有一只占比不低，波动起来家里感受会明显。要不要周末一起再看看？"
+    else:
+        text = "这次结果主要提醒我们一起看看风险分布，不急着做决定，先把家里对风险的看法聊清楚。"
+    return _safe_dinner_talk(text, agent_context)
+
+
 def _to_float(value: Any) -> float:
     try:
         return float(value or 0)
@@ -417,13 +438,18 @@ def run_family_risk_agent(
         }
     if isinstance(report_result, dict):
         ai_report = _safe_ai_text(str(report_result.get("ai_report", "") or ""))
+        dinner_talk = _safe_dinner_talk(str(report_result.get("dinner_talk", "") or ""), agent_context)
         report_source = str(report_result.get("report_source", "local_fallback") or "local_fallback")
     else:
         ai_report = _safe_ai_text(str(report_result or ""))
+        dinner_talk = _fallback_dinner_talk(agent_context)
     if not ai_report:
         ai_report = _safe_ai_text(_fallback_ai_report(analysis, missing_data))
         report_source = "local_fallback"
+    if not dinner_talk:
+        dinner_talk = _fallback_dinner_talk(agent_context)
     agent_context["ai_report"] = ai_report  # 回填，让追问函数可读取本次报告内容
+    agent_context["dinner_talk"] = dinner_talk
     agent_context["report_source"] = report_source
     agent_context["report_mode"] = "爸妈版"
     agent_context["run_id"] = run_id  # 每次体检唯一编号
@@ -442,6 +468,7 @@ def run_family_risk_agent(
         "missing_data": missing_data,
         "warnings": warnings,
         "ai_report": ai_report,
+        "dinner_talk": dinner_talk,
         "report_source": report_source,
         "report_mode": "爸妈版",
         "family_disagreement": family_disagreement,
