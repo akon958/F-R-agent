@@ -369,6 +369,7 @@ except ImportError:
 
 
 from data_fetcher import (
+    get_cache_diagnostics,
     get_cache_summary,
     get_stock_metrics,
     normalize_code,
@@ -1518,10 +1519,11 @@ def render_agent_progress(
         note = "正在检查持仓结构、现金比例和数据完整性。"
 
     with card_placeholder.container():
-        with st.container(border=True):
+        with st.container():
             st.markdown("**智能体检进行中**")
             st.caption(f"正在：{current_step}")
-            st.progress(percent_value, text=f"{percent_value}%")
+            st.progress(percent_value)
+            st.caption(f"进度：{percent_value}%")
             st.caption(note)
 
     try:
@@ -1540,6 +1542,45 @@ def render_agent_progress(
                 else:
                     prefix = "○"
                 st.caption(f"{prefix} {step}")
+
+
+def _safe_error_text(value: Any) -> str:
+    text = str(value or "")
+    for secret_name in ("DEEPSEEK_API_KEY", "SUPABASE_KEY", "SUPABASE_URL"):
+        secret_value = ""
+        try:
+            secret_value = str(st.secrets.get(secret_name, "")).strip()
+        except Exception:  # noqa: BLE001
+            secret_value = ""
+        env_value = os.getenv(secret_name, "").strip()
+        for raw in (secret_value, env_value):
+            if raw:
+                text = text.replace(raw, "***")
+    return text[:800]
+
+
+def _build_agent_error_info(exc: Exception) -> dict[str, Any]:
+    diagnostics = get_cache_diagnostics()
+    return {
+        "错误类型": type(exc).__name__,
+        "错误信息": _safe_error_text(exc),
+        "当前工作目录": diagnostics.get("cwd", os.getcwd()),
+        "stock_metrics.csv 检查路径": diagnostics.get("checked_paths", []),
+        "已找到缓存文件": diagnostics.get("found_path", "") or "未找到",
+    }
+
+
+def render_error_debug(error_info: dict[str, Any] | None) -> None:
+    if not error_info:
+        return
+    with st.expander("开发者信息 / 调试详情", expanded=False):
+        st.write(f"- 错误类型：{error_info.get('错误类型', '')}")
+        st.write(f"- 错误信息：{error_info.get('错误信息', '')}")
+        st.write(f"- 当前工作目录：{error_info.get('当前工作目录', '')}")
+        st.write("- stock_metrics.csv 检查过的路径：")
+        for path in error_info.get("stock_metrics.csv 检查路径", []) or []:
+            st.write(f"  - {path}")
+        st.write(f"- 已找到缓存文件：{error_info.get('已找到缓存文件', '')}")
 
 
 def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float | str]]) -> None:
@@ -1586,10 +1627,14 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
         st.session_state.pop("ai_report_failed", None)
         st.session_state.pop("followup_answers", None)
         st.session_state.pop("followup_questions", None)  # 新一次体检，重新随机生成问题
+        st.session_state.pop("last_agent_error", None)
         st.session_state["report_mode"] = "爸妈版"
         st.rerun()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        error_info = _build_agent_error_info(exc)
+        st.session_state["last_agent_error"] = error_info
         st.error("体检时遇到问题，但页面没有崩。请稍后重试，或检查 stock_metrics.csv 是否存在。")
+        render_error_debug(error_info)
         st.stop()
 
 
@@ -2480,8 +2525,16 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:
     if not agent_result:
+        render_error_debug(st.session_state.get("last_agent_error"))
         return
     with st.expander("开发者信息 / 调试详情", expanded=False):
+        error_info = st.session_state.get("last_agent_error")
+        if error_info:
+            st.write("**最近一次错误**")
+            st.write(f"- 错误类型：{error_info.get('错误类型', '')}")
+            st.write(f"- 错误信息：{error_info.get('错误信息', '')}")
+            st.write(f"- 当前工作目录：{error_info.get('当前工作目录', '')}")
+            st.write(f"- 已找到缓存文件：{error_info.get('已找到缓存文件', '')}")
         debug_info = agent_result.get("debug_info", {})
         if debug_info:
             for key, value in debug_info.items():
@@ -2509,7 +2562,7 @@ def history_records_block() -> None:
             level = row.get("risk_level") or row.get("风险等级") or ""
             cash_ratio = row.get("cash_ratio") or row.get("现金比例") or 0
             stock_ratio = row.get("stock_ratio") or row.get("股票仓位") or 0
-            with st.container(border=True):
+            with st.container():
                 st.write(f"**{created_at or '最近一次体检'}｜评分 {score}｜{level}**")
                 st.caption(f"现金比例：{percent(float(cash_ratio or 0))} ｜ 股票/基金仓位：{percent(float(stock_ratio or 0))}")
                 risks = row.get("main_risks") or row.get("主要风险") or []

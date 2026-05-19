@@ -62,7 +62,13 @@ def _retry(func: Callable[[], Any], retries: int = 3, wait: float = 3.0) -> Any:
     return None
 
 
-CACHE_FILE = Path(__file__).with_name("stock_metrics.csv")
+BASE_DIR = Path(__file__).resolve().parent
+CACHE_FILE = BASE_DIR / "stock_metrics.csv"
+CACHE_CANDIDATES = [
+    BASE_DIR / "stock_metrics.csv",
+    BASE_DIR / "data" / "stock_metrics.csv",
+    Path.cwd() / "stock_metrics.csv",
+]
 
 CACHE_COLUMNS = [
     "代码",
@@ -164,6 +170,35 @@ def _now_text() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _cache_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for candidate in CACHE_CANDIDATES:
+        resolved = candidate.resolve()
+        if resolved not in candidates:
+            candidates.append(resolved)
+    return candidates
+
+
+def _resolve_cache_file() -> Path:
+    for candidate in _cache_candidates():
+        if candidate.exists():
+            return candidate
+    checked = "；".join(str(path) for path in _cache_candidates())
+    raise FileNotFoundError(
+        f"未找到 stock_metrics.csv，请确认该文件已上传到 GitHub 仓库根目录或 data 目录。已检查路径：{checked}"
+    )
+
+
+def get_cache_diagnostics() -> dict[str, Any]:
+    candidates = _cache_candidates()
+    existing = [path for path in candidates if path.exists()]
+    return {
+        "cwd": str(Path.cwd()),
+        "checked_paths": [str(path) for path in candidates],
+        "found_path": str(existing[0]) if existing else "",
+    }
+
+
 def _to_float(value: Any) -> float | None:
     if value is None or pd.isna(value):
         return None
@@ -188,10 +223,8 @@ def _first_present(row: pd.Series | dict[str, Any], names: list[str]) -> Any:
 
 
 def _read_cache() -> pd.DataFrame:
-    if not CACHE_FILE.exists():
-        return pd.DataFrame(columns=CACHE_COLUMNS)
-
-    df = pd.read_csv(CACHE_FILE, dtype={"代码": str, "股票代码": str})
+    cache_file = _resolve_cache_file()
+    df = pd.read_csv(cache_file, dtype={"代码": str, "股票代码": str})
     normalized = pd.DataFrame()
     for column in CACHE_COLUMNS:
         aliases = ALIASES.get(column, [column])
@@ -215,7 +248,9 @@ def _write_cache(df: pd.DataFrame) -> None:
 
 
 def get_cache_summary() -> dict[str, Any]:
-    if not CACHE_FILE.exists():
+    try:
+        cache_file = _resolve_cache_file()
+    except FileNotFoundError:
         return {"exists": False, "count": 0, "message": "暂无缓存数据"}
     try:
         df = _read_cache()
@@ -230,6 +265,7 @@ def get_cache_summary() -> dict[str, Any]:
         "exists": True,
         "count": count,
         "message": f"缓存现有 {count} 只标的",
+        "cache_file": str(cache_file),
         "latest_update": latest_update or "暂无缓存数据",
         "finance_count": int(finance_count),
     }
