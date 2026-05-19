@@ -17,7 +17,7 @@ from agent import run_family_risk_agent
 # 不依赖云端 ai_report.py 的版本，永远可用。
 # ─────────────────────────────────────────────────────────────────
 _DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
-FOLLOWUP_VERSION = "v2_deepseek_error"
+FOLLOWUP_VERSION = "v3_deepseek_shared_client"
 
 
 def _fmt_pct(value: Any) -> str:
@@ -2618,6 +2618,29 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
             st.write("**最近一次追问兜底**")
             st.write(f"- 追问回答来源：{followup_source_label(followup_error.get('source', 'local_fallback'))}")
             st.write(f"- 兜底原因：{followup_error.get('error', '')}")
+        agent_context = agent_result.get("agent_context", {}) if agent_result else {}
+        if st.button("测试 DeepSeek 追问接口", key="test_deepseek_followup_api"):
+            if agent_context:
+                try:
+                    st.session_state["followup_self_test"] = answer_followup_question(agent_context, "1+1是多少")
+                except Exception as exc:  # noqa: BLE001
+                    st.session_state["followup_self_test"] = {
+                        "answer": "",
+                        "source": "local_fallback",
+                        "error": f"追问自检调用异常：{exc}",
+                    }
+            else:
+                st.session_state["followup_self_test"] = {
+                    "answer": "",
+                    "source": "local_fallback",
+                    "error": "缺少本次体检上下文，请先完成一键智能体检",
+                }
+        self_test = st.session_state.get("followup_self_test")
+        if self_test:
+            st.write("**DeepSeek 追问自检结果**")
+            st.write(f"- source: {self_test.get('source', '')}")
+            st.write(f"- error: {self_test.get('error', '')}")
+            st.write(f"- answer: {self_test.get('answer', '')}")
         debug_info = agent_result.get("debug_info", {})
         if debug_info:
             for key, value in debug_info.items():

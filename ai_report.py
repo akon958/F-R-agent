@@ -400,6 +400,52 @@ def _get_deepseek_api_key() -> str:
     return os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 
+def _call_deepseek(
+    messages: list[dict[str, str]],
+    temperature: float = 0.3,
+    timeout: int | float = 30,
+    max_tokens: int = 1600,
+) -> str:
+    """Shared DeepSeek caller for the main report and follow-up answers."""
+    api_key = _get_deepseek_api_key()
+    if not api_key:
+        raise RuntimeError("未配置 DEEPSEEK_API_KEY")
+
+    try:
+        from openai import OpenAI
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"OpenAI client 创建失败：{exc}") from exc
+
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com",
+            timeout=float(timeout),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"OpenAI client 创建失败：{exc}") from exc
+
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except TimeoutError as exc:
+        raise RuntimeError("DeepSeek API 调用超时") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"DeepSeek API 调用异常：{exc}") from exc
+
+    try:
+        content = _safe_text(response.choices[0].message.content).strip()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"DeepSeek 返回解析失败：{exc}") from exc
+    if not content:
+        raise RuntimeError("DeepSeek 返回为空")
+    return content
+
+
 def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = [
         "holdings",
@@ -421,10 +467,8 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
     return {key: agent_context.get(key) for key in allowed_keys}
 
 
-def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str, api_key: str) -> str:
+def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str:
     """Call DeepSeek for the one-click Agent report, strictly from agent_context."""
-    from openai import OpenAI
-
     context = _agent_context_for_prompt(agent_context)
     valuation_missing = bool((context.get("missing_data") or {}).get("估值数据缺失"))
     valuation_rule = (
@@ -460,19 +504,15 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str, api_ke
         + json.dumps(context, ensure_ascii=False, indent=2)
     )
 
-    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=30.0)
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
+    content = _call_deepseek(
+        [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
+        timeout=30,
         max_tokens=1600,
     )
-    content = _safe_text(response.choices[0].message.content).strip()
-    if not content:
-        raise RuntimeError("empty deepseek response")
     return _ensure_disclaimer(_sanitize_report_text(content))
 
 
@@ -491,15 +531,13 @@ def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版"
     DeepSeek is the primary report source. Local template generation is used only
     when the API key is missing or the API call is temporarily unavailable.
     """
-    api_key = _get_deepseek_api_key()
-    if api_key:
-        try:
-            return {
-                "ai_report": _call_deepseek_agent_report(agent_context, mode, api_key),
-                "report_source": "deepseek",
-            }
-        except Exception:  # noqa: BLE001
-            pass
+    try:
+        return {
+            "ai_report": _call_deepseek_agent_report(agent_context, mode),
+            "report_source": "deepseek",
+        }
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "ai_report": generate_local_agent_report(agent_context, mode),
         "report_source": "local_fallback",
@@ -542,16 +580,19 @@ def _safe_followup_error(exc: Exception) -> str:
     text = str(exc).strip()
     if not text:
         text = type(exc).__name__
-    if "timeout" in text.lower() or "timed out" in text.lower():
+    lower = text.lower()
+    if "未配置 deepseek_api_key" in lower or "未配置" in text:
+        return "未配置 DEEPSEEK_API_KEY"
+    if "openai client 创建失败" in lower or "client" in lower:
+        return f"OpenAI client 创建失败：{text[:160]}"
+    if "timeout" in lower or "timed out" in lower or "超时" in text:
         return "DeepSeek API 调用超时"
-    if "empty deepseek followup response" in text:
+    if "返回为空" in text or "empty" in lower:
         return "DeepSeek 返回为空"
     return f"DeepSeek 调用异常：{text[:180]}"
 
 
-def _call_deepseek_followup(agent_context: dict[str, Any], question: str, api_key: str) -> str:
-    from openai import OpenAI
-
+def _call_deepseek_followup(agent_context: dict[str, Any], question: str) -> str:
     context = _agent_context_for_prompt(agent_context)
     system_prompt = f"""
 你是“家庭持仓风险体检 Agent”的追问助手。你只能回答和本次投资体检相关的问题。
@@ -571,19 +612,15 @@ def _call_deepseek_followup(agent_context: dict[str, Any], question: str, api_ke
         "本次体检 agent_context：\n"
         + json.dumps(context, ensure_ascii=False, indent=2)
     )
-    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=30.0)
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
+    content = _call_deepseek(
+        [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
+        timeout=30,
         max_tokens=900,
     )
-    content = _safe_text(response.choices[0].message.content).strip()
-    if not content:
-        raise RuntimeError("empty deepseek followup response")
     return _ensure_disclaimer(_sanitize_report_text(content))
 
 
@@ -852,26 +889,19 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> di
     if not agent_context:
         return {"answer": _unrelated_followup_answer(), "source": "local_fallback", "error": "缺少本次体检上下文"}
 
-    api_key = _get_deepseek_api_key()
-    if api_key:
-        try:
-            return {
-                "answer": _call_deepseek_followup(agent_context, q, api_key),
-                "source": "deepseek",
-                "error": "",
-            }
-        except Exception as exc:  # noqa: BLE001
-            error = _safe_followup_error(exc)
-            return {
-                "answer": _generate_local_followup_answer(agent_context, q),
-                "source": "local_fallback",
-                "error": error,
-            }
-    return {
-        "answer": _generate_local_followup_answer(agent_context, q),
-        "source": "local_fallback",
-        "error": "未配置 DEEPSEEK_API_KEY",
-    }
+    try:
+        return {
+            "answer": _call_deepseek_followup(agent_context, q),
+            "source": "deepseek",
+            "error": "",
+        }
+    except Exception as exc:  # noqa: BLE001
+        error = _safe_followup_error(exc)
+        return {
+            "answer": _generate_local_followup_answer(agent_context, q),
+            "source": "local_fallback",
+            "error": error,
+        }
 
 
 # ─────────────────────────────────────────────────────────────────
