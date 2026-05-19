@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from analyzer import analyze_portfolio
 try:
@@ -260,7 +260,15 @@ def run_family_risk_agent(
     family_cash: float,
     risk_preference: str = "稳健",
     user_goal: str = "检查家庭持仓风险",
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
+    def emit(step: str, percent: int) -> None:
+        if progress_callback:
+            try:
+                progress_callback(step, percent)
+            except Exception:  # noqa: BLE001
+                pass
+
     agent_steps = [
         {
             "title": "识别家庭持仓",
@@ -286,6 +294,7 @@ def run_family_risk_agent(
     debug_steps: list[str] = []
     warnings: list[str] = []
 
+    emit("检查输入是否完整", 8)
     debug_steps.append("检查用户输入是否完整")
     clean_holdings, input_warnings = _normalize_holdings(holdings)
     warnings.extend(input_warnings)
@@ -318,6 +327,7 @@ def run_family_risk_agent(
         }
 
     codes = [item["code"] for item in clean_holdings]
+    emit("读取行情和财务缓存", 20)
     debug_steps.append("读取本地数据。")
     stocks, fetch_warnings = get_stock_metrics(codes)
     warnings.extend(fetch_warnings)
@@ -329,6 +339,7 @@ def run_family_risk_agent(
     if realtime_rows:
         stocks = realtime_rows
 
+    emit("计算持仓比例和现金比例", 35)
     debug_steps.append("计算持仓比例、整体仓位和现金比例")
     stock_total = sum(item["amount"] for item in clean_holdings)
     total_assets = cash + stock_total
@@ -343,6 +354,7 @@ def run_family_risk_agent(
         "max_single_ratio": max((item["amount"] / total_assets for item in clean_holdings), default=0) if total_assets > 0 else 0,
     }
 
+    emit("识别集中风险和数据缺失", 48)
     debug_steps.append("判断单只集中风险和现金压力")
     if portfolio_summary["max_single_ratio"] > 0.40:
         warnings.append("单只持仓超过家庭可投资资金的 40%，集中度偏高。")
@@ -355,6 +367,7 @@ def run_family_risk_agent(
     debug_steps.append("完成风险计算。")
     analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
 
+    emit("组装 agent_context", 60)
     debug_steps.append("整理体检上下文。")
     data_status = analysis.get("data_status", "本地缓存")
     main_risks = analysis.get("risk_notes", [])[:8]
@@ -368,6 +381,7 @@ def run_family_risk_agent(
         main_risks=main_risks,
     )
 
+    emit("调用 DeepSeek 生成 AI 风险说明", 72)
     debug_steps.append("生成家庭说明。")
     report_source = "local_fallback"
     try:
@@ -422,9 +436,12 @@ def run_family_risk_agent(
     }
 
     debug_steps.append("保存本次体检记录。")
+    emit("保存历史记录到 Supabase", 88)
     agent_result["saved_history"] = _save_history(agent_result, analysis)
     agent_result["storage_status"] = get_last_analysis_save_status()
     agent_result["debug_info"]["保存历史记录"] = agent_result["saved_history"]
     agent_result["debug_info"]["存储方式"] = agent_result["storage_status"].get("backend")
     agent_result["debug_info"]["saved_history"] = agent_result["saved_history"]
+    emit("准备智能追问建议", 96)
+    emit("完成体检", 100)
     return agent_result

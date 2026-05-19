@@ -1490,6 +1490,58 @@ def loading_card(code: str) -> None:
     )
 
 
+AGENT_PROGRESS_STEPS = [
+    "检查输入是否完整",
+    "读取行情和财务缓存",
+    "计算持仓比例和现金比例",
+    "识别集中风险和数据缺失",
+    "组装 agent_context",
+    "调用 DeepSeek 生成 AI 风险说明",
+    "保存历史记录到 Supabase",
+    "准备智能追问建议",
+    "完成体检",
+]
+
+
+def render_agent_progress(
+    card_placeholder: Any,
+    detail_placeholder: Any,
+    current_step: str,
+    percent_value: int,
+) -> None:
+    percent_value = max(0, min(100, int(percent_value)))
+    if current_step == "调用 DeepSeek 生成 AI 风险说明":
+        note = "正在调用 DeepSeek 生成说明，可能需要几秒钟。"
+    elif current_step == "保存历史记录到 Supabase":
+        note = "正在保存历史记录。"
+    else:
+        note = "正在检查持仓结构、现金比例和数据完整性。"
+
+    with card_placeholder.container():
+        with st.container(border=True):
+            st.markdown("**智能体检进行中**")
+            st.caption(f"正在：{current_step}")
+            st.progress(percent_value, text=f"{percent_value}%")
+            st.caption(note)
+
+    try:
+        current_index = AGENT_PROGRESS_STEPS.index(current_step)
+    except ValueError:
+        current_index = 0
+    with detail_placeholder.container():
+        with st.expander("查看执行细节", expanded=False):
+            for idx, step in enumerate(AGENT_PROGRESS_STEPS):
+                if idx < current_index:
+                    prefix = "✓"
+                elif idx == current_index and percent_value < 100:
+                    prefix = "⏳"
+                elif percent_value >= 100:
+                    prefix = "✓"
+                else:
+                    prefix = "○"
+                st.caption(f"{prefix} {step}")
+
+
 def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float | str]]) -> None:
     holdings = clean_holdings(raw_rows)
     if not holdings:
@@ -1497,15 +1549,26 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
         st.stop()
 
     try:
-        codes = [str(item["code"]) for item in holdings]
-        loading_card(codes[0])
-        with st.spinner("家庭持仓风险体检 Agent 正在执行..."):
-            agent_result = run_family_risk_agent(
-                holdings=holdings,
-                family_cash=cash,
-                risk_preference=risk_profile,
-                user_goal="检查家庭持仓风险",
-            )
+        progress_card = st.empty()
+        progress_detail = st.empty()
+        render_agent_progress(progress_card, progress_detail, "检查输入是否完整", 0)
+
+        def update_progress(step: str, percent_value: int) -> None:
+            render_agent_progress(progress_card, progress_detail, step, percent_value)
+
+        agent_result = run_family_risk_agent(
+            holdings=holdings,
+            family_cash=cash,
+            risk_preference=risk_profile,
+            user_goal="检查家庭持仓风险",
+            progress_callback=update_progress,
+        )
+        if agent_result.get("report_source") == "local_fallback":
+            st.info("DeepSeek 暂时不可用，已使用本地规则兜底生成。")
+        storage_status = agent_result.get("storage_status", {})
+        if agent_result.get("saved_history") and storage_status.get("backend") == "local_csv":
+            st.info("云端保存失败，已使用本地兜底。")
+        render_agent_progress(progress_card, progress_detail, "完成体检", 100)
         if not agent_result.get("success"):
             for warning in agent_result.get("warnings", []):
                 st.warning(warning)
