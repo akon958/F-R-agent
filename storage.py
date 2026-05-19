@@ -422,6 +422,15 @@ def _comment_payload(comment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _insert_family_comment_supabase(client: Any, payload: dict[str, Any]) -> None:
+    """Insert without asking Supabase to return the inserted row."""
+    table = client.table("family_comments")
+    try:
+        table.insert(payload, returning="minimal").execute()
+    except TypeError:
+        table.insert(payload).execute()
+
+
 def save_family_comment(comment: dict[str, Any]) -> dict[str, Any]:
     """Save one family observation comment. Supabase first, local CSV fallback."""
     global _LAST_COMMENT_SAVE_STATUS, _LAST_FAMILY_COMMENT_SAVE_STATUS
@@ -444,7 +453,7 @@ def save_family_comment(comment: dict[str, Any]) -> dict[str, Any]:
             "comment_text": payload["comment_text"],
         }
         try:
-            client.table("family_comments").insert(compatible_payload).execute()
+            _insert_family_comment_supabase(client, compatible_payload)
             _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
                 "success": True,
                 "backend": "supabase",
@@ -457,7 +466,7 @@ def save_family_comment(comment: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             first_error = f"{type(exc).__name__}: {str(exc)[:220]}"
             try:
-                client.table("family_comments").insert(minimal_payload).execute()
+                _insert_family_comment_supabase(client, minimal_payload)
                 _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
                     "success": True,
                     "backend": "supabase",

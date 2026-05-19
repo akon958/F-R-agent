@@ -2354,6 +2354,26 @@ def discussion_block(run_id: str = "") -> None:
             st.session_state["family_comments"] = load_recent_family_comments(limit=20)
             st.session_state["family_comments_cache"] = st.session_state["family_comments"]
             st.session_state["family_comments_last_count"] = len(st.session_state["family_comments"])
+            read_status = get_last_family_comment_read_status()
+            if not result.get("success") and read_status.get("backend") == "supabase":
+                saved_row_seen = any(
+                    str(row.get("member", "")) == str(comment["member"])
+                    and str(row.get("focus", "")) == str(comment["focus"])
+                    and str(row.get("stance", "")) == str(comment["stance"])
+                    and str(row.get("content", "")) == str(comment["content"])
+                    and (not comment.get("run_id") or str(row.get("run_id", "")) == str(comment["run_id"]))
+                    for row in st.session_state["family_comments"]
+                )
+                if saved_row_seen:
+                    result = {"success": True, "backend": "supabase", "error": ""}
+                    st.session_state["family_comment_last_save"] = {
+                        "success": True,
+                        "backend": "supabase",
+                        "connected": True,
+                        "saved": True,
+                        "message": "观察记录已保存到 Supabase 云数据库",
+                        "error": "",
+                    }
         except Exception as exc:  # noqa: BLE001
             save_status_for_fallback = st.session_state.get("family_comment_last_save", {})
             locally_available = bool(save_status_for_fallback.get("saved"))
