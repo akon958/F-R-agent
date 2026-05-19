@@ -220,6 +220,20 @@ def _build_agent_context(
             }
         )
 
+    # ── PE/PB 状态描述 ──────────────────────────────────────────
+    valuation_missing_items = missing_data.get("估值数据缺失", [])
+    if valuation_missing_items:
+        pe_pb_status = f"PE/PB 数据暂缺（涉及 {len(valuation_missing_items)} 只标的）"
+    else:
+        pe_pb_status = "PE/PB 数据已匹配"
+
+    # ── 财务数据状态描述 ────────────────────────────────────────
+    finance_missing_items = missing_data.get("财务数据缺失", [])
+    if finance_missing_items:
+        financial_status = f"财务数据部分缺失（涉及 {len(finance_missing_items)} 只标的）"
+    else:
+        financial_status = "财务数据已匹配"
+
     return {
         "holdings": holdings_context,
         "family_cash": cash,
@@ -233,7 +247,10 @@ def _build_agent_context(
         "main_risks": main_risks,
         "missing_data": missing_data,
         "data_status": analysis.get("data_status", "本地缓存"),
+        "pe_pb_status": pe_pb_status,
+        "financial_status": financial_status,
         "history_summary": _load_history_summary(),
+        "ai_report": "",  # 占位，由 run_family_risk_agent 生成后回填
     }
 
 
@@ -344,6 +361,7 @@ def run_family_risk_agent(
 
     debug_steps.append("生成家庭说明。")
     ai_report = _safe_ai_text(generate_agent_report(agent_context))
+    agent_context["ai_report"] = ai_report  # 回填，让追问函数可读取本次报告内容
     ai_report_success = True
 
     agent_result = {
