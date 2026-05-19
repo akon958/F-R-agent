@@ -2296,15 +2296,38 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
     )
 
 
+def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
+    clean_question = question.strip()
+    if not clean_question:
+        return
+    try:
+        answer = answer_followup_question(agent_context, clean_question)
+    except Exception:  # noqa: BLE001
+        answer = _AI_REPORT_FALLBACK_MSG
+
+    answers: list[dict[str, str]] = list(st.session_state.get("followup_answers", []))
+    existing = next((a for a in answers if a["question"] == clean_question), None)
+    if existing:
+        existing["answer"] = answer
+    else:
+        answers.insert(0, {"question": clean_question, "answer": answer})
+    try:
+        save_followup_history(question=clean_question, answer=answer)
+    except Exception:  # noqa: BLE001
+        pass
+    st.session_state["followup_answers"] = answers
+
+
 def followup_block(agent_context: dict[str, Any]) -> None:
     """继续追问区域：动态问题按钮（每次体检结果不同，问题随之变化） + 保留回答历史。"""
+    st.markdown("---")
     render_html(
         """
-        <section class="block">
-            <div class="block-head" style="margin-bottom:.6rem;">
+        <section class="block ai-report" style="padding:1.15rem 1.2rem;">
+            <div class="block-head" style="margin-bottom:.35rem;">
                 <div>
-                    <h2 class="block-title" style="font-size:1.3rem;">继续追问这次体检</h2>
-                    <p class="block-subtitle">问题根据本次体检数据自动生成，点击直接作答。不荐股，不预测涨跌。</p>
+                    <h2 class="block-title" style="font-size:1.34rem;">继续追问这次体检</h2>
+                    <p class="block-subtitle">问题根据本次体检数据自动生成，点击即可继续问 AI。回答只基于本次体检结果，不荐股，不预测涨跌。</p>
                 </div>
             </div>
         </section>
@@ -2322,33 +2345,39 @@ def followup_block(agent_context: dict[str, Any]) -> None:
         st.session_state["followup_questions"] = cached
     questions: list[str] = cached
 
+    st.caption("你可以这样问：")
     col_a, col_b = st.columns(2)
     for qi, question in enumerate(questions):
         col = col_a if qi % 2 == 0 else col_b
-        if col.button(question, use_container_width=True, key=f"fq_{qi}"):
-            try:
-                answer = answer_followup_question(agent_context, question)
-            except Exception:  # noqa: BLE001
-                answer = _AI_REPORT_FALLBACK_MSG
-            answers: list[dict[str, str]] = list(st.session_state.get("followup_answers", []))
-            existing = next((a for a in answers if a["question"] == question), None)
-            if existing:
-                existing["answer"] = answer
-            else:
-                answers.insert(0, {"question": question, "answer": answer})
-            try:
-                save_followup_history(question=question, answer=answer)
-            except Exception:  # noqa: BLE001
-                pass
-            st.session_state["followup_answers"] = answers
+        if col.button(f"AI 建议｜{question}", use_container_width=True, key=f"fq_{qi}"):
+            save_followup_answer(agent_context, question)
+            st.rerun()
+
+    custom_question = st.text_input(
+        "自定义追问",
+        placeholder="也可以自己输入问题，例如：这次主要风险到底是什么？",
+        label_visibility="collapsed",
+        key="custom_followup_question",
+    )
+    if st.button("发送追问", use_container_width=True):
+        if custom_question.strip():
+            save_followup_answer(agent_context, custom_question)
             st.rerun()
 
     followup_answers: list[dict[str, str]] = st.session_state.get("followup_answers", [])
     if followup_answers:
-        st.markdown("---")
-        for item in followup_answers:
-            with st.expander(f"💬 {item['question']}", expanded=True):
-                st.markdown(item["answer"])
+        st.markdown("**最近追问**")
+        recent_answers = followup_answers[:3]
+        for item in recent_answers:
+            with st.container():
+                st.markdown(f"**问题：** {item['question']}")
+                st.markdown(f"**AI 回答：**\n\n{item['answer']}")
+        if len(followup_answers) > 3:
+            with st.expander("查看全部追问记录", expanded=False):
+                for item in followup_answers[3:]:
+                    st.markdown(f"**问题：** {item['question']}")
+                    st.markdown(f"**AI 回答：**\n\n{item['answer']}")
+                    st.markdown("---")
 
 
 def _unpack_agent_report(report_result: Any) -> tuple[str, str]:
@@ -2450,24 +2479,25 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # ── 3. 主要风险 + 数据缺失两栏 ────────────────────────────
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("主要风险")
-        for risk in main_risks:
-            st.write(f"- {risk}")
-    with col2:
-        st.subheader("数据缺失")
-        has_missing = False
-        for title, items in missing_data.items():
-            if items:
-                has_missing = True
-                if "估值" in title:
-                    st.write("- 估值数据暂缺，本次不评价估值高低。")
-                else:
-                    st.write(f"- {title}：{len(items)} 只")
-        if not has_missing:
-            st.write("- 暂未发现明显数据缺失。")
+    # ── 3. 主要风险 + 数据缺失（弱化为结论补充）───────────────
+    with st.expander("主要风险和数据缺失", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("主要风险")
+            for risk in main_risks:
+                st.write(f"- {risk}")
+        with col2:
+            st.subheader("数据缺失")
+            has_missing = False
+            for title, items in missing_data.items():
+                if items:
+                    has_missing = True
+                    if "估值" in title:
+                        st.write("- 估值数据暂缺，本次不评价估值高低。")
+                    else:
+                        st.write(f"- {title}：{len(items)} 只")
+            if not has_missing:
+                st.write("- 暂未发现明显数据缺失。")
 
     # ── 4. 给爸妈看的说明 + 报告模式选择 ──────────────────────
     st.markdown("---")
@@ -2511,18 +2541,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     if agent_context:
         followup_block(agent_context)
 
-    # ── 6. 查看体检过程（用户视角 4 步，无技术词）─────────────
-    with st.expander("查看体检过程", expanded=False):
-        _USER_STEPS = [
-            ("识别家庭持仓", "确认持仓金额、家庭现金和风险承受能力。"),
-            ("检查数据完整性", "检查行情、估值和财务数据是否足够支持本次判断。"),
-            ("评估家庭风险", "计算持仓占比、现金比例、集中度风险和主要数据缺口。"),
-            ("生成家庭说明", "把体检结果转成爸妈能看懂的风险说明。"),
-        ]
-        for idx, (title, desc) in enumerate(_USER_STEPS, 1):
-            st.write(f"**{idx}. {title}**")
-            st.caption(desc)
-
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:
     if not agent_result:
@@ -2544,6 +2562,22 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
             st.write(f"- {step}")
         st.write(f"- saved_history: {agent_result.get('saved_history')}")
         st.write(f"- data_status: {agent_result.get('data_status')}")
+
+
+def inspection_process_block(agent_result: dict[str, Any]) -> None:
+    if not agent_result:
+        return
+    with st.expander("体检过程详情", expanded=False):
+        st.caption("仅用于查看 Agent 执行步骤。")
+        _USER_STEPS = [
+            ("识别家庭持仓", "确认持仓金额、家庭现金和风险承受能力。"),
+            ("检查数据完整性", "检查行情、估值和财务数据是否足够支持本次判断。"),
+            ("评估家庭风险", "计算持仓占比、现金比例、集中度风险和主要数据缺口。"),
+            ("生成家庭说明", "把体检结果转成爸妈能看懂的风险说明。"),
+        ]
+        for idx, (title, desc) in enumerate(_USER_STEPS, 1):
+            st.write(f"**{idx}. {title}**")
+            st.caption(desc)
 
 
 def history_records_block() -> None:
@@ -2584,6 +2618,7 @@ def analysis_page() -> None:
         st.rerun()
     agent_result_block(st.session_state.get("agent_result", {}))
     history_records_block()
+    inspection_process_block(st.session_state.get("agent_result", {}))
     for warning in fetch_warnings:
         if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
             st.info(warning)
