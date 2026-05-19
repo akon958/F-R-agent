@@ -25,6 +25,7 @@ def get_dynamic_questions(agent_context: dict[str, Any]) -> list[str]:
     - 调用方应将结果缓存到 session_state，避免每次 rerun 都重新随机
     - 关键词设计保证 answer_followup_question 能正确路由
     """
+    random.seed()  # 每次调用都从系统熵重新种随机数，避免跨 session 重复
     cash_ratio = float(agent_context.get("cash_ratio", 0) or 0)
     stock_ratio = float(agent_context.get("stock_ratio", 0) or 0)
     max_pos = float(agent_context.get("max_position_ratio", 0) or 0)
