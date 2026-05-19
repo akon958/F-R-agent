@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from typing import Any
 
 
@@ -19,9 +20,9 @@ FOLLOWUP_QUESTIONS = [
 def get_dynamic_questions(agent_context: dict[str, Any]) -> list[str]:
     """根据 agent_context 生成 6 个最相关的追问问题。
 
-    规则：
-    - 每类问题只选一个，共 6 个槽位
-    - 问题文字嵌入真实数字，让人感觉是针对"这次体检"
+    每个槽位准备 3 个措辞变体，用 random.choice 随机选一个：
+    - 相同持仓多次体检，问题措辞会有变化
+    - 调用方应将结果缓存到 session_state，避免每次 rerun 都重新随机
     - 关键词设计保证 answer_followup_question 能正确路由
     """
     cash_ratio = float(agent_context.get("cash_ratio", 0) or 0)
@@ -43,48 +44,119 @@ def get_dynamic_questions(agent_context: dict[str, Any]) -> list[str]:
 
     questions: list[str] = []
 
-    # ── 槽 1：现金相关 ──────────────────────────────────────────
+    # ── 槽 1：现金相关（路由关键词："现金" 或 "备用金"）───────────
     if cash_ratio < 0.10:
-        questions.append(f"现金只剩 {cash_pct}，备用金够用吗？")
+        opts = [
+            f"现金只剩 {cash_pct}，备用金够用吗？",
+            f"家里现金只有 {cash_pct}，会不会太少了？",
+            f"现金比例 {cash_pct}，遇到急用钱能撑住吗？",
+        ]
     elif cash_ratio < 0.15:
-        questions.append(f"现金比例 {cash_pct} 偏低，需要担心吗？")
+        opts = [
+            f"现金比例 {cash_pct} 偏低，需要担心吗？",
+            f"现金只有 {cash_pct}，够应对突发支出吗？",
+            f"备用金 {cash_pct} 是否太薄了？",
+        ]
     elif cash_ratio >= 0.45:
-        questions.append(f"现金留了 {cash_pct}，是不是太保守了？")
+        opts = [
+            f"现金留了 {cash_pct}，是不是太保守了？",
+            f"现金比例 {cash_pct}，还需要保留这么多吗？",
+            f"家里 {cash_pct} 是现金，这样合理吗？",
+        ]
     else:
-        questions.append("现金比例怎么看？")
+        opts = [
+            "现金比例怎么看？",
+            "家里留多少现金比较合适？",
+            "现金比例对这次体检影响大吗？",
+        ]
+    questions.append(random.choice(opts))
 
-    # ── 槽 2：持仓集中度 ────────────────────────────────────────
+    # ── 槽 2：持仓集中度（路由关键词："集中" / "占...%" / "标的" / "哪只" / "一只"）──
     if top_name and max_pos >= 0.40:
-        questions.append(f"{top_name} 占了 {top_pct}，集中度高有什么风险？")
+        opts = [
+            f"{top_name} 占了 {top_pct}，集中度高有什么风险？",
+            f"最大持仓 {top_name} 占 {top_pct}，该怎么看？",
+            f"哪只标的占比最高（{top_pct}）？需要重点关注吗？",
+        ]
     elif top_name and max_pos >= 0.25:
-        questions.append(f"{top_name} 占比最高，需要重点关注吗？")
+        opts = [
+            f"{top_name} 占比最高（{top_pct}），需要重点关注吗？",
+            f"哪只标的目前持仓比例最重？",
+            f"持仓里 {top_name} 这只标的占比最大，有风险吗？",
+        ]
     elif len(holdings) == 1:
-        questions.append("只有一只标的，风险是不是太集中了？")
+        opts = [
+            "只有一只标的，风险是不是太集中了？",
+            "只持有一只，集中度风险怎么看？",
+            "单只标的持仓和多只持仓有什么区别？",
+        ]
     else:
-        questions.append("哪只标的最需要关注？")
+        opts = [
+            "哪只标的最需要关注？",
+            "这些持仓里哪只标的最需要盯着看？",
+            "持仓里有没有特别需要关注的标的？",
+        ]
+    questions.append(random.choice(opts))
 
-    # ── 槽 3：PE/PB 估值 ────────────────────────────────────────
+    # ── 槽 3：PE/PB（路由关键词："PE" 或 "PB"）──────────────────
     if valuation_missing:
-        questions.append("PE/PB 数据缺失，这次体检受影响吗？")
+        opts = [
+            "PE/PB 数据缺失，这次体检受影响吗？",
+            "没有 PE/PB 数据，结论还准确吗？",
+            "PE/PB 缺失会带来哪些判断盲区？",
+        ]
     else:
-        questions.append("PE/PB 对这次判断有什么帮助？")
+        opts = [
+            "PE/PB 对这次判断有什么帮助？",
+            "PE/PB 数据在体检里起什么作用？",
+            "这次 PE/PB 数据说明了什么？",
+        ]
+    questions.append(random.choice(opts))
 
-    # ── 槽 4：数据完整性 ────────────────────────────────────────
+    # ── 槽 4：数据完整性（路由关键词："数据"+"缺"/"影响" 或 "财务"+"判断"）──
     if finance_missing:
-        questions.append("财务数据有缺失，还能判断公司好坏吗？")
+        opts = [
+            "财务数据有缺失，还能判断公司好坏吗？",
+            "财务数据不全，对体检判断有多大影响？",
+            "数据缺失的情况下，体检结论能信吗？",
+        ]
     else:
-        questions.append("数据缺失会影响判断吗？")
+        opts = [
+            "数据缺失会影响判断吗？",
+            "这次体检数据缺失了哪些内容？",
+            "数据完不完整，对体检结论影响大吗？",
+        ]
+    questions.append(random.choice(opts))
 
-    # ── 槽 5：评分/仓位/观察原因 ────────────────────────────────
+    # ── 槽 5：风险原因（路由关键词："评分"/"仓位"/"继续观察"/"需要"+"观察"）──
     if risk_score < 50:
-        questions.append(f"评分 {risk_score} 分偏低，主要原因是什么？")
+        opts = [
+            f"评分 {risk_score} 分偏低，主要原因是什么？",
+            f"这次评分只有 {risk_score} 分，说明了什么？",
+            f"评分 {risk_score} 分，哪些方面拉低了分数？",
+        ]
     elif stock_ratio >= 0.85:
-        questions.append(f"股票/基金仓位已达 {stock_pct}，算重仓吗？")
+        opts = [
+            f"股票/基金仓位已达 {stock_pct}，算重仓吗？",
+            f"仓位 {stock_pct}，遇到市场大波动怎么看？",
+            f"仓位这么重（{stock_pct}），风险怎么评估？",
+        ]
     else:
-        questions.append("为什么这个组合还需要继续观察？")
+        opts = [
+            "为什么这个组合还需要继续观察？",
+            "体检完了，还需要继续观察哪些方面？",
+            "这个组合为什么不能就此放心？",
+        ]
+    questions.append(random.choice(opts))
 
-    # ── 槽 6：给爸妈总结（固定，每次都显示） ───────────────────
-    questions.append("给爸妈一句话怎么说？")
+    # ── 槽 6：给爸妈总结（路由关键词："一句话"）─────────────────
+    opts = [
+        "给爸妈一句话怎么说？",
+        "用一句话总结这次体检，怎么说？",
+        "爸妈看这个结果，一句话能记住什么？",
+        "如果只说一句话，爸妈最该知道什么？",
+    ]
+    questions.append(random.choice(opts))
 
     return questions
 

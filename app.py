@@ -105,6 +105,7 @@ def init_state() -> None:
         "notes_loaded": False,  # 用于只在 session 首次启动时从文件加载一次
         "report_mode": "爸妈版",
         "followup_answers": [],
+        "followup_questions": [],  # 每次体检生成一次，rerun 时保持不变
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -1193,6 +1194,7 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
         st.session_state.pop("ai_report", None)
         st.session_state.pop("ai_report_failed", None)
         st.session_state.pop("followup_answers", None)
+        st.session_state.pop("followup_questions", None)  # 新一次体检，重新随机生成问题
         st.session_state["report_mode"] = "爸妈版"
         st.rerun()
     except Exception:  # noqa: BLE001
@@ -1918,13 +1920,17 @@ def followup_block(agent_context: dict[str, Any]) -> None:
         </section>
         """
     )
-    # 根据 agent_context 动态生成当次最相关的 6 个问题（失败时降级为固定列表）
-    try:
-        questions: list[str] = get_dynamic_questions(agent_context) if agent_context else _FALLBACK_QUESTIONS
-        if not questions:
-            questions = _FALLBACK_QUESTIONS
-    except Exception:  # noqa: BLE001
-        questions = _FALLBACK_QUESTIONS
+    # 从缓存读取问题——每次体检只随机生成一次，rerun 时保持稳定
+    cached: list[str] = st.session_state.get("followup_questions", [])
+    if not cached:
+        try:
+            cached = get_dynamic_questions(agent_context) if agent_context else _FALLBACK_QUESTIONS
+            if not cached:
+                cached = _FALLBACK_QUESTIONS
+        except Exception:  # noqa: BLE001
+            cached = _FALLBACK_QUESTIONS
+        st.session_state["followup_questions"] = cached
+    questions: list[str] = cached
 
     col_a, col_b = st.columns(2)
     for qi, question in enumerate(questions):
