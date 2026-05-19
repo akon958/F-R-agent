@@ -506,11 +506,80 @@ def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版"
     }
 
 
+UNRELATED_FOLLOWUP_TEXT = (
+    "这个追问区主要回答本次投资体检相关问题。"
+    "你可以问现金比例、持仓集中度、PE/PB、数据缺失或主要风险。"
+)
+
+
+def _followup_question_is_related(agent_context: dict[str, Any], question: str) -> bool:
+    q = question.strip()
+    if not q:
+        return False
+    keywords = [
+        "现金", "备用金", "仓位", "持仓", "占比", "集中", "风险", "评分", "体检",
+        "pe", "pb", "市盈率", "市净率", "估值", "数据", "缺失", "财务", "roe",
+        "净利率", "毛利率", "负债", "利润", "营收", "行业", "组合", "股票",
+        "基金", "标的", "公司", "波动", "备用", "主要问题", "主要风险",
+    ]
+    lower_q = q.lower()
+    if any(keyword.lower() in lower_q for keyword in keywords):
+        return True
+    for item in agent_context.get("holdings", []) or []:
+        code = str(item.get("code", "")).strip()
+        name = str(item.get("name", "")).strip()
+        if (code and code in q) or (name and name in q):
+            return True
+    return False
+
+
+def _unrelated_followup_answer() -> str:
+    return f"{UNRELATED_FOLLOWUP_TEXT}\n\n{DISCLAIMER}"
+
+
+def _call_deepseek_followup(agent_context: dict[str, Any], question: str, api_key: str) -> str:
+    from openai import OpenAI
+
+    context = _agent_context_for_prompt(agent_context)
+    system_prompt = f"""
+你是“家庭持仓风险体检 Agent”的追问助手。你只能回答和本次投资体检相关的问题。
+
+必须遵守：
+1. 必须围绕用户 question 回答，不能只输出通用总结。
+2. 必须基于 agent_context，不能编造缺失数据。
+3. 不荐股，不预测涨跌，不承诺收益。
+4. 不给买入、卖出、加仓、减仓等操作指令。
+5. 如果用户问题与本次投资体检无关，只回复：{UNRELATED_FOLLOWUP_TEXT}
+6. 回答控制在 150-350 个中文字符。
+7. 结尾必须保留免责声明：{DISCLAIMER}
+""".strip()
+    user_prompt = (
+        "用户追问：\n"
+        f"{question}\n\n"
+        "本次体检 agent_context：\n"
+        + json.dumps(context, ensure_ascii=False, indent=2)
+    )
+    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=30.0)
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        max_tokens=900,
+    )
+    content = _safe_text(response.choices[0].message.content).strip()
+    if not content:
+        raise RuntimeError("empty deepseek followup response")
+    return _ensure_disclaimer(_sanitize_report_text(content))
+
+
 # ─────────────────────────────────────────────────────────────────
-# 追问回答：严格基于 agent_context，200-400 字
+# 追问回答：严格基于 agent_context，150-350 字
 # ─────────────────────────────────────────────────────────────────
 
-def answer_followup_question(agent_context: dict[str, Any], question: str) -> str:
+def _generate_local_followup_answer(agent_context: dict[str, Any], question: str) -> str:
     """Answer a follow-up question strictly based on agent_context.
 
     Supported questions (matched by FOLLOWUP_QUESTIONS):
@@ -548,6 +617,8 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> st
     finance_missing = bool(missing_data.get("财务数据缺失"))
 
     q = question.strip()
+    if not _followup_question_is_related(agent_context, q):
+        return _unrelated_followup_answer()
 
     # ── 问题 1：现金相关（含动态变体） ──────────────────────────
     if "现金" in q or "备用金" in q:
@@ -743,17 +814,31 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> st
             "（这是本次体检的参考，不是操作建议。具体怎么做，还是要结合家庭实际情况讨论。）"
         )
 
-    # ── 兜底：未匹配到任何问题 ───────────────────────────────────
+    # ── 兜底：相关但未命中特定关键词，围绕原问题解释主要风险 ───
     else:
         body = (
-            f"根据这次体检：评分 {risk_score}/100，等级{risk_level}。\n"
-            f"主要关注点：{main_risks[0] if main_risks else '持仓结构整体无极端问题'}。\n"
+            f"你问的是：“{q}”。结合本次体检来看，组合评分 {risk_score}/100，等级{risk_level}。"
+            f"这个问题可以先从主要风险看起：{main_risks[0] if main_risks else '持仓结构整体无极端问题'}。\n\n"
             f"现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}。"
-            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else ''}\n\n"
-            "如需更具体的解答，可以从上方的快捷问题中选择。"
+            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else ''}"
+            "这个回答只基于本次体检结果，不作为操作指令。"
         )
 
     return _sanitize_report_text(f"{body}\n\n{DISCLAIMER}")
+
+
+def answer_followup_question(agent_context: dict[str, Any], question: str) -> str:
+    q = question.strip()
+    if not _followup_question_is_related(agent_context, q):
+        return _unrelated_followup_answer()
+
+    api_key = _get_deepseek_api_key()
+    if api_key:
+        try:
+            return _call_deepseek_followup(agent_context, q, api_key)
+        except Exception:  # noqa: BLE001
+            pass
+    return _generate_local_followup_answer(agent_context, q)
 
 
 # ─────────────────────────────────────────────────────────────────

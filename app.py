@@ -2499,14 +2499,14 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             if not has_missing:
                 st.write("- 暂未发现明显数据缺失。")
 
-    # ── 4. 给爸妈看的说明 + 报告模式选择 ──────────────────────
+    # ── 4. 本次 AI 风险说明 + 报告模式选择 ───────────────────
     st.markdown("---")
     render_html(
         """
         <div class="block-head" style="margin-bottom:.5rem;">
             <div>
-                <h2 class="block-title">给爸妈看的说明</h2>
-                <p class="block-subtitle">根据本次体检数据生成 · 不构成买卖建议</p>
+                <h2 class="block-title">本次 AI 风险说明</h2>
+                <p class="block-subtitle">基于本次体检数据生成，不构成买卖建议。</p>
             </div>
         </div>
         """
