@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import csv
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +17,7 @@ except ImportError:
             "report_source": "local_fallback",
         }
 from data_fetcher import get_stock_metrics, normalize_code
-
-
-HISTORY_FILE = Path(__file__).with_name("analysis_history.csv")
+from storage import load_recent_analysis_history, save_analysis_history
 
 
 def _to_float(value: Any) -> float:
@@ -155,47 +151,47 @@ def _fallback_ai_report(analysis: dict[str, Any], missing_data: dict[str, list[s
 
 
 def _save_history(agent_result: dict[str, Any], analysis: dict[str, Any]) -> bool:
-    if not Path(__file__).with_name("storage.py").exists():
-        return False
     try:
-        row = {
-            "分析时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "综合评分": agent_result.get("risk_score", ""),
-            "风险等级": agent_result.get("risk_level", ""),
-            "数据状态": agent_result.get("data_status", ""),
-            "家庭总资产": analysis.get("total_assets", 0),
-            "现金比例": analysis.get("cash_ratio", 0),
-            "股票仓位": analysis.get("stock_ratio", 0),
-            "持仓数量": len(analysis.get("stock_results", [])),
-            "主要风险": "；".join(agent_result.get("main_risks", [])[:5]),
+        holdings = agent_result.get("holdings", []) or []
+        holdings_summary = "；".join(
+            f"{item.get('code', '')} {item.get('name', '')} {item.get('amount', 0)}元".strip()
+            for item in holdings
+        )
+        agent_context = agent_result.get("agent_context", {}) or {}
+        record = {
+            "holdings_summary": holdings_summary,
+            "family_cash": analysis.get("cash", agent_context.get("family_cash", 0)),
+            "total_position_value": agent_context.get("total_position_value", analysis.get("stock_total", 0)),
+            "cash_ratio": analysis.get("cash_ratio", agent_context.get("cash_ratio", 0)),
+            "stock_ratio": analysis.get("stock_ratio", agent_context.get("stock_ratio", 0)),
+            "max_position_ratio": analysis.get("max_single_ratio", agent_context.get("max_position_ratio", 0)),
+            "risk_score": agent_result.get("risk_score", analysis.get("score", 0)),
+            "risk_level": agent_result.get("risk_level", ""),
+            "main_risks": agent_result.get("main_risks", []),
+            "missing_data": agent_result.get("missing_data", {}),
+            "data_status": agent_result.get("data_status", ""),
+            "pe_pb_status": agent_context.get("pe_pb_status", ""),
+            "financial_status": agent_context.get("financial_status", ""),
+            "ai_report_summary": str(agent_result.get("ai_report", ""))[:500],
+            "full_agent_result": agent_result,
         }
-        exists = HISTORY_FILE.exists()
-        with HISTORY_FILE.open("a", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-            if not exists:
-                writer.writeheader()
-            writer.writerow(row)
-        return True
+        return save_analysis_history(record)
     except Exception:  # noqa: BLE001
         return False
 
 
 def _load_history_summary(limit: int = 3) -> str:
-    if not HISTORY_FILE.exists():
-        return ""
     try:
-        with HISTORY_FILE.open(newline="", encoding="utf-8-sig") as f:
-            rows = list(csv.DictReader(f))
+        rows = load_recent_analysis_history(limit=limit)
     except Exception:  # noqa: BLE001
         return ""
     if not rows:
         return ""
-    recent = rows[-limit:]
     parts = []
-    for row in recent:
-        time_text = row.get("分析时间", "")
-        level = row.get("风险等级", "")
-        score = row.get("综合评分", "")
+    for row in rows[:limit]:
+        time_text = str(row.get("created_at") or row.get("分析时间") or "")[:16].replace("T", " ")
+        level = row.get("risk_level") or row.get("风险等级") or ""
+        score = row.get("risk_score") or row.get("综合评分") or ""
         parts.append(f"{time_text} 评分 {score}，等级 {level}".strip())
     return "；".join(parts)
 

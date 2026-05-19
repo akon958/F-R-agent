@@ -5,3 +5,4 @@ matplotlib
 akshare
 requests
 openai
+supabase
