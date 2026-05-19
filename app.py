@@ -399,6 +399,7 @@ from data_fetcher import (
 from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
 from storage import (
     format_datetime_for_display,
+    get_last_family_comment_save_status,
     get_storage,
     get_storage_status,
     load_recent_analysis_history,
@@ -460,6 +461,9 @@ def init_state() -> None:
         "followup_questions": [],  # 每次体检生成一次，rerun 时保持不变
         "followup_version": FOLLOWUP_VERSION,
         "family_comments_cache": None,
+        "family_comments": [],
+        "family_comments_last_count": 0,
+        "family_comment_last_save": {},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -627,11 +631,22 @@ def inject_css() -> None:
         div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
         textarea {{
             background: var(--bg-2) !important;
-            color: var(--text) !important;
+            color: #2b211b !important;
             border: 1px solid var(--border) !important;
             border-radius: 14px !important;
             min-height: 3rem;
             font-size: 1rem !important;
+        }}
+        div[data-testid="stTextInput"] input::placeholder,
+        div[data-testid="stNumberInput"] input::placeholder,
+        textarea::placeholder {{
+            color: #8a8178 !important;
+            opacity: 1 !important;
+        }}
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stNumberInput"] input,
+        textarea {{
+            -webkit-text-fill-color: #2b211b !important;
         }}
         div[data-testid="stTextInput"] input:focus,
         div[data-testid="stNumberInput"] input:focus,
@@ -2310,10 +2325,18 @@ def discussion_block(run_id: str = "") -> None:
             "content": content.strip(),
             "run_id": run_id,
         }
+        saved = False
         try:
-            save_family_comment(comment)
-        except Exception:  # noqa: BLE001
-            pass
+            saved = save_family_comment(comment)
+            st.session_state["family_comment_last_save"] = get_last_family_comment_save_status()
+        except Exception as exc:  # noqa: BLE001
+            st.session_state["family_comment_last_save"] = {
+                "backend": "local_csv",
+                "connected": False,
+                "saved": False,
+                "message": "观察记录保存失败，不影响体检结果。",
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}",
+            }
         # 也写旧版 note（保持 session_state.notes 展示兼容）
         note = make_note(content.strip(), who=member)
         try:
@@ -2321,19 +2344,50 @@ def discussion_block(run_id: str = "") -> None:
         except Exception:  # noqa: BLE001
             pass
         st.session_state.notes.insert(0, note)
-        st.session_state.pop("family_comments_cache", None)  # 清缓存，下次重新加载
+        try:
+            st.session_state["family_comments"] = load_recent_family_comments(limit=20)
+            st.session_state["family_comments_cache"] = st.session_state["family_comments"]
+            st.session_state["family_comments_last_count"] = len(st.session_state["family_comments"])
+        except Exception as exc:  # noqa: BLE001
+            st.session_state["family_comments"] = [comment] if saved else []
+            st.session_state["family_comments_cache"] = st.session_state["family_comments"]
+            st.session_state["family_comments_last_count"] = len(st.session_state["family_comments"])
+            st.session_state["family_comment_last_save"] = {
+                **st.session_state.get("family_comment_last_save", {}),
+                "error": f"保存后重新读取失败：{type(exc).__name__}",
+            }
+        save_status = st.session_state.get("family_comment_last_save", {})
+        if saved and save_status.get("backend") == "supabase":
+            st.session_state["family_comment_notice"] = "观察记录已保存"
+        elif saved:
+            st.session_state["family_comment_notice"] = save_status.get("message") or "观察记录保存到云端失败，已尝试本地保存。"
+        else:
+            st.session_state["family_comment_notice"] = "观察记录保存失败，不影响体检结果。"
         st.rerun()
+
+    notice = st.session_state.pop("family_comment_notice", "")
+    if notice:
+        if "失败" in notice or "本地" in notice:
+            st.warning(notice)
+        else:
+            st.success(notice)
 
     st.caption(storage_status.get("message", "当前使用本地 CSV 兜底"))
 
     # 读取并展示最近观察记录
-    comments: list[dict[str, Any]] = st.session_state.get("family_comments_cache") or []
+    comments: list[dict[str, Any]] = (
+        st.session_state.get("family_comments")
+        or st.session_state.get("family_comments_cache")
+        or []
+    )
     if not comments:
         try:
             comments = load_recent_family_comments(limit=20)
         except Exception:  # noqa: BLE001
             comments = []
+        st.session_state["family_comments"] = comments
         st.session_state["family_comments_cache"] = comments
+        st.session_state["family_comments_last_count"] = len(comments)
 
     if not comments:
         st.info("暂无观察记录。填写上方表单即可新增。")
@@ -2737,6 +2791,15 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
             call_path = followup_error.get("call_path", "")
             if call_path:
                 st.caption(f"调用路径：{call_path}")
+        comment_status = st.session_state.get("family_comment_last_save") or get_last_family_comment_save_status()
+        comment_backend = comment_status.get("backend") or get_storage_status().get("backend", "local_csv")
+        comment_backend_label = "Supabase" if comment_backend == "supabase" else "本地 CSV"
+        st.write("**家庭观察记录**")
+        st.write(f"- 家庭观察记录存储方式：{comment_backend_label}")
+        st.write(f"- 最近读取到的观察记录数量：{st.session_state.get('family_comments_last_count', 0)}")
+        st.write(f"- 最后一条保存状态：{comment_status.get('message', '')}")
+        if comment_status.get("error"):
+            st.write(f"- 保存失败原因：{comment_status.get('error')}")
         agent_context = agent_result.get("agent_context", {}) if agent_result else {}
 
         col_t1, col_t2 = st.columns(2)
@@ -2864,9 +2927,16 @@ def analysis_page() -> None:
         st.session_state.pop("fetch_warnings", None)
         st.session_state.pop("agent_result", None)
         st.rerun()
-    agent_result_block(st.session_state.get("agent_result", {}))
+    agent_result = st.session_state.get("agent_result", {})
+    agent_result_block(agent_result)
+    if agent_result:
+        _cur_run_id = str(agent_result.get("run_id", "") or "")
+        discussion_block(run_id=_cur_run_id)
+    else:
+        with st.expander("家庭观察记录", expanded=False):
+            st.info("完成一次体检后，可以记录家人的观察和分歧。")
     history_records_block()
-    inspection_process_block(st.session_state.get("agent_result", {}))
+    inspection_process_block(agent_result)
     for warning in fetch_warnings:
         if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
             st.info(warning)
@@ -2884,10 +2954,8 @@ def analysis_page() -> None:
         with st.expander("近期新闻与公告（开发中）", expanded=False):
             st.info("暂未接入新闻接口，后续开放。")
             news_block()
-        _cur_run_id = str(st.session_state.get("agent_result", {}).get("run_id", "") or "")
-        discussion_block(run_id=_cur_run_id)
         deepseek_block(analysis)
-    developer_debug_block(st.session_state.get("agent_result", {}))
+    developer_debug_block(agent_result)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
 

@@ -44,6 +44,13 @@ _LAST_ANALYSIS_SAVE_STATUS: dict[str, Any] = {
     "saved": False,
     "message": "尚未保存历史记录",
 }
+_LAST_FAMILY_COMMENT_SAVE_STATUS: dict[str, Any] = {
+    "backend": "local_csv",
+    "connected": False,
+    "saved": False,
+    "message": "暂无家庭观察记录保存状态",
+    "error": "",
+}
 
 
 def get_family_id() -> str:
@@ -188,6 +195,10 @@ def get_storage_status() -> dict[str, Any]:
 
 def get_last_analysis_save_status() -> dict[str, Any]:
     return dict(_LAST_ANALYSIS_SAVE_STATUS)
+
+
+def get_last_family_comment_save_status() -> dict[str, Any]:
+    return dict(_LAST_FAMILY_COMMENT_SAVE_STATUS)
 
 
 def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
@@ -401,21 +412,58 @@ def _comment_payload(comment: dict[str, Any]) -> dict[str, Any]:
 
 def save_family_comment(comment: dict[str, Any]) -> bool:
     """Save one family observation comment. Supabase first, local CSV fallback."""
+    global _LAST_FAMILY_COMMENT_SAVE_STATUS
     payload = _comment_payload(comment)
     client = get_supabase_client()
     if client is not None:
         try:
-            insert_payload = {k: v for k, v in payload.items() if v not in (None, "")}
+            insert_payload = {
+                "family_id": payload["family_id"],
+                "member": payload["member"],
+                "author_name": payload["author_name"],
+                "comment_type": payload["comment_type"],
+                "focus": payload["focus"],
+                "focus_tag": payload["focus_tag"],
+                "stance": payload["stance"],
+                "content": payload["content"],
+                "comment_text": payload["comment_text"],
+                "run_id": payload["run_id"],
+            }
+            if payload.get("related_analysis_id") is not None:
+                insert_payload["related_analysis_id"] = payload["related_analysis_id"]
+            if payload.get("ai_summary"):
+                insert_payload["ai_summary"] = payload["ai_summary"]
             client.table("family_comments").insert(insert_payload).execute()
+            _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+                "backend": "supabase",
+                "connected": True,
+                "saved": True,
+                "message": "观察记录已保存到 Supabase 云数据库",
+                "error": "",
+            }
             return True
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            cloud_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+    else:
+        cloud_error = "未配置 Supabase，使用本地 CSV 兜底"
 
     local_row = dict(payload)
     local_row["created_at"] = _now_iso()
     if local_row.get("related_analysis_id") is None:
         local_row["related_analysis_id"] = ""
-    return _append_csv_row(FAMILY_COMMENTS_FILE, local_row)
+    saved = _append_csv_row(FAMILY_COMMENTS_FILE, local_row)
+    _LAST_FAMILY_COMMENT_SAVE_STATUS = {
+        "backend": "local_csv",
+        "connected": False,
+        "saved": saved,
+        "message": (
+            "观察记录保存到云端失败，已尝试本地保存。"
+            if client is not None
+            else "观察记录已保存到本地 CSV。"
+        ),
+        "error": "" if saved and client is None else cloud_error,
+    }
+    return saved
 
 
 def _normalize_comment_row(row: dict[str, Any]) -> dict[str, Any]:
