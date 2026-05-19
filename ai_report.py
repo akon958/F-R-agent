@@ -538,6 +538,17 @@ def _unrelated_followup_answer() -> str:
     return f"{UNRELATED_FOLLOWUP_TEXT}\n\n{DISCLAIMER}"
 
 
+def _safe_followup_error(exc: Exception) -> str:
+    text = str(exc).strip()
+    if not text:
+        text = type(exc).__name__
+    if "timeout" in text.lower() or "timed out" in text.lower():
+        return "DeepSeek API 调用超时"
+    if "empty deepseek followup response" in text:
+        return "DeepSeek 返回为空"
+    return f"DeepSeek 调用异常：{text[:180]}"
+
+
 def _call_deepseek_followup(agent_context: dict[str, Any], question: str, api_key: str) -> str:
     from openai import OpenAI
 
@@ -639,14 +650,15 @@ def _generate_local_followup_answer(agent_context: dict[str, Any], question: str
         )
 
     # ── 买卖类问题：不下结论，只回到风险体检维度 ───────────────
-    elif any(term in q for term in ["值得买吗", "能买吗", "要不要买", "要不要卖", "该买吗", "该卖吗", "能不能买", "适合买", "卖吗"]):
+    elif any(term in q for term in ["值得买吗", "能买吗", "要不要买", "要不要卖", "该买吗", "该卖吗", "能不能买", "适合买", "可以买", "加仓", "减仓", "卖吗"]):
         primary = main_risks[0] if main_risks else "持仓结构暂无特别突出的风险点"
         body = (
-            f"你问的是：“{q}”。这个工具不能给买卖结论，也不判断明天涨跌。\n\n"
-            f"只能从风险体检角度看：当前评分 {risk_score}/100，等级{risk_level}；"
-            f"现金比例约 {_fmt_percent(cash_ratio)}，最大单只占比约 {_fmt_percent(max_position_ratio)}。"
-            f"主要需要关注的是：{primary}。"
-            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else '如果估值、财务和持仓结构数据都完整，可以一起作为观察参考。'}"
+            "这个问题不能直接回答成买或不买，因为本工具不提供买卖建议。"
+            "基于本次体检，可以从持仓占比、估值、财务质量和数据完整性几个角度观察，"
+            "而不是让 AI 直接替你做交易决定。\n\n"
+            f"本次需要关注的是：{primary}；现金比例约 {_fmt_percent(cash_ratio)}，"
+            f"最大单只占比约 {_fmt_percent(max_position_ratio)}。"
+            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else ''}"
         )
 
     # ── 问题 2：持仓集中度相关（含动态变体） ────────────────────
@@ -828,13 +840,7 @@ def _generate_local_followup_answer(agent_context: dict[str, Any], question: str
 
     # ── 兜底：相关但未命中特定关键词，围绕原问题解释主要风险 ───
     else:
-        body = (
-            f"你问的是：“{q}”。结合本次体检来看，组合评分 {risk_score}/100，等级{risk_level}。"
-            f"这个问题可以先从主要风险看起：{main_risks[0] if main_risks else '持仓结构整体无极端问题'}。\n\n"
-            f"现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}。"
-            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else ''}"
-            "这个回答只基于本次体检结果，不作为操作指令。"
-        )
+        return _unrelated_followup_answer()
 
     return _sanitize_report_text(f"{body}\n\n{DISCLAIMER}")
 
@@ -842,9 +848,9 @@ def _generate_local_followup_answer(agent_context: dict[str, Any], question: str
 def answer_followup_question(agent_context: dict[str, Any], question: str) -> dict[str, str]:
     q = question.strip()
     if not q:
-        return {"answer": _unrelated_followup_answer(), "source": "local_fallback"}
+        return {"answer": _unrelated_followup_answer(), "source": "local_fallback", "error": "问题为空"}
     if not agent_context:
-        return {"answer": _unrelated_followup_answer(), "source": "local_fallback"}
+        return {"answer": _unrelated_followup_answer(), "source": "local_fallback", "error": "缺少本次体检上下文"}
 
     api_key = _get_deepseek_api_key()
     if api_key:
@@ -852,12 +858,19 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> di
             return {
                 "answer": _call_deepseek_followup(agent_context, q, api_key),
                 "source": "deepseek",
+                "error": "",
             }
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            error = _safe_followup_error(exc)
+            return {
+                "answer": _generate_local_followup_answer(agent_context, q),
+                "source": "local_fallback",
+                "error": error,
+            }
     return {
         "answer": _generate_local_followup_answer(agent_context, q),
         "source": "local_fallback",
+        "error": "未配置 DEEPSEEK_API_KEY",
     }
 
 

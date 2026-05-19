@@ -275,6 +275,7 @@ def save_followup_history(
     answer: str,
     related_analysis_id: int | None = None,
     source: str = "",
+    error: str = "",
 ) -> bool:
     payload = {
         "family_id": get_family_id(),
@@ -293,6 +294,7 @@ def save_followup_history(
     local_row = dict(payload)
     local_row["created_at"] = _now_iso()
     local_row["source"] = source
+    local_row["error"] = error
     return _append_csv_row(FOLLOWUP_HISTORY_FILE, local_row)
 
 

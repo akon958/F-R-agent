@@ -17,6 +17,7 @@ from agent import run_family_risk_agent
 # 不依赖云端 ai_report.py 的版本，永远可用。
 # ─────────────────────────────────────────────────────────────────
 _DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+FOLLOWUP_VERSION = "v2_deepseek_error"
 
 
 def _fmt_pct(value: Any) -> str:
@@ -320,15 +321,9 @@ def _legacy_local_answer_followup_question(agent_context: dict, question: str) -
             "（这是本次体检的参考，不是操作建议。具体怎么做，还是要结合家庭实际情况讨论。）"
         )
 
-    # 兜底
+    # 旧兼容兜底：相关但未命中特定关键词时，不再输出固定体检摘要
     else:
-        body = (
-            f"根据这次体检：评分 {risk_score}/100，等级{risk_level}。\n"
-            f"主要关注点：{main_risks[0] if main_risks else '持仓结构整体无极端问题'}。\n"
-            f"现金比例 {_fmt_pct(cash_ratio)}，最大单只占比 {_fmt_pct(max_position_ratio)}。"
-            f"{'估值数据暂缺，本次不评价估值高低。' if valuation_missing else ''}\n\n"
-            "如需更具体的解答，可以从上方的快捷问题中选择。"
-        )
+        body = "这个追问区主要回答本次投资体检相关问题。你可以问现金比例、持仓集中度、PE/PB、数据缺失或主要风险。"
 
     return _sanitize(f"{body}\n\n{_DISCLAIMER}")
 
@@ -375,7 +370,7 @@ except ImportError:
             "你可以问现金比例、持仓集中度、PE/PB、数据缺失或主要风险。"
         )
         if not q:
-            return {"answer": f"{unrelated}\n\n{_DISCLAIMER}", "source": "local_fallback"}
+            return {"answer": f"{unrelated}\n\n{_DISCLAIMER}", "source": "local_fallback", "error": "问题为空"}
         if "现金" in q:
             answer = f"这次体检显示，现金比例约 {_fmt_pct(agent_context.get('cash_ratio', 0))}。可以重点看备用金是否够覆盖家庭近期支出。"
         elif "PE" in q or "PB" in q or "估值" in q:
@@ -388,7 +383,7 @@ except ImportError:
             answer = "这个工具不能给买卖结论，也不预测涨跌。可以从占比、现金比例、估值数据是否完整和主要风险几个角度观察。"
         else:
             answer = unrelated
-        return {"answer": f"{answer}\n\n{_DISCLAIMER}", "source": "local_fallback"}
+        return {"answer": f"{answer}\n\n{_DISCLAIMER}", "source": "local_fallback", "error": "ai_report.py 导入失败，使用 app 本地兜底"}
 
     answer_followup_question = _app_fallback_answer_followup_question  # type: ignore[assignment]
 
@@ -461,6 +456,7 @@ def init_state() -> None:
         "report_mode": "爸妈版",
         "followup_answers": [],
         "followup_questions": [],  # 每次体检生成一次，rerun 时保持不变
+        "followup_version": FOLLOWUP_VERSION,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -469,6 +465,9 @@ def init_state() -> None:
         st.session_state.setdefault(f"code_{idx}", code)
     for idx, amount in enumerate(DEFAULT_AMOUNTS):
         st.session_state.setdefault(f"amount_{idx}", amount)
+    if st.session_state.get("followup_version") != FOLLOWUP_VERSION:
+        st.session_state["followup_answers"] = []
+        st.session_state["followup_version"] = FOLLOWUP_VERSION
     # 每个 session 只从本地文件读取一次，之后以 session_state 为准
     if not st.session_state.notes_loaded:
         try:
@@ -2325,12 +2324,13 @@ def followup_source_label(source: str) -> str:
     return "DeepSeek AI" if source == "deepseek" else "本地规则兜底"
 
 
-def unpack_followup_result(result: Any) -> tuple[str, str]:
+def unpack_followup_result(result: Any) -> tuple[str, str, str]:
     if isinstance(result, dict):
         answer = str(result.get("answer", "") or "")
         source = str(result.get("source", "local_fallback") or "local_fallback")
-        return answer or _AI_REPORT_FALLBACK_MSG, source
-    return str(result or _AI_REPORT_FALLBACK_MSG), "local_fallback"
+        error = str(result.get("error", "") or "")
+        return answer or _AI_REPORT_FALLBACK_MSG, source, error
+    return str(result or _AI_REPORT_FALLBACK_MSG), "local_fallback", "追问函数返回旧字符串格式"
 
 
 def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
@@ -2338,20 +2338,30 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
     if not clean_question:
         return
     try:
-        answer, source = unpack_followup_result(answer_followup_question(agent_context, clean_question))
+        answer, source, error = unpack_followup_result(answer_followup_question(agent_context, clean_question))
     except Exception:  # noqa: BLE001
         answer = _AI_REPORT_FALLBACK_MSG
         source = "local_fallback"
+        error = "追问调用异常，已使用本地兜底"
 
     answers: list[dict[str, str]] = list(st.session_state.get("followup_answers", []))
     existing = next((a for a in answers if a["question"] == clean_question), None)
     if existing:
         existing["answer"] = answer
         existing["source"] = source
+        existing["error"] = error
     else:
-        answers.insert(0, {"question": clean_question, "answer": answer, "source": source})
+        answers.insert(0, {"question": clean_question, "answer": answer, "source": source, "error": error})
+    if source == "local_fallback":
+        st.session_state["last_followup_error"] = {
+            "question": clean_question,
+            "source": source,
+            "error": error or "DeepSeek 未返回可用结果",
+        }
+    else:
+        st.session_state.pop("last_followup_error", None)
     try:
-        save_followup_history(question=clean_question, answer=answer, source=source)
+        save_followup_history(question=clean_question, answer=answer, source=source, error=error)
     except Exception:  # noqa: BLE001
         pass
     st.session_state["followup_answers"] = answers
@@ -2360,7 +2370,11 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
 def followup_block(agent_context: dict[str, Any]) -> None:
     """继续追问区域：动态问题按钮（每次体检结果不同，问题随之变化） + 保留回答历史。"""
     existing_answers = list(st.session_state.get("followup_answers", []))
-    if existing_answers and any("source" not in item for item in existing_answers if isinstance(item, dict)):
+    if existing_answers and any(
+        "source" not in item or "error" not in item
+        for item in existing_answers
+        if isinstance(item, dict)
+    ):
         st.session_state["followup_answers"] = []
 
     st.markdown("---")
@@ -2599,6 +2613,11 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
             st.write(f"- 错误信息：{error_info.get('错误信息', '')}")
             st.write(f"- 当前工作目录：{error_info.get('当前工作目录', '')}")
             st.write(f"- 已找到缓存文件：{error_info.get('已找到缓存文件', '')}")
+        followup_error = st.session_state.get("last_followup_error")
+        if followup_error:
+            st.write("**最近一次追问兜底**")
+            st.write(f"- 追问回答来源：{followup_source_label(followup_error.get('source', 'local_fallback'))}")
+            st.write(f"- 兜底原因：{followup_error.get('error', '')}")
         debug_info = agent_result.get("debug_info", {})
         if debug_info:
             for key, value in debug_info.items():
