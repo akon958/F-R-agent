@@ -2626,6 +2626,36 @@ def _report_source_label(report_source: str) -> str:
     return "DeepSeek AI 生成" if report_source == "deepseek" else "本地规则兜底生成"
 
 
+def family_disagreement_block(disagreement: dict[str, Any]) -> None:
+    if not isinstance(disagreement, dict) or not disagreement.get("has_conflict"):
+        return
+    conflicts = disagreement.get("conflicts") or []
+    if not conflicts:
+        return
+    first = conflicts[0]
+    focus_label = html_escape(first.get("focus_label") or first.get("focus") or "风险关注点")
+    members = first.get("members") or {}
+    conservative = [name for name, stance in members.items() if stance == "conservative"]
+    aggressive = [name for name, stance in members.items() if stance == "aggressive"]
+    if conservative and aggressive:
+        line = f"{html_escape(conservative[0])}在「{focus_label}」上偏谨慎，{html_escape(aggressive[0])}在同一问题上偏进取。"
+    else:
+        line = html_escape(disagreement.get("summary") or "家庭成员在同一个风险关注点上存在不同看法。")
+    render_html(
+        f"""
+        <section class="block" style="border-color:#d08a2d;background:#fff7ed;">
+            <div class="block-head" style="margin-bottom:.35rem;">
+                <div>
+                    <h2 class="block-title" style="font-size:1.2rem;">⚠️ 本次最值得先处理的：家庭风险看法不一致</h2>
+                    <p class="block-subtitle">{line}</p>
+                    <p class="muted">组合最大的风险有时不是某只股票，而是家人对风险理解不一致。建议这次体检先围绕这一点聊清楚。</p>
+                </div>
+            </div>
+        </section>
+        """
+    )
+
+
 def agent_result_block(agent_result: dict[str, Any]) -> None:
     if not agent_result:
         return
@@ -2667,6 +2697,8 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         </section>
         """
     )
+
+    family_disagreement_block(agent_result.get("family_disagreement", {}))
 
     # ── 2. 综合体检结论：评分 + 三项指标 ──────────────────────
     conclusion = (

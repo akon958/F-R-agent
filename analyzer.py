@@ -52,6 +52,92 @@ STOCK_FIELD_ALIASES = {
     "updated_at": "更新时间",
 }
 
+FAMILY_FOCUS_LABELS = {
+    "cash": "现金比例",
+    "concentration": "持仓集中",
+    "valuation": "PE/PB估值",
+    "financial": "财务数据",
+    "data_missing": "数据缺失",
+    "risk_tolerance": "风险承受",
+    "other": "其他",
+}
+
+FAMILY_STANCE_LABELS = {
+    "conservative": "偏谨慎",
+    "aggressive": "偏进取",
+    "neutral": "中性",
+}
+
+
+def detect_family_disagreement(comments: list[dict]) -> dict:
+    """
+    检测家庭成员在同一关注点上的风险立场分歧。
+
+    只使用家人主动选择的 stance，不根据内容猜测立场。
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for raw in comments or []:
+        if not isinstance(raw, dict):
+            continue
+        member = str(raw.get("member") or raw.get("author_name") or "").strip()
+        focus = str(raw.get("focus") or raw.get("focus_tag") or "other").strip() or "other"
+        stance = str(raw.get("stance") or "neutral").strip() or "neutral"
+        content = str(raw.get("content") or raw.get("comment_text") or "").strip()
+        if not member or stance == "neutral":
+            continue
+        if stance not in ("conservative", "aggressive"):
+            continue
+        grouped.setdefault(focus, []).append(
+            {
+                "member": member,
+                "focus": focus,
+                "stance": stance,
+                "content": content,
+            }
+        )
+
+    conflicts: list[dict[str, Any]] = []
+    for focus, rows in grouped.items():
+        conservative_members = {row["member"] for row in rows if row["stance"] == "conservative"}
+        aggressive_members = {row["member"] for row in rows if row["stance"] == "aggressive"}
+        if not conservative_members or not aggressive_members:
+            continue
+        if not conservative_members.isdisjoint(aggressive_members) and len(conservative_members | aggressive_members) < 2:
+            continue
+
+        members: dict[str, str] = {}
+        evidence: list[str] = []
+        seen_evidence: set[tuple[str, str]] = set()
+        for row in rows:
+            member = row["member"]
+            stance = row["stance"]
+            if member not in members:
+                members[member] = stance
+            content = row.get("content") or FAMILY_STANCE_LABELS.get(stance, stance)
+            marker = (member, content)
+            if marker not in seen_evidence:
+                evidence.append(f"{member}：{content}")
+                seen_evidence.add(marker)
+
+        conflicts.append(
+            {
+                "focus": focus,
+                "focus_label": FAMILY_FOCUS_LABELS.get(focus, focus),
+                "members": members,
+                "evidence": evidence,
+            }
+        )
+
+    if not conflicts:
+        return {"has_conflict": False, "conflicts": [], "summary": ""}
+
+    labels = "、".join(conflict["focus_label"] for conflict in conflicts[:3])
+    return {
+        "has_conflict": True,
+        "conflicts": conflicts,
+        "summary": f"家庭成员在{labels}问题上存在不同看法。",
+    }
+
 
 def clamp(value: float, low: float = 0, high: float = 100) -> float:
     return max(low, min(high, value))

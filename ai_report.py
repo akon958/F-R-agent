@@ -6,7 +6,7 @@ import random
 from typing import Any
 
 
-DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 
 FOLLOWUP_QUESTIONS = [
     "现金比例怎么看？",
@@ -215,6 +215,26 @@ def _flatten_missing_data(missing_data: dict[str, Any]) -> str:
     return "；".join(parts) if parts else "这次体检没有发现明显的数据缺口。"
 
 
+def _family_disagreement_note(agent_context: dict[str, Any]) -> str:
+    disagreement = agent_context.get("family_disagreement") or {}
+    if not isinstance(disagreement, dict) or not disagreement.get("has_conflict"):
+        return ""
+    conflicts = disagreement.get("conflicts") or []
+    if not conflicts:
+        return str(disagreement.get("summary") or "")
+    first = conflicts[0]
+    focus_label = first.get("focus_label") or first.get("focus") or "某个风险关注点"
+    members = first.get("members") or {}
+    conservative = [name for name, stance in members.items() if stance == "conservative"]
+    aggressive = [name for name, stance in members.items() if stance == "aggressive"]
+    if conservative and aggressive:
+        return (
+            f"家庭观察记录显示，{conservative[0]}在「{focus_label}」上偏谨慎，"
+            f"{aggressive[0]}在同一问题上偏进取。这个差异本身值得先沟通清楚。"
+        )
+    return str(disagreement.get("summary") or "")
+
+
 # ─────────────────────────────────────────────────────────────────
 # 三种报告模式的内部实现
 # ─────────────────────────────────────────────────────────────────
@@ -231,6 +251,7 @@ def _generate_brief_report(agent_context: dict[str, Any]) -> str:
     primary_risk = main_risks[0] if main_risks else "目前没有特别突出的风险点。"
     valuation_missing = bool(missing_data.get("估值数据缺失"))
     valuation_note = " 估值数据暂缺，本次不评价估值高低。" if valuation_missing else ""
+    disagreement_note = _family_disagreement_note(agent_context)
 
     if max_position_ratio >= 0.40:
         conclusion = "集中度偏高，需多留意单只占比。"
@@ -241,7 +262,7 @@ def _generate_brief_report(agent_context: dict[str, Any]) -> str:
 
     report = (
         f"【结论】综合评分 {risk_score}/100，风险等级{risk_level}。{conclusion}\n\n"
-        f"【主要风险】{primary_risk}\n\n"
+        f"【主要风险】{primary_risk}{' ' + disagreement_note if disagreement_note else ''}\n\n"
         f"【重点关注】现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}。"
         f"{valuation_note}\n\n"
         f"【免责声明】{DISCLAIMER}"
@@ -264,6 +285,7 @@ def _generate_detailed_report(agent_context: dict[str, Any]) -> str:
     history_summary = agent_context.get("history_summary", "")
     family_cash = agent_context.get("family_cash", 0)
     total_position_value = agent_context.get("total_position_value", 0)
+    disagreement_note = _family_disagreement_note(agent_context)
 
     holding_names = "、".join(
         f"{item.get('code', '')} {item.get('name', '')}".strip()
@@ -306,7 +328,7 @@ def _generate_detailed_report(agent_context: dict[str, Any]) -> str:
 当前组合持仓为 {holding_names}，综合评分 {risk_score}/100，风险等级为{risk_level}。按"{risk_preference}"风险承受能力衡量，家庭现金约 {cash_str}（占比 {_fmt_percent(cash_ratio)}），持仓市值约 {position_str}（占比 {_fmt_percent(stock_ratio)}）。{overall}
 
 【主要风险】
-需要关注的主要风险：{risk_list}。其中最优先考虑的是现金储备是否足够应对家庭突发支出，其次才是组合结构问题。
+需要关注的主要风险：{risk_list}。其中最优先考虑的是现金储备是否足够应对家庭突发支出，其次才是组合结构问题。{disagreement_note}
 
 【数据缺失说明】
 数据来源：{data_status}。{missing_text} 数据缺失的部分不作为判断依据，只对有数据支撑的部分做评估。
@@ -351,12 +373,13 @@ def _generate_parent_report(agent_context: dict[str, Any]) -> str:
     valuation_missing = bool(missing_data.get("估值数据缺失"))
     missing_note = "估值数据暂缺，本次不评价估值高低。" if valuation_missing else "这次体检数据基本齐全。"
     history_note = f"上次体检：{history_summary.split('；')[0]}。" if history_summary else ""
+    disagreement_note = _family_disagreement_note(agent_context)
 
     report = f"""【整体判断】
 爸妈，{holding_names} 这个组合体检完了。评分是 {risk_score} 分（满分 100），等级是"{risk_level}"。{overall}现金占比大约 {_fmt_percent(cash_ratio)}，股票/基金占比大约 {_fmt_percent(stock_ratio)}。
 
 【主要风险】
-最需要留心的一点是：{primary_risk} 不用马上做什么，但心里要有数。
+最需要留心的一点是：{primary_risk} 不用马上做什么，但心里要有数。{disagreement_note}
 
 【数据缺失说明】
 {missing_note} 没有的数据我们不猜，只把有把握的部分放进结论里。
@@ -463,6 +486,7 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "history_summary",
         "pe_pb_status",
         "financial_status",
+        "family_disagreement",
     ]
     return {key: agent_context.get(key) for key in allowed_keys}
 
@@ -476,6 +500,13 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
         if valuation_missing
         else "如果估值数据没有缺失，可以说明估值数据已纳入体检，但仍不能据此做买卖判断。"
     )
+    disagreement = context.get("family_disagreement") or {}
+    disagreement_rule = (
+        "系统检测到家庭成员在某个风险关注点上存在不同看法。请把这个分歧本身作为本次风险沟通重点来解释。"
+        "不要评判谁对谁错，不要给具体交易动作，不要判断短期方向，只提醒家人先就风险承受、现金安排和观察重点达成一致。"
+        if isinstance(disagreement, dict) and disagreement.get("has_conflict")
+        else "如果 family_disagreement 没有冲突，不要硬造家庭分歧。"
+    )
 
     system_prompt = f"""
 你是“家庭持仓风险体检 Agent”的报告生成器。你只能根据用户提供的 agent_context 写报告，不能编造任何缺失数据。
@@ -483,19 +514,20 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 输出对象是爸妈或普通家庭成员，语言要自然、简单，不像券商研报。
 
 必须遵守：
-1. 不荐股，不预测涨跌，不承诺收益。
-2. 不给买入、卖出、加仓、减仓等操作指令。
+1. 不输出个股方向判断，不判断短期涨跌，不承诺收益。
+2. 不给具体交易动作或仓位动作。
 3. 不使用“您家”“贵家庭”“您的家庭资产”。
 4. 必须结合现金比例、股票/基金持仓比例、最大单只持仓占比、主要风险和数据缺失情况。
 5. {valuation_rule}
-6. 报告控制在 500-800 字。
-7. 固定五段结构，标题必须为：
+6. {disagreement_rule}
+7. 报告控制在 500-800 字。
+8. 固定五段结构，标题必须为：
    【整体判断】
    【主要风险】
    【数据缺失说明】
    【给爸妈重点看的地方】
    【免责声明】
-8. 【免责声明】必须一字不改：{DISCLAIMER}
+9. 【免责声明】必须一字不改：{DISCLAIMER}
 """.strip()
 
     user_prompt = (
@@ -625,8 +657,8 @@ def _call_deepseek_followup(agent_context: dict[str, Any], question: str) -> str
 必须遵守：
 1. 必须围绕用户 question 回答，不能只输出通用总结。
 2. 必须基于 agent_context，不能编造缺失数据。
-3. 不荐股，不预测涨跌，不承诺收益。
-4. 不给买入、卖出、加仓、减仓等操作指令。
+3. 不输出个股方向判断，不判断短期涨跌，不承诺收益。
+4. 不给具体交易动作或仓位动作。
 5. 如果用户问题与本次投资体检无关，只回复：{UNRELATED_FOLLOWUP_TEXT}
 6. 回答控制在 150-350 个中文字符。
 7. 结尾必须保留免责声明：{DISCLAIMER}
@@ -1068,8 +1100,8 @@ def generate_parent_friendly_report(analysis: dict[str, Any], api_key: str) -> s
     rules = [
         "1. 语气像在家庭微信群里回消息：用'我们''爸''妈'，偶尔用'其实''不过''另外'等口语连接词，"
         "读起来像真人在说话，不像在朗读报告。不用'您家''贵家庭''阁下'等疏远表达。",
-        "2. 不推荐任何股票，不预测涨跌，不说'必涨''抄底''一定赚''马上卖'，"
-        "不给买入/卖出/加仓/减仓的具体指令。",
+        "2. 不输出个股方向判断，不判断短期涨跌，不说'必涨''抄底''一定赚''马上处理'，"
+        "不给具体交易动作或仓位动作。",
         "3. 每次出现财务或交易指标，先写专业术语，括号里跟一句通俗说明，两者缺一不可。"
         "标准写法示例（格式不变）：\n"
         "   ROE（公司用自己的钱赚钱的能力）\n"
@@ -1093,7 +1125,7 @@ def generate_parent_friendly_report(analysis: dict[str, Any], api_key: str) -> s
     system_prompt = (
         "你是家里懂一点投资的亲戚，正在用微信跟家人解释这次持仓风险体检的结果。\n"
         "你说话直接、温和，会把枯燥的数据翻译成家人听得懂的话，"
-        "但绝不给任何买卖建议，因为你知道预测市场是不靠谱的。\n\n"
+        "但绝不替家人做交易决定，因为你知道判断短期方向是不靠谱的。\n\n"
         "写作要求：\n"
         + "\n".join(rules)
     )

@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from analyzer import analyze_portfolio
+from analyzer import analyze_portfolio, detect_family_disagreement
 try:
     from ai_report import generate_agent_report  # type: ignore
 except ImportError:
@@ -13,7 +13,7 @@ except ImportError:
         return {
             "ai_report": (
                 "AI 报告模块需要重新部署最新版本。\n\n"
-                "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+                "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
             ),
             "report_source": "local_fallback",
         }
@@ -21,6 +21,7 @@ from data_fetcher import get_stock_metrics, normalize_code
 from storage import (
     format_datetime_for_display,
     get_last_analysis_save_status,
+    load_recent_family_comments,
     load_recent_analysis_history,
     save_analysis_history,
 )
@@ -86,7 +87,7 @@ def _try_realtime_data(codes: list[str]) -> tuple[list[dict[str, Any]] | None, s
 
 
 def _safe_ai_text(text: str) -> str:
-    disclaimer = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+    disclaimer = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
     disclaimer_token = "__FIXED_DISCLAIMER__"
     safe = text.replace(disclaimer, disclaimer_token)
     replacements = {
@@ -152,7 +153,7 @@ def _fallback_ai_report(analysis: dict[str, Any], missing_data: dict[str, list[s
         f"【主要风险】\n{'; '.join(analysis.get('risk_notes', [])[:4]) or '暂时没有特别刺眼的问题，但仍要定期复盘。'}\n\n"
         f"【数据缺失说明】\n{missing_text}\n\n"
         "【爸妈重点看什么】\n先看现金够不够、单只股票会不会太集中，再看公司经营数据是否完整。不要因为短期涨跌冲动操作。\n\n"
-        "【免责声明】\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+        "【免责声明】\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
     )
 
 
@@ -316,6 +317,7 @@ def run_family_risk_agent(
         warnings.append("现金金额不能为负数，已按 0 处理。")
         cash = 0.0
     if not clean_holdings:
+        no_disagreement = {"has_conflict": False, "conflicts": [], "summary": ""}
         return {
             "success": False,
             "agent_steps": agent_steps,
@@ -330,6 +332,7 @@ def run_family_risk_agent(
             "ai_report": "",
             "report_source": "local_fallback",
             "agent_context": {},
+            "family_disagreement": no_disagreement,
             "saved_history": False,
             "storage_status": {
                 "backend": "local_csv",
@@ -393,6 +396,14 @@ def run_family_risk_agent(
         missing_data=missing_data,
         main_risks=main_risks,
     )
+    try:
+        family_comments = load_recent_family_comments(limit=50)
+        family_disagreement = detect_family_disagreement(family_comments)
+    except Exception:  # noqa: BLE001
+        family_comments = []
+        family_disagreement = {"has_conflict": False, "conflicts": [], "summary": ""}
+    agent_context["family_comments"] = family_comments[:20]
+    agent_context["family_disagreement"] = family_disagreement
 
     emit("调用 DeepSeek 生成 AI 风险说明", 72)
     debug_steps.append("生成家庭说明。")
@@ -433,6 +444,7 @@ def run_family_risk_agent(
         "ai_report": ai_report,
         "report_source": report_source,
         "report_mode": "爸妈版",
+        "family_disagreement": family_disagreement,
         "watch_tasks": [],       # 第 6/8 步生成结构化任务，先占位
         "industry_conc": None,   # 后续行业集中度计算
         "data_credit": None,     # 后续数据可信度评分
