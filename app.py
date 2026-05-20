@@ -18,7 +18,7 @@ from validator import sanitize_compliance_text
 # 追问功能本地实现：完整逻辑直接写在 app.py，
 # 不依赖云端 ai_report.py 的版本，永远可用。
 # ─────────────────────────────────────────────────────────────────
-_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 FOLLOWUP_VERSION = "v4_raw_error_diagnostic"
 
 
@@ -336,7 +336,7 @@ def _legacy_local_answer_followup_question(agent_context: dict, question: str) -
 # ─────────────────────────────────────────────────────────────────
 # 兼容导入：若云端 ai_report.py 是新版本则用新版本覆盖上面的本地实现
 # ─────────────────────────────────────────────────────────────────
-_AI_REPORT_FALLBACK_MSG = "AI 报告模块需要重新部署最新版本。\n\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+_AI_REPORT_FALLBACK_MSG = "AI 报告模块需要重新部署最新版本。\n\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 
 try:
     from ai_report import generate_agent_report  # type: ignore
@@ -422,7 +422,7 @@ APP_TITLE = "家庭投资助手"
 APP_SUBTITLE = "Family Investment Agent"
 DEFAULT_CODES = ["600519", "000001", "300750"]
 DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
-HOME_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+HOME_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 REPORT_DISCLAIMER = "本报告由 AI 综合生成，仅供学习参考，不构成投资建议。投资有风险，决策需谨慎。"
 
 
@@ -1042,21 +1042,22 @@ def inject_css() -> None:
         }}
         .guide-block {{
             background: var(--surface-2);
-            padding: 2.2rem;
+            padding: 1.25rem 1.35rem;
         }}
         .guide-list {{
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 1.4rem;
+            gap: 0.75rem;
         }}
         .guide-step {{
             display: grid;
             grid-template-columns: auto 1fr;
-            gap: 0.9rem;
+            gap: 0.65rem;
+            align-items: start;
         }}
         .step-num {{
-            width: 2.2rem;
-            height: 2.2rem;
+            width: 1.55rem;
+            height: 1.55rem;
             border-radius: 999px;
             border: 1px solid var(--border-strong);
             background: var(--surface);
@@ -1065,18 +1066,24 @@ def inject_css() -> None:
             place-items: center;
             font-family: var(--font-num);
             font-weight: 800;
+            font-size: 0.86rem;
         }}
         .step-title {{
             color: var(--text);
             font-weight: 800;
-            margin-bottom: 0.2rem;
+            margin-bottom: 0.08rem;
+            font-size: 0.98rem;
+        }}
+        .guide-step .muted {{
+            font-size: 0.88rem;
+            line-height: 1.55;
         }}
         .guide-foot, .page-foot {{
-            margin-top: 1.6rem;
-            padding-top: 1rem;
+            margin-top: 0.85rem;
+            padding-top: 0.75rem;
             border-top: 1px dashed var(--border);
             color: var(--text-2);
-            font-size: 0.9rem;
+            font-size: 0.82rem;
         }}
 
         .breadcrumb {{
@@ -1179,6 +1186,41 @@ def inject_css() -> None:
             font-size: 1.85rem;
             font-weight: 700;
             margin: 0.3rem 0;
+        }}
+        .risk-signal {{
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }}
+        .risk-light {{
+            width: 3.25rem;
+            height: 3.25rem;
+            border-radius: 999px;
+            flex: 0 0 auto;
+            border: 4px solid rgba(255, 255, 255, 0.72);
+            box-shadow: 0 12px 30px rgba(42, 37, 32, 0.14), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+        }}
+        .risk-green .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #eefaf1 0, #4e9f68 48%, #247a45 100%);
+        }}
+        .risk-yellow .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #fff8dc 0, #dfb844 52%, #aa8422 100%);
+        }}
+        .risk-red .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #ffe8e3 0, #c85a4a 52%, #933123 100%);
+        }}
+        .risk-neutral .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #f3f1ee 0, #9b9288 54%, #6f665e 100%);
+        }}
+        .risk-status {{
+            font-family: var(--font-display);
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin: 0.22rem 0;
+        }}
+        .risk-score-line {{
+            color: var(--text-2);
+            font-size: 0.92rem;
         }}
         .score-dial {{
             width: 104px;
@@ -1331,8 +1373,14 @@ def inject_css() -> None:
             .family-chip {{
                 display: none;
             }}
-            .hero-card, .stock-head, .guide-block {{
+            .hero-card, .stock-head {{
                 padding: 1.45rem;
+            }}
+            .guide-block {{
+                padding: 1.05rem;
+            }}
+            .guide-list {{
+                gap: 0.85rem;
             }}
             .hero-title, .stock-title {{
                 font-size: 1.25rem;
@@ -1791,22 +1839,22 @@ def guide_block() -> None:
         <section class="block guide-block">
             <div class="block-head">
                 <div>
-                    <h2 class="block-title">第一次使用？三步看懂</h2>
-                    <p class="block-subtitle">不用懂复杂行情软件，也能先把家庭账户风险讲清楚。</p>
+                    <h2 class="block-title">Agent 怎么体检</h2>
+                    <p class="block-subtitle">填持仓，看风险，再追问。</p>
                 </div>
             </div>
             <div class="guide-list">
                 <div class="guide-step">
                     <div class="step-num">1</div>
-                    <div><div class="step-title">输入想了解的股票</div><div class="muted">直接输入股票或基金代码（如 600519），填入持仓金额和家庭现金，点击一键智能体检。</div></div>
+                    <div><div class="step-title">填信息</div><div class="muted">输入代码、金额、现金和风险偏好。</div></div>
                 </div>
                 <div class="guide-step">
                     <div class="step-num">2</div>
-                    <div><div class="step-title">查看体检结果</div><div class="muted">报告给出综合评分和风险等级；下方展开风险提示、财务数据、持仓明细。</div></div>
+                    <div><div class="step-title">看结论</div><div class="muted">先看风险灯、评分、现金和集中度。</div></div>
                 </div>
                 <div class="guide-step">
                     <div class="step-num">3</div>
-                    <div><div class="step-title">和家人一起讨论</div><div class="muted">在分析页底部的"家庭讨论"中留言，家人都能看到，方便共同决策。</div></div>
+                    <div><div class="step-title">继续问</div><div class="muted">用 AI 追问和家庭观察，把分歧聊清楚。</div></div>
                 </div>
             </div>
             <div class="guide-foot">{HOME_DISCLAIMER}</div>
@@ -1997,6 +2045,33 @@ def score_dial(score: int) -> str:
         <div class="score-caption">综合评分</div>
     </div>
     """
+
+
+def risk_signal_info(score: int, raw_level: str = "") -> dict[str, str]:
+    text = str(raw_level or "")
+    if "无法" in text or score <= 0:
+        return {
+            "class": "risk-neutral",
+            "status": "暂无法判断",
+            "caption": "请先确认持仓和缓存数据",
+        }
+    if "红" in text or score < 60:
+        return {
+            "class": "risk-red",
+            "status": "风险偏高",
+            "caption": "先看现金、单只占比和家庭承受能力",
+        }
+    if "黄" in text or score < 80:
+        return {
+            "class": "risk-yellow",
+            "status": "需要注意",
+            "caption": "有风险点需要持续观察",
+        }
+    return {
+        "class": "risk-green",
+        "status": "风险较低",
+        "caption": "结构相对可控，但仍需定期复盘",
+    }
 
 
 def verdict_headline(score: int) -> str:
@@ -2929,6 +3004,8 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         f"最大单只占比 {percent(float(summary.get('max_single_ratio', 0) or 0))}。"
         f"主要关注点：{main_risks[0]}"
     )
+    risk_score = int(agent_result.get("risk_score", 0) or 0)
+    risk_info = risk_signal_info(risk_score, str(agent_result.get("risk_level", "") or ""))
     render_html(
         f"""
         <section class="block ai-report">
@@ -2939,12 +3016,16 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 </div>
             </div>
             <div class="verdict-card">
-                <div>
-                    <div class="kicker">综合风险等级</div>
-                    <div class="verdict-title">{html_escape(agent_result.get("risk_level", "暂无"))}</div>
-                    <p class="muted">{html_escape(data_status)}</p>
+                <div class="risk-signal {html_escape(risk_info["class"])}">
+                    <div class="risk-light" aria-hidden="true"></div>
+                    <div>
+                        <div class="kicker">综合风险等级</div>
+                        <div class="risk-status">{html_escape(risk_info["status"])}</div>
+                        <div class="risk-score-line">综合评分 {risk_score}/100 · {html_escape(risk_info["caption"])}</div>
+                        <p class="muted">{html_escape(data_status)}</p>
+                    </div>
                 </div>
-                {score_dial(int(agent_result.get("risk_score", 0) or 0))}
+                {score_dial(risk_score)}
             </div>
             <div class="metric-grid">
                 <article class="metric-card">

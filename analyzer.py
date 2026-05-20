@@ -266,7 +266,7 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
         notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）很高，价格容易上上下下。")
     elif turnover > 3:
         score -= 18
-        notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）偏高，别被气氛带着追。")
+        notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）偏高，别被短期气氛带着做决定。")
     elif turnover > 1.5:
         score -= 8
 
@@ -275,7 +275,7 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
     elif volume_ratio > 2:
         score -= 20
         overheated = True
-        notes.append(f"{name} 量比（今天成交量比平时多多少）明显放大，容易让人冲动下单。")
+        notes.append(f"{name} 量比（今天成交量比平时多多少）明显放大，容易让人冲动。")
     elif volume_ratio > 1.4:
         score -= 9
 
@@ -296,7 +296,7 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
 
     if change is not None and change > 4 and turnover is not None and turnover > 3:
         overheated = True
-        notes.append(f"{name} 涨跌幅和换手率同时偏高，不建议盲目追涨。")
+        notes.append(f"{name} 涨跌幅和换手率同时偏高，不建议被短期热度带着走。")
 
     if amount is None:
         notes.append(f"{name} 缺少成交额数据，交易热度只能保守判断。")
@@ -335,10 +335,10 @@ def position_safety(
         notes.append("这只标的占家庭资金太高，已经需要红色提醒。")
     elif single_ratio > 0.30:
         score -= 28
-        notes.append("这只标的占比偏高，建议不要继续集中加钱。")
+        notes.append("这只标的占比偏高，建议不要把家庭资金过度集中到这一只。")
     elif single_ratio > 0.20:
-        score -= 12
-        notes.append("这只标的占比不低，后续加仓要更谨慎。")
+        score -= 15
+        notes.append("这只标的占比已经不低，后续需要重点观察集中度。")
     else:
         notes.append("这只标的占家庭资金比例还算可控。")
 
@@ -376,6 +376,9 @@ def portfolio_position_score(
     elif max_single_ratio > 0.30:
         score -= 20
         notes.append("单只股票或基金超过家庭总资金的 30%，需要注意集中风险。")
+    elif max_single_ratio > 0.20:
+        score -= 10
+        notes.append("单只股票或基金超过家庭总资金的 20%，需要持续关注集中度。")
 
     if stock_ratio > 0.80:
         score -= 25
@@ -402,9 +405,15 @@ def portfolio_position_score(
     if stock_total > 0 and industry_amounts:
         top_industry, top_amount = max(industry_amounts.items(), key=lambda item: item[1])
         industry_concentration = top_amount / stock_total
-        if industry_concentration > 0.60 and top_industry != "未知":
-            score -= 18
+        if industry_concentration > 0.80 and top_industry != "未知":
+            score -= 22
+            notes.append(f"股票/基金部分高度集中在{top_industry}，行业风险需要放在前面看。")
+        elif industry_concentration > 0.60 and top_industry != "未知":
+            score -= 16
             notes.append(f"持仓较集中在{top_industry}，行业风险需要留心。")
+        elif industry_concentration > 0.45 and top_industry != "未知":
+            score -= 8
+            notes.append(f"股票/基金部分有一定{top_industry}集中度，建议持续观察行业风险。")
         elif industry_concentration > 0.60:
             score -= 10
             notes.append("部分持仓行业信息不完整，行业集中度只能保守判断。")
@@ -436,6 +445,9 @@ def risk_match_score(risk_profile: str, stock_ratio: float, max_single_ratio: fl
     if risk_profile == "稳健" and max_single_ratio > 0.25:
         score -= 20
         notes.append("稳健型家庭不适合把太多钱压在单只标的上。")
+    elif risk_profile == "稳健" and max_single_ratio > 0.20:
+        score -= 10
+        notes.append("稳健型家庭需要更早关注单只标的占比。")
     elif risk_profile == "平衡" and max_single_ratio > 0.35:
         score -= 15
         notes.append("平衡型家庭也要避免单只标的太集中。")
@@ -459,10 +471,10 @@ def _level_from_score(score: float) -> tuple[str, str, str]:
 
 def _family_advice(level: str) -> str:
     if level == "绿色":
-        return "当前组合整体风险相对可控，但仍不建议因为短期上涨而频繁操作。建议继续关注公司经营情况，并保留足够现金。"
+        return "当前组合整体风险相对可控，但仍不建议因为短期上涨而频繁调整。建议继续关注公司经营情况，并保留足够现金。"
     if level == "黄色":
-        return "当前组合需要注意，主要问题可能是股票仓位较高、持仓较集中，或部分持仓交易较热。建议不要继续集中加仓，优先保持现金储备和分散配置。"
-    return "当前组合风险偏高，不建议继续追涨或集中加仓。建议先控制单只股票占比，保留家庭备用金，必要时分批降低过度集中的持仓。"
+        return "当前组合需要注意，主要问题可能是股票仓位较高、持仓较集中，或部分持仓交易较热。建议优先保持现金储备，并避免把家庭资金过度集中在少数标的上。"
+    return "当前组合风险偏高，先不要被短期热度带着做决定。建议先把单只占比、备用金和家庭用钱计划聊清楚。"
 
 
 def analyze_portfolio(
@@ -553,7 +565,8 @@ def analyze_portfolio(
     match = risk_match_score(risk_profile, position_summary["stock_ratio"], position_summary["max_single_ratio"])
     match_score = match["score"]
 
-    total_score = financial_score * 0.40 + heat_score * 0.25 + position_score * 0.25 + match_score * 0.10
+    # 家庭工具更看重账户安全，而不是把公司质量当成单只股票评分。
+    total_score = financial_score * 0.30 + heat_score * 0.20 + position_score * 0.35 + match_score * 0.15
 
     cap_reasons: list[str] = []
     score_cap = 100.0
@@ -575,6 +588,14 @@ def analyze_portfolio(
     if overheated:
         score_cap = min(score_cap, 79)
         cap_reasons.append("部分持仓短期交易明显偏热，不能给绿色。")
+
+    if position_summary["max_single_ratio"] > 0.25 and risk_profile == "稳健":
+        score_cap = min(score_cap, 84)
+        cap_reasons.append("稳健型家庭的单只持仓占比已经不低，最高只给浅绿色观察。")
+
+    if position_summary["industry_concentration"] > 0.80 and position_summary["top_industry"] != "未知":
+        score_cap = min(score_cap, 84)
+        cap_reasons.append("股票/基金部分高度集中在同一行业，绿色也需要继续观察。")
 
     final_score = round(min(total_score, score_cap))
     level, color, level_text = _level_from_score(final_score)
@@ -626,6 +647,12 @@ def analyze_portfolio(
             "交易热度风险": round(heat_score, 1),
             "家庭仓位安全": round(position_score, 1),
             "风险承受匹配": round(match_score, 1),
+        },
+        "scoring_weights": {
+            "家庭仓位安全": 35,
+            "公司财务质量": 30,
+            "交易热度风险": 20,
+            "风险承受匹配": 15,
         },
         "stock_results": stock_results,
         "risk_notes": risk_notes[:12],
