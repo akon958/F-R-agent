@@ -2660,16 +2660,23 @@ def discussion_block(run_id: str = "") -> None:
         save_status = st.session_state.get("family_comment_last_save", {})
         if result.get("success") and result.get("backend") == "supabase":
             st.session_state["family_comment_notice"] = "观察记录已保存到云端"
+            st.session_state["family_comment_notice_detail"] = ""
         elif result.get("backend") == "local_csv" and save_status.get("saved"):
             st.session_state["family_comment_notice"] = "观察记录已保存到本地，云端同步失败"
+            st.session_state["family_comment_notice_detail"] = str(save_status.get("error", "") or result.get("error", ""))
         else:
             st.session_state["family_comment_notice"] = "观察记录保存失败，不影响体检结果。"
+            st.session_state["family_comment_notice_detail"] = str(save_status.get("error", "") or result.get("error", ""))
         st.rerun()
 
     notice = st.session_state.pop("family_comment_notice", "")
+    notice_detail = st.session_state.pop("family_comment_notice_detail", "")
     if notice:
         if "失败" in notice or "本地" in notice:
             st.warning(notice)
+            if notice_detail:
+                with st.expander("查看云端同步失败原因", expanded=False):
+                    st.caption(notice_detail[:400])
         else:
             st.success(notice)
 

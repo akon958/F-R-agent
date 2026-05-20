@@ -113,3 +113,28 @@ create index if not exists idx_family_comments_family_time
     on family_comments (family_id, created_at desc);
 create index if not exists idx_family_comments_run_id
     on family_comments (run_id);
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- 权限修复（重要）：关闭 RLS + 显式授权 anon / authenticated 角色
+-- 本工具没有用户登录系统，全家庭共用 family_id，不需要行级安全。
+-- 如果不执行这段 SQL，anon key 无法写入，会出现"云端同步失败"。
+-- ─────────────────────────────────────────────────────────────────
+
+alter table if exists analysis_history  disable row level security;
+alter table if exists followup_history  disable row level security;
+alter table if exists feedback_history  disable row level security;
+alter table if exists family_profile    disable row level security;
+alter table if exists family_comments   disable row level security;
+
+grant all on table analysis_history  to anon, authenticated;
+grant all on table followup_history  to anon, authenticated;
+grant all on table feedback_history  to anon, authenticated;
+grant all on table family_profile    to anon, authenticated;
+grant all on table family_comments   to anon, authenticated;
+
+grant usage, select on sequence analysis_history_id_seq  to anon, authenticated;
+grant usage, select on sequence followup_history_id_seq  to anon, authenticated;
+grant usage, select on sequence feedback_history_id_seq  to anon, authenticated;
+grant usage, select on sequence family_profile_id_seq    to anon, authenticated;
+grant usage, select on sequence family_comments_id_seq   to anon, authenticated;
