@@ -2826,21 +2826,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     st.markdown(display_report)
     render_html("</div>")
 
-    dinner_talk = str(agent_result.get("dinner_talk") or agent_context.get("dinner_talk") or "")
-    if dinner_talk:
-        render_html(
-            f"""
-            <section class="block" style="padding:1rem 1.1rem;">
-                <div class="block-head" style="margin-bottom:.35rem;">
-                    <div>
-                        <h2 class="block-title" style="font-size:1.18rem;">🗣️ 今晚可以这样跟爸妈说</h2>
-                        <p class="block-subtitle">{html_escape(dinner_talk)}</p>
-                    </div>
-                </div>
-            </section>
-            """
-        )
-
     # ── 5. 继续追问 ────────────────────────────────────────────
     if agent_context:
         followup_block(agent_context)

@@ -258,6 +258,22 @@ def _split_agent_report_sections(text: str, agent_context: dict[str, Any]) -> tu
     return _ensure_disclaimer(_sanitize_report_text(formal)), sanitize_dinner_talk(dinner, agent_context)
 
 
+def _merge_parent_report_with_dinner(main_report: str, dinner_talk: str, mode: str) -> str:
+    if mode != "爸妈版" or not dinner_talk:
+        return main_report
+    if "【给爸妈一句话】" in main_report:
+        return main_report
+
+    section = f"【给爸妈一句话】\n{dinner_talk}"
+    if "【免责声明】" in main_report:
+        before, after = main_report.split("【免责声明】", 1)
+        return f"{before.rstrip()}\n\n{section}\n\n【免责声明】{after}"
+    if DISCLAIMER in main_report:
+        before, after = main_report.split(DISCLAIMER, 1)
+        return f"{before.rstrip()}\n\n{section}\n\n{DISCLAIMER}{after}"
+    return _ensure_disclaimer(f"{main_report.rstrip()}\n\n{section}")
+
+
 def _flatten_missing_data(missing_data: dict[str, Any]) -> str:
     if not missing_data:
         return "这次体检没有发现明显的数据缺口。"
@@ -588,7 +604,7 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
    【给爸妈重点看的地方】
    【免责声明】
 9. 【免责声明】必须一字不改：{DISCLAIMER}
-10. 请在正式报告之外，额外生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在“要不要我们一起再看看/商量一下”这种开放式表达。
+10. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。系统会把这段合并进爸妈版报告，不在页面单独展示。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在“要不要我们一起再看看/商量一下”这种开放式表达。
 """.strip()
 
     user_prompt = (
@@ -628,8 +644,9 @@ def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版"
     try:
         combined_report = _call_deepseek_agent_report(agent_context, mode)
         main_report, dinner_talk = _split_agent_report_sections(combined_report, agent_context)
+        merged_report = _merge_parent_report_with_dinner(main_report, dinner_talk, mode)
         return {
-            "ai_report": main_report,
+            "ai_report": merged_report,
             "main_report": main_report,
             "dinner_talk": dinner_talk,
             "report_source": "deepseek",
@@ -637,10 +654,12 @@ def generate_agent_report(agent_context: dict[str, Any], mode: str = "爸妈版"
     except Exception:  # noqa: BLE001
         pass
     local_report = generate_local_agent_report(agent_context, mode)
+    local_dinner_talk = sanitize_dinner_talk(_local_dinner_talk(agent_context), agent_context)
+    merged_report = _merge_parent_report_with_dinner(local_report, local_dinner_talk, mode)
     return {
-        "ai_report": local_report,
+        "ai_report": merged_report,
         "main_report": local_report,
-        "dinner_talk": sanitize_dinner_talk(_local_dinner_talk(agent_context), agent_context),
+        "dinner_talk": local_dinner_talk,
         "report_source": "local_fallback",
     }
 
