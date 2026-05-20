@@ -1674,15 +1674,24 @@ def portfolio_form() -> None:
     current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
     if current_risk not in RISK_PROFILE_OPTIONS:
         current_risk = "平衡"
-    risk_profile = st.radio(
-        "家庭风险承受能力",
-        RISK_PROFILE_OPTIONS,
-        index=RISK_PROFILE_OPTIONS.index(current_risk),
-        horizontal=True,
-        key="risk_profile",
-    )
-    st.caption(f"{risk_profile}：{RISK_PROFILE_HINTS.get(risk_profile, '')}")
-    render_html(risk_profile_hint_grid(risk_profile))
+        st.session_state["risk_profile"] = current_risk
+    risk_profile = current_risk
+    st.markdown('<p style="margin:.6rem 0 .3rem;font-size:.9rem;font-weight:600;">家庭风险承受能力</p>', unsafe_allow_html=True)
+    _rc1 = st.columns(3)
+    _rc2 = st.columns([1, 1, 2])
+    for _i, _n in enumerate(RISK_PROFILE_OPTIONS[:3]):
+        with _rc1[_i]:
+            if st.button(_n, key=f"risk_btn_{_n}", use_container_width=True,
+                         type="primary" if _n == current_risk else "secondary"):
+                st.session_state["risk_profile"] = _n
+                st.rerun()
+    for _i, _n in enumerate(RISK_PROFILE_OPTIONS[3:]):
+        with _rc2[_i]:
+            if st.button(_n, key=f"risk_btn_{_n}", use_container_width=True,
+                         type="primary" if _n == current_risk else "secondary"):
+                st.session_state["risk_profile"] = _n
+                st.rerun()
+    st.caption(f"{current_risk}：{RISK_PROFILE_HINTS.get(current_risk, '')}")
 
     with st.expander("更多持仓（可选）", expanded=False):
         st.markdown('<p class="muted">这里填写第 2 只及之后的持仓；不填也可以直接体检。</p>', unsafe_allow_html=True)
@@ -3236,9 +3245,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     st.markdown(display_report)
     render_html("</div>")
 
-    reverse_qa_block(agent_result, agent_context, mode)
-
-    # ── 5. 继续追问 ────────────────────────────────────────────
+    # ── 5. 继续追问 入口（补充情况已移入追问页）──────────────────
     if agent_context:
         followup_entry_block(agent_result, agent_context)
 
@@ -3413,6 +3420,49 @@ def history_records_block() -> None:
                     st.caption("；".join(str(item) for item in risks[:2]))
 
 
+def discussion_entry_block(run_id: str = "") -> None:
+    """家庭观察记录入口卡片（主结果页显示，点击跳入专属子页）。"""
+    try:
+        comments: list[dict[str, Any]] = st.session_state.get("family_comments_cache") or []
+        if not comments:
+            comments = load_recent_family_comments(limit=5)
+            st.session_state["family_comments_cache"] = comments
+    except Exception:  # noqa: BLE001
+        comments = []
+    count = len(comments)
+    subtitle = (
+        f"已有 {count} 条家庭观察，点击进入查看或新增。"
+        if count
+        else "记录家人对这次体检的看法，方便沟通和分歧检测。"
+    )
+    render_html(
+        f"""
+        <section class="block" style="padding:1rem 1.1rem;">
+            <div class="block-head" style="margin-bottom:.35rem;">
+                <div>
+                    <h2 class="block-title" style="font-size:1.18rem;">家庭观察记录</h2>
+                    <p class="block-subtitle">{html_escape(subtitle)}</p>
+                </div>
+            </div>
+        </section>
+        """
+    )
+    if st.button("记录家人看法 →", use_container_width=True, key="open_comments_view"):
+        st.session_state["_comments_run_id"] = run_id
+        st.session_state["active_view"] = "comments"
+        st.rerun()
+
+
+def comments_page(agent_result: dict[str, Any]) -> None:
+    """家庭观察记录专属子页。"""
+    if st.button("← 返回体检结果", use_container_width=True, key="back_from_comments_view"):
+        st.session_state["active_view"] = "analysis"
+        st.rerun()
+    run_id = str(st.session_state.get("_comments_run_id", "") or
+                 (agent_result.get("run_id", "") if agent_result else ""))
+    discussion_block(run_id=run_id)
+
+
 def followup_page(agent_result: dict[str, Any]) -> None:
     agent_context = agent_result.get("agent_context", {}) if agent_result else {}
     if st.button("← 返回体检结果", use_container_width=True, key="back_to_analysis_view"):
@@ -3421,6 +3471,9 @@ def followup_page(agent_result: dict[str, Any]) -> None:
     if not agent_context:
         st.info("请先完成一次一键智能体检，再继续追问。")
         return
+    # 补充家庭情况（移入追问页，和 AI 追问放在一起更自然）
+    _fup_mode = agent_result.get("report_mode", "爸妈版") or "爸妈版"
+    reverse_qa_block(agent_result, agent_context, _fup_mode)
     followup_block(agent_context)
     with st.expander("追问历史保存情况", expanded=False):
         latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
@@ -3454,14 +3507,19 @@ def analysis_page() -> None:
         st.session_state["active_view"] = "analysis"
         st.rerun()
     agent_result = st.session_state.get("agent_result", {})
-    if st.session_state.get("active_view") == "followup":
+    _active = st.session_state.get("active_view", "analysis")
+    if _active == "followup":
         followup_page(agent_result)
+        render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+        return
+    if _active == "comments":
+        comments_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     agent_result_block(agent_result)
     if agent_result:
         _cur_run_id = str(agent_result.get("run_id", "") or "")
-        discussion_block(run_id=_cur_run_id)
+        discussion_entry_block(run_id=_cur_run_id)
     else:
         with st.expander("家庭观察记录", expanded=False):
             st.info("完成一次体检后，可以记录家人的观察和分歧。")
