@@ -3478,31 +3478,76 @@ def history_replay_block(agent_result: dict[str, Any] | None) -> None:
             st.info(summary)
 
 
+def _level_icon(level: str) -> str:
+    s = str(level)
+    if "红" in s:
+        return "🔴"
+    if "黄" in s:
+        return "🟡"
+    if "绿" in s:
+        return "🟢"
+    return "⚪"
+
+
 def history_records_block() -> None:
     with st.expander("历史体检记录", expanded=False):
         status = get_storage_status()
         st.caption(status.get("message", "当前使用本地 CSV 兜底"))
         try:
-            rows = load_recent_analysis_history(limit=5)
+            rows = load_recent_analysis_history(limit=10)
         except Exception:  # noqa: BLE001
             rows = []
         if not rows:
             st.info("暂无历史体检记录。完成一次一键智能体检后，这里会显示最近记录。")
             return
-        for row in rows:
+        for idx, row in enumerate(rows):
             created_at = format_datetime_for_display(row.get("created_at") or row.get("分析时间"))
             score = row.get("risk_score") or row.get("综合评分") or ""
-            level = row.get("risk_level") or row.get("风险等级") or ""
-            cash_ratio = row.get("cash_ratio") or row.get("现金比例") or 0
-            stock_ratio = row.get("stock_ratio") or row.get("股票仓位") or 0
-            with st.container():
-                st.write(f"**{created_at or '最近一次体检'}｜评分 {score}｜{level}**")
-                st.caption(f"现金比例：{percent(float(cash_ratio or 0))} ｜ 股票/基金仓位：{percent(float(stock_ratio or 0))}")
-                risks = row.get("main_risks") or row.get("主要风险") or []
-                if isinstance(risks, str):
-                    st.caption(risks[:120])
-                elif risks:
-                    st.caption("；".join(str(item) for item in risks[:2]))
+            level = str(row.get("risk_level") or row.get("风险等级") or "")
+            cash_ratio = float(row.get("cash_ratio") or row.get("现金比例") or 0)
+            stock_ratio = float(row.get("stock_ratio") or row.get("股票仓位") or 0)
+            holdings_summary = str(row.get("holdings_summary") or "")
+
+            # full_agent_result is already a dict (deserialized by storage._normalize_analysis_row)
+            full: dict[str, Any] = row.get("full_agent_result") or {}
+            if not isinstance(full, dict):
+                full = {}
+
+            ai_report = str(full.get("ai_report") or row.get("ai_report_summary") or "").strip()
+            main_risks_raw = full.get("main_risks") or row.get("main_risks") or []
+            if isinstance(main_risks_raw, str):
+                try:
+                    import json as _json
+                    main_risks_raw = _json.loads(main_risks_raw)
+                except Exception:  # noqa: BLE001
+                    main_risks_raw = [main_risks_raw] if main_risks_raw else []
+            main_risks: list[str] = [str(r) for r in (main_risks_raw or []) if r]
+
+            icon = _level_icon(level)
+            label = f"{icon} {created_at or '体检记录'}｜评分 {score}｜{level}"
+            with st.expander(label, expanded=False):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("综合评分", f"{score} 分")
+                with c2:
+                    st.metric("现金比例", percent(cash_ratio))
+                with c3:
+                    st.metric("股票仓位", percent(stock_ratio))
+
+                if holdings_summary:
+                    st.caption(f"持仓：{holdings_summary[:160]}")
+
+                if main_risks:
+                    st.markdown("**主要风险**")
+                    for risk in main_risks[:6]:
+                        st.caption(f"• {risk[:120]}")
+
+                if ai_report:
+                    st.markdown("---")
+                    st.markdown("**AI 风险说明**")
+                    st.markdown(ai_report)
+                elif idx == 0:
+                    st.caption("此次记录未保存完整 AI 说明（可能是旧格式记录）。")
 
 
 def discussion_entry_block(run_id: str = "") -> None:
