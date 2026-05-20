@@ -432,6 +432,13 @@ RISK_PROFILE_HINTS = {
     "进取": "能承受较大波动，但仍要避免过度集中。",
     "积极": "波动承受能力较强，也不鼓励满仓或把钱压在少数标的上。",
 }
+RISK_PROFILE_SHORT_HINTS = {
+    "保守": "现金优先，少波动",
+    "稳健": "留足备用金",
+    "平衡": "兼顾现金和仓位",
+    "进取": "能承受较大波动",
+    "积极": "承受力强，也防集中",
+}
 
 
 MARKET_INDEXES = [
@@ -652,6 +659,20 @@ def inject_css() -> None:
             background: linear-gradient(135deg, #6f4030 0%, var(--accent) 58%, #9c6140 100%);
             box-shadow: 0 16px 32px rgba(124, 73, 55, 0.25);
         }}
+        .stButton button[kind="primary"] {{
+            min-height: 3.05rem;
+            background: linear-gradient(135deg, #7b4937 0%, var(--accent) 58%, #a46a47 100%);
+            color: #fff;
+            border-color: var(--accent);
+            font-size: 1rem;
+            font-weight: 800;
+            box-shadow: 0 14px 28px rgba(124, 73, 55, 0.20);
+        }}
+        .stButton button[kind="primary"]:hover {{
+            color: #fff;
+            background: linear-gradient(135deg, #6f4030 0%, var(--accent) 58%, #9c6140 100%);
+            box-shadow: 0 16px 32px rgba(124, 73, 55, 0.25);
+        }}
         div[data-testid="stTextInput"] input,
         div[data-testid="stNumberInput"] input,
         div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
@@ -707,6 +728,35 @@ def inject_css() -> None:
         }}
         div[data-testid="stRadio"] div[role="radiogroup"] label:hover {{
             border-color: var(--accent);
+        }}
+        .risk-hint-grid {{
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0.35rem;
+            margin: 0.45rem 0 0.2rem;
+        }}
+        .risk-hint {{
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: color-mix(in srgb, var(--surface) 88%, var(--bg-2));
+            padding: 0.42rem 0.48rem;
+            color: var(--text-2);
+            font-size: 0.72rem;
+            line-height: 1.35;
+        }}
+        .risk-hint strong {{
+            display: block;
+            color: var(--text);
+            font-size: 0.78rem;
+            margin-bottom: 0.12rem;
+        }}
+        .risk-hint.active {{
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--accent);
+        }}
+        .risk-hint.active strong {{
+            color: var(--accent);
         }}
         [data-testid="stExpander"] {{
             border: 1px solid var(--border);
@@ -1438,6 +1488,9 @@ def inject_css() -> None:
             .guide-list {{
                 gap: 0.85rem;
             }}
+            .risk-hint-grid {{
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }}
             .hero-title, .stock-title {{
                 font-size: 1.25rem;
             }}
@@ -1566,6 +1619,21 @@ def set_first_code(code: str) -> None:
     st.session_state["pending_code"] = normalize_code(code)
 
 
+def risk_profile_hint_grid(selected: str) -> str:
+    items = []
+    for name in RISK_PROFILE_OPTIONS:
+        cls = "risk-hint active" if name == selected else "risk-hint"
+        items.append(
+            f"""
+            <div class="{cls}">
+                <strong>{html_escape(name)}</strong>
+                {html_escape(RISK_PROFILE_SHORT_HINTS.get(name, ""))}
+            </div>
+            """
+        )
+    return f'<div class="risk-hint-grid">{"".join(items)}</div>'
+
+
 def home_hero() -> None:
     render_html(
         """
@@ -1587,61 +1655,55 @@ def portfolio_form() -> None:
             st.session_state["amount_0"] = 20000.0
 
     st.markdown('<div class="search-shell">', unsafe_allow_html=True)
-    with st.form("family_risk_form"):
-        code_col, amount_col = st.columns([1.4, 1])
-        with code_col:
-            first_code = st.text_input(
-                "股票/基金代码",
-                key="code_0",
-                placeholder="例如：600519、贵州茅台、招商银行",
+    code_col, amount_col = st.columns([1.4, 1])
+    with code_col:
+        first_code = st.text_input(
+            "股票/基金代码",
+            key="code_0",
+            placeholder="例如：600519、贵州茅台、招商银行",
+        )
+    with amount_col:
+        first_amount = st.number_input(
+            "持仓金额（元）",
+            min_value=0.0,
+            step=1000.0,
+            key="amount_0",
+        )
+
+    cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=50000.0, step=1000.0)
+    current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
+    if current_risk not in RISK_PROFILE_OPTIONS:
+        current_risk = "平衡"
+    risk_profile = st.radio(
+        "家庭风险承受能力",
+        RISK_PROFILE_OPTIONS,
+        index=RISK_PROFILE_OPTIONS.index(current_risk),
+        horizontal=True,
+        key="risk_profile",
+    )
+    st.caption(f"{risk_profile}：{RISK_PROFILE_HINTS.get(risk_profile, '')}")
+    render_html(risk_profile_hint_grid(risk_profile))
+
+    with st.expander("更多持仓（可选）", expanded=False):
+        st.markdown('<p class="muted">这里填写第 2 只及之后的持仓；不填也可以直接体检。</p>', unsafe_allow_html=True)
+        for index in range(1, st.session_state.holding_rows):
+            cols = st.columns([1.4, 1])
+            cols[0].text_input(
+                f"第 {index + 1} 只股票/基金代码",
+                key=f"code_{index}",
+                placeholder="例如 000001",
             )
-        with amount_col:
-            first_amount = st.number_input(
-                "持仓金额（元）",
+            cols[1].number_input(
+                f"第 {index + 1} 只持仓金额（元）",
                 min_value=0.0,
                 step=1000.0,
-                key="amount_0",
+                key=f"amount_{index}",
             )
+        if st.button("＋ 继续添加一只", use_container_width=True, key="add_holding_row"):
+            st.session_state.holding_rows += 1
+            st.rerun()
 
-        cash_col, risk_col = st.columns([1, 1])
-        with cash_col:
-            cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=50000.0, step=1000.0)
-        with risk_col:
-            current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
-            if current_risk not in RISK_PROFILE_OPTIONS:
-                current_risk = "平衡"
-            risk_profile = st.radio(
-                "家庭风险承受能力",
-                RISK_PROFILE_OPTIONS,
-                index=RISK_PROFILE_OPTIONS.index(current_risk),
-                horizontal=True,
-                key="risk_profile",
-            )
-            st.caption(RISK_PROFILE_HINTS.get(risk_profile, ""))
-
-        with st.expander("添加更多持仓", expanded=False):
-            st.markdown('<p class="muted">默认先分析第一只标的，也可以继续加入家庭账户里已有的其他持仓。</p>', unsafe_allow_html=True)
-            raw_more: list[dict[str, float | str]] = []
-            for index in range(1, st.session_state.holding_rows):
-                cols = st.columns([1.4, 1])
-                code = cols[0].text_input(
-                    f"第 {index + 1} 只股票/基金代码",
-                    key=f"code_{index}",
-                    placeholder="例如 000001",
-                )
-                amount = cols[1].number_input(
-                    f"第 {index + 1} 只持仓金额（元）",
-                    min_value=0.0,
-                    step=1000.0,
-                    key=f"amount_{index}",
-                )
-                raw_more.append({"code": code, "amount": amount})
-
-        submitted = st.form_submit_button("开始一键智能体检", use_container_width=True)
-
-    if st.button("＋ 添加持仓行", use_container_width=True):
-        st.session_state.holding_rows += 1
-        st.rerun()
+    submitted = st.button("开始一键智能体检", type="primary", use_container_width=True)
 
     if submitted:
         raw_rows: list[dict[str, float | str]] = [{"code": first_code, "amount": first_amount}]
