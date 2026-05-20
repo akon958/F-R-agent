@@ -810,27 +810,42 @@ def inject_css() -> None:
             gap: 0.7rem;
         }}
         .brand-mark {{
-            width: 28px;
-            height: 28px;
-            border-radius: 9px;
+            width: 40px;
+            height: 40px;
+            flex-shrink: 0;
             display: grid;
             place-items: center;
-            color: #fff;
-            background: var(--accent);
-            font-family: var(--font-display);
-            font-weight: 700;
+            filter: drop-shadow(0 2px 6px rgba(122,62,46,0.28));
         }}
         .brand-cn {{
             font-family: var(--font-display);
             font-weight: 700;
+            font-size: 1.08rem;
             color: var(--text);
-            line-height: 1.05;
+            line-height: 1.1;
+            letter-spacing: 0.01em;
         }}
         .brand-en {{
-            font-size: 0.72rem;
+            font-size: 0.68rem;
             color: var(--text-3);
             font-family: var(--font-num);
-            line-height: 1.1;
+            line-height: 1.2;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }}
+        .brand-badge {{
+            display: inline-block;
+            font-size: 0.55rem;
+            font-family: var(--font-num);
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            color: var(--accent);
+            background: var(--accent-soft);
+            border-radius: 4px;
+            padding: 1px 5px;
+            margin-left: 5px;
+            vertical-align: middle;
+            line-height: 1.6;
         }}
         .site-nav {{
             display: flex;
@@ -1524,9 +1539,21 @@ def site_header() -> None:
     render_html(
         """
         <div class="brand" style="padding: 0.2rem 0 0.05rem;">
-            <div class="brand-mark">家</div>
+            <div class="brand-mark">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <radialGradient id="fi-bg" cx="50%" cy="40%" r="60%">
+                            <stop offset="0%" stop-color="#fff8f5"/>
+                            <stop offset="100%" stop-color="#edddd6"/>
+                        </radialGradient>
+                    </defs>
+                    <circle cx="20" cy="20" r="18.5" fill="url(#fi-bg)" stroke="#7a3e2e" stroke-width="1.5"/>
+                    <path d="M5 20 L12 20 L13 22 L15 10 L17 28 L19 19 L21 20 L35 20"
+                          stroke="#7a3e2e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
             <div>
-                <div class="brand-cn">家庭投资助手</div>
+                <div class="brand-cn">家庭投资助手<span class="brand-badge">AI</span></div>
                 <div class="brand-en">Family Investment Agent</div>
             </div>
         </div>
@@ -2040,9 +2067,10 @@ def cache_tools() -> None:
 
 def home_page() -> None:
     home_hero()
-    cache_tools()
     guide_block()
     agent_capabilities_block()
+    st.divider()
+    cache_tools()
     with st.expander("开发中功能（暂未接入实时数据 / 云数据库，后续开放）", expanded=False):
         st.info("以下功能正在开发中，当前展示为静态演示数据，不代表真实行情或真实账户。")
         st.markdown("#### 今日大盘")
@@ -3647,6 +3675,9 @@ def analysis_page() -> None:
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     agent_result_block(agent_result)
+
+    # ── 追问 / 观察记录 / 历史 ──────────────────────────────────
+    st.divider()
     if agent_result:
         _cur_run_id = str(agent_result.get("run_id", "") or "")
         discussion_entry_block(run_id=_cur_run_id)
@@ -3655,13 +3686,15 @@ def analysis_page() -> None:
             st.info("完成一次体检后，可以记录家人的观察和分歧。")
     history_replay_block(agent_result)
     history_records_block()
+
+    # ── 体检过程 / 调试 ──────────────────────────────────────────
+    st.divider()
     inspection_process_block(agent_result)
     for warning in fetch_warnings:
         if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
             st.info(warning)
         else:
             st.warning(warning)
-
     with st.expander("普通分析 / 调试入口", expanded=False):
         stock_header(analysis)
         ai_report_block(analysis)
@@ -3674,7 +3707,6 @@ def analysis_page() -> None:
             st.info("暂未接入新闻接口，后续开放。")
             news_block()
         deepseek_block(analysis)
-    agent_capabilities_block()
     developer_debug_block(agent_result)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
