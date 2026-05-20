@@ -473,7 +473,7 @@ def render_html(html: str) -> None:
 
 def init_state() -> None:
     defaults = {
-        "holding_rows": 3,
+        "holding_rows": 2,
         "font_size": 14,
         "dark_mode": False,
         "fit_open": False,
@@ -1720,10 +1720,18 @@ def portfolio_form() -> None:
                 st.rerun()
     st.caption(f"{current_risk}：{RISK_PROFILE_HINTS.get(current_risk, '')}")
 
+    # Handle row deletion before widgets render (must precede the expander)
+    if "pending_delete_row" in st.session_state:
+        _del = st.session_state.pop("pending_delete_row")
+        for _j in range(_del, st.session_state.holding_rows - 1):
+            st.session_state[f"code_{_j}"] = st.session_state.get(f"code_{_j + 1}", "")
+            st.session_state[f"amount_{_j}"] = st.session_state.get(f"amount_{_j + 1}", 0.0)
+        st.session_state.holding_rows = max(1, st.session_state.holding_rows - 1)
+
     with st.expander("更多持仓（可选）", expanded=False):
         st.markdown('<p class="muted">这里填写第 2 只及之后的持仓；不填也可以直接体检。</p>', unsafe_allow_html=True)
         for index in range(1, st.session_state.holding_rows):
-            cols = st.columns([1.4, 1])
+            cols = st.columns([1.4, 1, 0.28])
             cols[0].text_input(
                 f"第 {index + 1} 只股票/基金代码",
                 key=f"code_{index}",
@@ -1735,6 +1743,9 @@ def portfolio_form() -> None:
                 step=1000.0,
                 key=f"amount_{index}",
             )
+            if cols[2].button("✕", key=f"del_row_{index}", help="删除这条持仓"):
+                st.session_state.pending_delete_row = index
+                st.rerun()
         if st.button("＋ 继续添加一只", use_container_width=True, key="add_holding_row"):
             st.session_state.holding_rows += 1
             st.rerun()
