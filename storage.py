@@ -58,6 +58,13 @@ _LAST_FAMILY_COMMENT_READ_STATUS: dict[str, Any] = {
     "message": "暂无家庭观察记录读取状态",
     "error": "",
 }
+_LAST_FOLLOWUP_SAVE_STATUS: dict[str, Any] = {
+    "backend": "local_csv",
+    "connected": False,
+    "saved": False,
+    "message": "暂无追问保存状态",
+    "error": "",
+}
 _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS
 
 
@@ -213,6 +220,10 @@ def get_last_family_comment_read_status() -> dict[str, Any]:
     return dict(_LAST_FAMILY_COMMENT_READ_STATUS)
 
 
+def get_last_followup_save_status() -> dict[str, Any]:
+    return dict(_LAST_FOLLOWUP_SAVE_STATUS)
+
+
 def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "family_id": get_family_id(),
@@ -328,6 +339,7 @@ def save_followup_history(
     source: str = "",
     error: str = "",
 ) -> bool:
+    global _LAST_FOLLOWUP_SAVE_STATUS
     payload = {
         "family_id": get_family_id(),
         "question": str(question),
@@ -338,15 +350,32 @@ def save_followup_history(
     if client is not None:
         try:
             client.table("followup_history").insert(payload).execute()
+            _LAST_FOLLOWUP_SAVE_STATUS = {
+                "backend": "supabase",
+                "connected": True,
+                "saved": True,
+                "message": "追问记录已保存到云端",
+                "error": "",
+            }
             return True
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            cloud_error = f"{type(exc).__name__}: {str(exc)[:180]}"
+    else:
+        cloud_error = "未配置 Supabase，使用本地 CSV 兜底"
 
     local_row = dict(payload)
     local_row["created_at"] = _now_iso()
     local_row["source"] = source
     local_row["error"] = error
-    return _append_csv_row(FOLLOWUP_HISTORY_FILE, local_row)
+    saved = _append_csv_row(FOLLOWUP_HISTORY_FILE, local_row)
+    _LAST_FOLLOWUP_SAVE_STATUS = {
+        "backend": "local_csv",
+        "connected": False,
+        "saved": saved,
+        "message": "追问记录已保存到本地" if saved else "追问记录保存失败",
+        "error": "" if saved and client is None else cloud_error,
+    }
+    return saved
 
 
 def load_recent_followup_history(limit: int = 10) -> list[dict[str, Any]]:

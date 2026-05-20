@@ -401,10 +401,12 @@ from storage import (
     format_datetime_for_display,
     get_last_family_comment_read_status,
     get_last_family_comment_save_status,
+    get_last_followup_save_status,
     get_storage,
     get_storage_status,
     load_recent_analysis_history,
     load_recent_family_comments,
+    load_recent_followup_history,
     make_note,
     save_family_comment,
     save_followup_history,
@@ -465,6 +467,9 @@ def init_state() -> None:
         "family_comments": [],
         "family_comments_last_count": 0,
         "family_comment_last_save": {},
+        "active_view": "analysis",
+        "reverse_qa": dict(_REVERSE_QA_DEFAULT),
+        "last_followup_save": {},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -1674,6 +1679,7 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
         st.session_state.pop("followup_questions", None)  # 新一次体检，重新随机生成问题
         st.session_state.pop("last_agent_error", None)
         st.session_state["report_mode"] = "爸妈版"
+        st.session_state["active_view"] = "analysis"
         st.rerun()
     except Exception as exc:  # noqa: BLE001
         error_info = _build_agent_error_info(exc)
@@ -2519,6 +2525,15 @@ def followup_source_label(source: str) -> str:
     return "DeepSeek AI" if source == "deepseek" else "本地规则兜底"
 
 
+def followup_save_label(item: dict[str, Any]) -> str:
+    if item.get("saved") == "true":
+        backend = item.get("save_backend", "local_csv")
+        return "已保存到云端" if backend == "supabase" else "已保存到本地"
+    if item.get("saved") == "false":
+        return "保存失败"
+    return "保存状态未知"
+
+
 def unpack_followup_result(result: Any) -> tuple[str, str, str, str, str]:
     """Return (answer, source, error, raw_error, call_path)."""
     if isinstance(result, dict):
@@ -2562,10 +2577,6 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
         "raw_error": raw_error,
         "call_path": call_path,
     }
-    if existing:
-        existing.update(record)
-    else:
-        answers.insert(0, record)
     if source == "local_fallback":
         st.session_state["last_followup_error"] = {
             "question": clean_question,
@@ -2577,9 +2588,25 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
     else:
         st.session_state.pop("last_followup_error", None)
     try:
-        save_followup_history(question=clean_question, answer=answer, source=source, error=error)
+        saved = save_followup_history(question=clean_question, answer=answer, source=source, error=error)
+        save_status = get_last_followup_save_status()
     except Exception:  # noqa: BLE001
-        pass
+        saved = False
+        save_status = {
+            "backend": "local_csv",
+            "saved": False,
+            "message": "追问记录保存失败",
+            "error": "保存函数调用异常",
+        }
+    record["saved"] = "true" if saved else "false"
+    record["save_backend"] = str(save_status.get("backend", "local_csv"))
+    record["save_message"] = str(save_status.get("message", ""))
+    record["save_error"] = str(save_status.get("error", ""))
+    st.session_state["last_followup_save"] = save_status
+    if existing:
+        existing.update(record)
+    else:
+        answers.insert(0, record)
     st.session_state["followup_answers"] = answers
 
 
@@ -2648,6 +2675,7 @@ def followup_block(agent_context: dict[str, Any]) -> None:
                 st.markdown(f"**AI 回答：**\n\n{item['answer']}")
                 source = item.get("source", "local_fallback")
                 st.caption(f"回答来源：{followup_source_label(source)}")
+                st.caption(f"保存状态：{followup_save_label(item)}")
                 if source == "local_fallback":
                     raw = item.get("raw_error", "") or item.get("error", "")
                     if raw:
@@ -2662,7 +2690,37 @@ def followup_block(agent_context: dict[str, Any]) -> None:
                     st.markdown(f"**问题：** {item['question']}")
                     st.markdown(f"**AI 回答：**\n\n{item['answer']}")
                     st.caption(f"回答来源：{followup_source_label(item.get('source', 'local_fallback'))}")
+                    st.caption(f"保存状态：{followup_save_label(item)}")
                     st.markdown("---")
+
+
+def followup_entry_block(agent_result: dict[str, Any], agent_context: dict[str, Any]) -> None:
+    followup_answers: list[dict[str, Any]] = list(st.session_state.get("followup_answers", []))
+    saved_count = sum(1 for item in followup_answers if item.get("saved") == "true")
+    subtitle = (
+        f"本次已追问 {len(followup_answers)} 条，已保存 {saved_count} 条。"
+        if followup_answers
+        else "点击进入后可以继续问 AI，回答会尝试保存到历史记录。"
+    )
+    render_html(
+        f"""
+        <section class="block ai-report" style="padding:1rem 1.1rem;">
+            <div class="block-head" style="margin-bottom:.35rem;">
+                <div>
+                    <h2 class="block-title" style="font-size:1.18rem;">继续追问这次体检</h2>
+                    <p class="block-subtitle">{html_escape(subtitle)}</p>
+                </div>
+            </div>
+        </section>
+        """
+    )
+    if st.button("进入 AI 追问", use_container_width=True, key="open_followup_view"):
+        st.session_state["active_view"] = "followup"
+        st.rerun()
+    if followup_answers:
+        latest = followup_answers[0]
+        st.caption(f"最近一次：{latest.get('question', '')}")
+        st.caption(f"保存状态：{followup_save_label(latest)}")
 
 
 def _unpack_agent_report(report_result: Any) -> tuple[str, str, str]:
@@ -2918,7 +2976,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
 
     # ── 5. 继续追问 ────────────────────────────────────────────
     if agent_context:
-        followup_block(agent_context)
+        followup_entry_block(agent_result, agent_context)
 
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:
@@ -2944,6 +3002,13 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
             call_path = followup_error.get("call_path", "")
             if call_path:
                 st.caption(f"调用路径：{call_path}")
+        followup_save = st.session_state.get("last_followup_save") or get_last_followup_save_status()
+        if followup_save:
+            st.write("**AI 追问保存**")
+            st.write(f"- 保存状态：{'成功' if followup_save.get('saved') else '未保存'}")
+            st.write(f"- 保存位置：{'Supabase' if followup_save.get('backend') == 'supabase' else '本地 CSV'}")
+            if followup_save.get("error"):
+                st.write(f"- 保存说明：{followup_save.get('error')}")
         comment_status = st.session_state.get("family_comment_last_save") or get_last_family_comment_save_status()
         comment_read_status = get_last_family_comment_read_status()
         comment_backend = comment_status.get("backend") or get_storage_status().get("backend", "local_csv")
@@ -3084,6 +3149,36 @@ def history_records_block() -> None:
                     st.caption("；".join(str(item) for item in risks[:2]))
 
 
+def followup_page(agent_result: dict[str, Any]) -> None:
+    agent_context = agent_result.get("agent_context", {}) if agent_result else {}
+    if st.button("← 返回体检结果", use_container_width=True, key="back_to_analysis_view"):
+        st.session_state["active_view"] = "analysis"
+        st.rerun()
+    if not agent_context:
+        st.info("请先完成一次一键智能体检，再继续追问。")
+        return
+    followup_block(agent_context)
+    with st.expander("追问历史保存情况", expanded=False):
+        latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
+        backend = latest_status.get("backend", "local_csv")
+        backend_label = "Supabase 云数据库" if backend == "supabase" else "本地 CSV"
+        saved_label = "已保存" if latest_status.get("saved") else "未保存"
+        st.write(f"- 最近一次保存状态：{saved_label}")
+        st.write(f"- 保存位置：{backend_label}")
+        if latest_status.get("error"):
+            st.write(f"- 保存说明：{latest_status.get('error')}")
+        try:
+            recent = load_recent_followup_history(limit=5)
+        except Exception:  # noqa: BLE001
+            recent = []
+        st.write(f"- 最近读取到的追问记录数量：{len(recent)}")
+        if recent:
+            st.caption("最近保存的追问：")
+            for row in recent[:3]:
+                created_at = format_datetime_for_display(row.get("created_at"))
+                st.write(f"- {created_at}｜{row.get('question', '')}")
+
+
 def analysis_page() -> None:
     analysis = st.session_state["analysis"]
     fetch_warnings = st.session_state.get("fetch_warnings", [])
@@ -3092,8 +3187,13 @@ def analysis_page() -> None:
         st.session_state.pop("stocks", None)
         st.session_state.pop("fetch_warnings", None)
         st.session_state.pop("agent_result", None)
+        st.session_state["active_view"] = "analysis"
         st.rerun()
     agent_result = st.session_state.get("agent_result", {})
+    if st.session_state.get("active_view") == "followup":
+        followup_page(agent_result)
+        render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+        return
     agent_result_block(agent_result)
     if agent_result:
         _cur_run_id = str(agent_result.get("run_id", "") or "")

@@ -612,6 +612,29 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
         if isinstance(disagreement, dict) and disagreement.get("has_conflict")
         else "如果 family_disagreement 没有冲突，不要硬造家庭分歧。"
     )
+    reverse_qa = context.get("reverse_qa") or {}
+    if not isinstance(reverse_qa, dict):
+        reverse_qa = {}
+    money_need_6m = str(reverse_qa.get("money_need_6m") or "uncertain")
+    volatility_reaction = str(reverse_qa.get("volatility_reaction") or "discuss")
+    last_disagreement = str(reverse_qa.get("last_disagreement") or "").strip()
+    reverse_rule = f"""
+用户补充了家庭情况：
+- 半年内资金使用可能性：{money_need_6m}
+- 面对最大持仓波动的反应：{volatility_reaction}
+- 过往投资分歧：{last_disagreement or "未填写"}
+
+请根据这些回答调整报告重点：
+- 如果半年内可能要用钱，重点解释现金缓冲和资金流动性；
+- 如果半年内基本不会用钱，语气可以更平稳，但仍然提醒不要忽视风险；
+- 如果面对波动会比较慌，重点解释提前想清楚风险承受能力；
+- 如果能接受波动，重点解释持续观察和理解风险来源；
+- 如果选择需要一起商量，强调家庭沟通一致；
+- 如果填写了过往投资分歧，报告中轻微呼应这个点；
+- 不给买卖建议；
+- 不预测涨跌；
+- 不承诺收益。
+""".strip()
 
     system_prompt = f"""
 你是“家庭持仓风险体检 Agent”的报告生成器。你只能根据用户提供的 agent_context 写报告，不能编造任何缺失数据。
@@ -625,15 +648,16 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 4. 必须结合现金比例、股票/基金持仓比例、最大单只持仓占比、主要风险和数据缺失情况。
 5. {valuation_rule}
 6. {disagreement_rule}
-7. 报告控制在 500-800 字。
-8. 固定五段结构，标题必须为：
+7. {reverse_rule}
+8. 报告控制在 500-800 字。
+9. 固定五段结构，标题必须为：
    【整体判断】
    【主要风险】
    【数据缺失说明】
    【给爸妈重点看的地方】
    【免责声明】
-9. 【免责声明】必须一字不改：{DISCLAIMER}
-10. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。系统会把这段合并进爸妈版报告，不在页面单独展示。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在“要不要我们一起再看看/商量一下”这种开放式表达。
+10. 【免责声明】必须一字不改：{DISCLAIMER}
+11. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。系统会把这段合并进爸妈版报告，不在页面单独展示。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在“要不要我们一起再看看/商量一下”这种开放式表达。
 """.strip()
 
     user_prompt = (
