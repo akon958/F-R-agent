@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from analyzer import analyze_portfolio
+from analyzer import analyze_history_changes, analyze_portfolio
 from agent import run_family_risk_agent
 from question_router import route_slash_command, slash_command_help_text
 from validator import sanitize_compliance_text
@@ -3400,6 +3400,84 @@ def inspection_process_block(agent_result: dict[str, Any]) -> None:
         st.write(f"- 过往分歧：{reverse_qa.get('last_disagreement') or '未填写'}")
 
 
+def history_replay_block(agent_result: dict[str, Any] | None) -> None:
+    """历史体检回放：对比最近两次体检的风险变化。"""
+    with st.expander("历史体检回放", expanded=False):
+        # 优先读 agent_result 中已计算好的 history_analysis
+        history_analysis: dict[str, Any] = {}
+        if agent_result:
+            history_analysis = agent_result.get("history_analysis") or {}
+        if not history_analysis:
+            try:
+                _rows = load_recent_analysis_history(limit=5)
+                history_analysis = analyze_history_changes(_rows)
+            except Exception:  # noqa: BLE001
+                history_analysis = {}
+
+        count = int(history_analysis.get("records_count", 0) or 0)
+        summary = str(history_analysis.get("summary", "") or "")
+
+        if count == 0:
+            st.info("历史记录还不够，先完成几次体检后，这里会显示风险变化。")
+            return
+
+        latest_date = format_datetime_for_display(history_analysis.get("latest_date", ""))
+
+        if count == 1:
+            st.info("目前只有一次体检记录，暂时无法比较变化。")
+            st.caption(f"最近一次体检：{latest_date}")
+            return
+
+        # ── 2 条以上，展示对比 ──────────────────────────────────────
+        previous_date = format_datetime_for_display(history_analysis.get("previous_date", ""))
+        st.caption(f"共 {count} 次体检记录，以下对比最近两次")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"**本次体检**  \n{latest_date}")
+        with c2:
+            st.markdown(f"**上次体检**  \n{previous_date}")
+
+        st.divider()
+
+        # 综合评分变化
+        score_change = history_analysis.get("score_change")
+        if score_change is not None:
+            if score_change > 5:
+                st.success(f"综合评分上升 {score_change:+.1f} 分")
+            elif score_change < -5:
+                st.warning(f"综合评分下降 {score_change:.1f} 分，需要关注")
+            else:
+                st.info(f"综合评分基本持平（{score_change:+.1f} 分）")
+
+        # 风险因子变化
+        risk_changes = history_analysis.get("risk_factor_changes") or []
+        new_risks = [c["text"] for c in risk_changes if c.get("type") == "new"]
+        resolved_risks = [c["text"] for c in risk_changes if c.get("type") == "resolved"]
+        if new_risks:
+            st.warning(f"新出现的风险点：{new_risks[0][:80]}")
+        if resolved_risks:
+            st.success(f"已改善的风险点：{resolved_risks[0][:80]}")
+        if not new_risks and not resolved_risks and score_change is not None:
+            st.caption("风险因子和上次相比没有明显变化。")
+
+        # 上次已提示、本次仍需关注的观察点
+        watch_points = history_analysis.get("watch_points") or []
+        if watch_points:
+            with st.expander(f"上次已提示、本次仍需关注（{len(watch_points)} 条）", expanded=False):
+                for wp in watch_points:
+                    st.caption(f"• {str(wp)[:100]}")
+
+        # 家庭分歧变化
+        family_changes = history_analysis.get("family_focus_changes") or []
+        for fc in family_changes:
+            st.caption(f"家庭分歧：{fc}")
+
+        # 简短总结
+        if summary:
+            st.info(summary)
+
+
 def history_records_block() -> None:
     with st.expander("历史体检记录", expanded=False):
         status = get_storage_status()
@@ -3530,6 +3608,7 @@ def analysis_page() -> None:
     else:
         with st.expander("家庭观察记录", expanded=False):
             st.info("完成一次体检后，可以记录家人的观察和分歧。")
+    history_replay_block(agent_result)
     history_records_block()
     inspection_process_block(agent_result)
     for warning in fetch_warnings:

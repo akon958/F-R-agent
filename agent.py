@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from analyzer import analyze_portfolio, detect_family_disagreement
+from analyzer import analyze_history_changes, analyze_portfolio, detect_family_disagreement
 try:
     from ai_report import generate_agent_report  # type: ignore
 except ImportError:
@@ -449,6 +449,17 @@ def run_family_risk_agent(
     agent_context["family_disagreement"] = family_disagreement
     agent_context["reverse_qa"] = reverse_qa_data
 
+    try:
+        _history_records = load_recent_analysis_history(limit=5)
+        history_analysis = analyze_history_changes(_history_records)
+    except Exception:  # noqa: BLE001
+        history_analysis = {
+            "has_history": False, "records_count": 0, "latest_date": "", "previous_date": "",
+            "score_change": None, "risk_factor_changes": [], "family_focus_changes": [],
+            "watch_points": [], "summary": "历史记录还不够，先完成几次体检后，这里会显示风险变化。",
+        }
+    agent_context["history_analysis"] = history_analysis
+
     emit("调用 DeepSeek 生成 AI 风险说明", 72)
     debug_steps.append("生成家庭说明。")
     report_source = "local_fallback"
@@ -499,6 +510,7 @@ def run_family_risk_agent(
         "watch_tasks": [],       # 第 6/8 步生成结构化任务，先占位
         "industry_conc": None,   # 后续行业集中度计算
         "data_credit": None,     # 后续数据可信度评分
+        "history_analysis": history_analysis,
         "saved_history": False,
         "agent_context": agent_context,
         "debug_info": {

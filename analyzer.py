@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -144,6 +145,141 @@ def detect_family_disagreement(comments: list[dict]) -> dict:
         "has_conflict": True,
         "conflicts": conflicts,
         "summary": f"家庭成员在{labels}问题上存在不同看法。",
+    }
+
+
+def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compare the two most recent check-up records and summarise changes.
+
+    Safe: never raises — all field access is guarded.
+    """
+    _empty: dict[str, Any] = {
+        "has_history": False,
+        "records_count": 0,
+        "latest_date": "",
+        "previous_date": "",
+        "score_change": None,
+        "risk_factor_changes": [],
+        "family_focus_changes": [],
+        "watch_points": [],
+        "summary": "历史记录还不够，先完成几次体检后，这里会显示风险变化。",
+    }
+    if not history_records:
+        return dict(_empty)
+
+    def _parse_ts(row: dict[str, Any]) -> datetime:
+        val = str(row.get("created_at") or row.get("分析时间") or "")
+        if not val:
+            return datetime.min
+        try:
+            normalized = val.replace("Z", "+00:00")
+            return datetime.fromisoformat(normalized)
+        except Exception:  # noqa: BLE001
+            return datetime.min
+
+    sorted_records = sorted(history_records, key=_parse_ts, reverse=True)
+    count = len(sorted_records)
+    latest = sorted_records[0]
+
+    if count < 2:
+        return {
+            **_empty,
+            "has_history": True,
+            "records_count": count,
+            "latest_date": str(latest.get("created_at", "")),
+            "summary": "目前只有一次体检记录，暂时无法比较变化。",
+        }
+
+    previous = sorted_records[1]
+
+    def _to_num(val: Any) -> float | None:
+        try:
+            f = float(val or 0)
+            return f
+        except (TypeError, ValueError):
+            return None
+
+    def _load_risks(row: dict[str, Any]) -> list[str]:
+        val = row.get("main_risks") or row.get("主要风险") or []
+        if isinstance(val, list):
+            return [str(r) for r in val]
+        try:
+            parsed = json.loads(str(val))
+            return [str(r) for r in parsed] if isinstance(parsed, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _load_full(row: dict[str, Any]) -> dict[str, Any]:
+        val = row.get("full_agent_result")
+        if isinstance(val, dict):
+            return val
+        try:
+            parsed = json.loads(str(val or ""))
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    latest_score = _to_num(latest.get("risk_score") or latest.get("综合评分"))
+    prev_score = _to_num(previous.get("risk_score") or previous.get("综合评分"))
+    score_change: float | None = None
+    if latest_score is not None and prev_score is not None:
+        score_change = round(latest_score - prev_score, 1)
+
+    latest_risks = _load_risks(latest)
+    prev_risks = _load_risks(previous)
+    risk_factor_changes: list[dict[str, str]] = []
+    for risk in latest_risks:
+        if risk not in prev_risks:
+            risk_factor_changes.append({"type": "new", "text": risk})
+    for risk in prev_risks:
+        if risk not in latest_risks:
+            risk_factor_changes.append({"type": "resolved", "text": risk})
+
+    latest_full = _load_full(latest)
+    prev_full = _load_full(previous)
+    family_focus_changes: list[str] = []
+    had_conflict = bool((prev_full.get("family_disagreement") or {}).get("has_conflict"))
+    has_conflict_now = bool((latest_full.get("family_disagreement") or {}).get("has_conflict"))
+    if had_conflict and not has_conflict_now:
+        family_focus_changes.append("上次家庭分歧已消除")
+    elif not had_conflict and has_conflict_now:
+        family_focus_changes.append("本次出现家庭分歧，建议优先沟通")
+    elif had_conflict and has_conflict_now:
+        family_focus_changes.append("家庭分歧仍然存在，建议继续沟通")
+
+    watch_points = [r for r in latest_risks if r in prev_risks][:5]
+
+    if score_change is not None:
+        if score_change > 5:
+            trend = f"综合评分上升 {score_change:.0f} 分"
+        elif score_change < -5:
+            trend = f"综合评分下降 {abs(score_change):.0f} 分，需要关注"
+        else:
+            trend = f"综合评分基本持平（{score_change:+.1f} 分）"
+    else:
+        trend = "评分数据不完整"
+
+    new_count = sum(1 for c in risk_factor_changes if c["type"] == "new")
+    resolved_count = sum(1 for c in risk_factor_changes if c["type"] == "resolved")
+    if new_count:
+        risk_note = f"，新出现 {new_count} 个风险点需要关注"
+    elif resolved_count:
+        risk_note = f"，{resolved_count} 个上次风险点已改善"
+    else:
+        risk_note = "，风险因子没有明显变化"
+
+    summary = f"和上次体检相比，{trend}{risk_note}。"
+
+    return {
+        "has_history": True,
+        "records_count": count,
+        "latest_date": str(latest.get("created_at", "")),
+        "previous_date": str(previous.get("created_at", "")),
+        "score_change": score_change,
+        "risk_factor_changes": risk_factor_changes,
+        "family_focus_changes": family_focus_changes,
+        "watch_points": watch_points,
+        "summary": summary,
     }
 
 

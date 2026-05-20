@@ -481,7 +481,16 @@ def _generate_parent_report(agent_context: dict[str, Any]) -> str:
     primary_risk = main_risks[0] if main_risks else "暂时没有特别需要担心的事，但要记得定期看一看。"
     valuation_missing = bool(missing_data.get("估值数据缺失"))
     missing_note = "估值数据暂缺，本次不评价估值高低。" if valuation_missing else "这次体检数据基本齐全。"
-    history_note = f"上次体检：{history_summary.split('；')[0]}。" if history_summary else ""
+    history_analysis = agent_context.get("history_analysis") or {}
+    ha_count = int(history_analysis.get("records_count", 0) or 0)
+    if ha_count >= 2:
+        history_note = str(history_analysis.get("summary", "") or "").strip()
+        if not history_note:
+            history_note = f"上次体检：{history_summary.split('；')[0]}。" if history_summary else ""
+    elif history_summary:
+        history_note = f"上次体检：{history_summary.split('；')[0]}。"
+    else:
+        history_note = "目前历史记录还不多，暂时只能先看本次体检结果。"
     disagreement_note = _family_disagreement_note(agent_context)
     reverse_note = _reverse_qa_note(agent_context)
 
@@ -594,6 +603,7 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "missing_data",
         "data_status",
         "history_summary",
+        "history_analysis",
         "pe_pb_status",
         "financial_status",
         "family_disagreement",
@@ -663,7 +673,8 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
    【给爸妈重点看的地方】
    【免责声明】
 10. 【免责声明】必须一字不改：{DISCLAIMER}
-11. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。系统会把这段合并进爸妈版报告，不在页面单独展示。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在“要不要我们一起再看看/商量一下”这种开放式表达。
+11. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。系统会把这段合并进爸妈版报告，不在页面单独展示。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在”要不要我们一起再看看/商量一下”这种开放式表达。
+12. 如果 history_analysis.records_count >= 2，可在【给爸妈重点看的地方】末尾用一句话提及与上次相比的变化，例如”和上次相比，综合评分基本持平”；如果 records_count < 2，只写”目前历史记录还不多，暂时只能先看本次体检结果”。不要展开历史，最多一句话。
 """.strip()
 
     user_prompt = (
