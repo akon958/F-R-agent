@@ -424,6 +424,14 @@ DEFAULT_CODES = ["600519", "000001", "300750"]
 DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
 HOME_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 REPORT_DISCLAIMER = "本报告由 AI 综合生成，仅供学习参考，不构成投资建议。投资有风险，决策需谨慎。"
+RISK_PROFILE_OPTIONS = ["保守", "稳健", "平衡", "进取", "积极"]
+RISK_PROFILE_HINTS = {
+    "保守": "更看重本金波动小，现金垫要厚，单只占比会更严格。",
+    "稳健": "可以接受小幅波动，但家庭安全垫仍放在前面。",
+    "平衡": "能接受一定波动，重点看现金、仓位和集中度是否匹配。",
+    "进取": "能承受较大波动，但仍要避免过度集中。",
+    "积极": "波动承受能力较强，也不鼓励满仓或把钱压在少数标的上。",
+}
 
 
 MARKET_INDEXES = [
@@ -475,6 +483,7 @@ def init_state() -> None:
         "active_view": "analysis",
         "reverse_qa": dict(_REVERSE_QA_DEFAULT),
         "last_followup_save": {},
+        "risk_profile": "平衡",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -616,7 +625,7 @@ def inject_css() -> None:
             border-radius: 999px;
             border: 1px solid var(--border-strong);
             background: var(--surface);
-            color: var(--accent);
+            color: var(--text);
             font-weight: 600;
             font-size: 0.88rem;
             font-family: var(--font-body);
@@ -627,15 +636,21 @@ def inject_css() -> None:
             border-color: var(--accent);
             color: var(--accent);
             transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(78, 62, 48, 0.10);
         }}
         .stFormSubmitButton button {{
-            background: var(--accent);
+            min-height: 3.05rem;
+            background: linear-gradient(135deg, #7b4937 0%, var(--accent) 58%, #a46a47 100%);
             color: #fff;
             border-color: var(--accent);
+            font-size: 1rem;
+            font-weight: 800;
+            box-shadow: 0 14px 28px rgba(124, 73, 55, 0.20);
         }}
         .stFormSubmitButton button:hover {{
             color: #fff;
-            background: var(--accent);
+            background: linear-gradient(135deg, #6f4030 0%, var(--accent) 58%, #9c6140 100%);
+            box-shadow: 0 16px 32px rgba(124, 73, 55, 0.25);
         }}
         div[data-testid="stTextInput"] input,
         div[data-testid="stNumberInput"] input,
@@ -664,6 +679,34 @@ def inject_css() -> None:
         textarea:focus {{
             border-color: var(--accent) !important;
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent) !important;
+        }}
+        div[data-testid="stRadio"] > label {{
+            font-weight: 800;
+            color: var(--text);
+        }}
+        div[data-testid="stRadio"] div[role="radiogroup"] {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.48rem;
+        }}
+        div[data-testid="stRadio"] div[role="radiogroup"] label {{
+            min-height: 2.35rem;
+            margin: 0 !important;
+            padding: 0.35rem 0.68rem;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface);
+            color: var(--text-2);
+            transition: all 160ms ease;
+        }}
+        div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) {{
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--accent);
+            box-shadow: 0 8px 18px rgba(78, 62, 48, 0.08);
+        }}
+        div[data-testid="stRadio"] div[role="radiogroup"] label:hover {{
+            border-color: var(--accent);
         }}
         [data-testid="stExpander"] {{
             border: 1px solid var(--border);
@@ -1043,6 +1086,19 @@ def inject_css() -> None:
         .guide-block {{
             background: var(--surface-2);
             padding: 1.25rem 1.35rem;
+        }}
+        .compact-guide {{
+            margin: 1.1rem 0 1.35rem;
+            background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 86%, var(--accent-soft)), var(--surface));
+        }}
+        .compact-guide .block-head {{
+            margin-bottom: 0.65rem;
+        }}
+        .compact-guide .block-title {{
+            font-size: 1.08rem;
+        }}
+        .compact-guide .block-subtitle {{
+            font-size: 0.9rem;
         }}
         .guide-list {{
             display: grid;
@@ -1551,7 +1607,17 @@ def portfolio_form() -> None:
         with cash_col:
             cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=50000.0, step=1000.0)
         with risk_col:
-            risk_profile = st.selectbox("家庭风险承受能力", ["稳健", "平衡", "积极"], index=1)
+            current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
+            if current_risk not in RISK_PROFILE_OPTIONS:
+                current_risk = "平衡"
+            risk_profile = st.radio(
+                "家庭风险承受能力",
+                RISK_PROFILE_OPTIONS,
+                index=RISK_PROFILE_OPTIONS.index(current_risk),
+                horizontal=True,
+                key="risk_profile",
+            )
+            st.caption(RISK_PROFILE_HINTS.get(risk_profile, ""))
 
         with st.expander("添加更多持仓", expanded=False):
             st.markdown('<p class="muted">默认先分析第一只标的，也可以继续加入家庭账户里已有的其他持仓。</p>', unsafe_allow_html=True)
@@ -1571,9 +1637,9 @@ def portfolio_form() -> None:
                 )
                 raw_more.append({"code": code, "amount": amount})
 
-        submitted = st.form_submit_button("一键智能体检", use_container_width=True)
+        submitted = st.form_submit_button("开始一键智能体检", use_container_width=True)
 
-    if st.button("增加一行持仓", use_container_width=True):
+    if st.button("＋ 添加持仓行", use_container_width=True):
         st.session_state.holding_rows += 1
         st.rerun()
 
@@ -1836,7 +1902,7 @@ def recent_block() -> None:
 def guide_block() -> None:
     render_html(
         f"""
-        <section class="block guide-block">
+        <section class="block guide-block compact-guide">
             <div class="block-head">
                 <div>
                     <h2 class="block-title">Agent 怎么体检</h2>

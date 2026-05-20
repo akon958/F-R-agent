@@ -68,6 +68,14 @@ FAMILY_STANCE_LABELS = {
     "neutral": "中性",
 }
 
+RISK_TARGETS = {
+    "保守": 0.25,
+    "稳健": 0.40,
+    "平衡": 0.55,
+    "进取": 0.70,
+    "积极": 0.80,
+}
+
 
 def detect_family_disagreement(comments: list[dict]) -> dict:
     """
@@ -303,7 +311,7 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
 
     if bid_ask_ratio is not None and (bid_ask_ratio > 1.4 or bid_ask_ratio < 0.7):
         score -= 8
-        notes.append(f"{name} 内外盘比例（主动买入和主动卖出的力量对比）不太平衡，只能当作短期情绪参考。")
+        notes.append(f"{name} 内外盘比例（短期主动成交力量对比）不太平衡，只能当作短期情绪参考。")
 
     score = clamp(score)
     if not notes:
@@ -346,8 +354,7 @@ def position_safety(
         score -= 20
         notes.append("股票和基金总仓位很高，家里现金安全垫会变薄。")
 
-    target_by_risk = {"稳健": 0.40, "平衡": 0.60, "积极": 0.75}
-    target = target_by_risk.get(risk_profile, 0.60)
+    target = RISK_TARGETS.get(risk_profile, 0.55)
     if stock_ratio > target:
         score -= min(25, (stock_ratio - target) * 80)
         notes.append(f"按“{risk_profile}”类型看，当前股票仓位偏高。")
@@ -433,8 +440,7 @@ def portfolio_position_score(
 
 
 def risk_match_score(risk_profile: str, stock_ratio: float, max_single_ratio: float) -> dict[str, Any]:
-    target_by_risk = {"稳健": 0.40, "平衡": 0.60, "积极": 0.75}
-    target = target_by_risk.get(risk_profile, 0.60)
+    target = RISK_TARGETS.get(risk_profile, 0.55)
     score = 100.0
     notes: list[str] = []
 
@@ -442,7 +448,13 @@ def risk_match_score(risk_profile: str, stock_ratio: float, max_single_ratio: fl
         score -= min(35, (stock_ratio - target) * 100)
         notes.append(f"你选择的是“{risk_profile}”，当前股票和基金仓位偏高。")
 
-    if risk_profile == "稳健" and max_single_ratio > 0.25:
+    if risk_profile == "保守" and max_single_ratio > 0.20:
+        score -= 25
+        notes.append("保守型家庭更需要避免单只标的占比过高。")
+    elif risk_profile == "保守" and max_single_ratio > 0.15:
+        score -= 15
+        notes.append("保守型家庭需要更早关注单只标的占比。")
+    elif risk_profile == "稳健" and max_single_ratio > 0.25:
         score -= 20
         notes.append("稳健型家庭不适合把太多钱压在单只标的上。")
     elif risk_profile == "稳健" and max_single_ratio > 0.20:
@@ -451,7 +463,10 @@ def risk_match_score(risk_profile: str, stock_ratio: float, max_single_ratio: fl
     elif risk_profile == "平衡" and max_single_ratio > 0.35:
         score -= 15
         notes.append("平衡型家庭也要避免单只标的太集中。")
-    elif risk_profile == "积极" and max_single_ratio > 0.45:
+    elif risk_profile == "进取" and max_single_ratio > 0.42:
+        score -= 12
+        notes.append("进取型家庭也要留意单只标的集中风险。")
+    elif risk_profile == "积极" and max_single_ratio > 0.48:
         score -= 12
         notes.append("即使是积极型，也不建议满仓或过度集中。")
 
@@ -589,7 +604,10 @@ def analyze_portfolio(
         score_cap = min(score_cap, 79)
         cap_reasons.append("部分持仓短期交易明显偏热，不能给绿色。")
 
-    if position_summary["max_single_ratio"] > 0.25 and risk_profile == "稳健":
+    if risk_profile == "保守" and position_summary["max_single_ratio"] > 0.20:
+        score_cap = min(score_cap, 79)
+        cap_reasons.append("保守型家庭的单只持仓占比偏高，不能给绿色。")
+    elif position_summary["max_single_ratio"] > 0.25 and risk_profile == "稳健":
         score_cap = min(score_cap, 84)
         cap_reasons.append("稳健型家庭的单只持仓占比已经不低，最高只给浅绿色观察。")
 
