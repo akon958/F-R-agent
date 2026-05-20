@@ -311,6 +311,32 @@ def _family_disagreement_note(agent_context: dict[str, Any]) -> str:
     return str(disagreement.get("summary") or "")
 
 
+def _reverse_qa_note(agent_context: dict[str, Any]) -> str:
+    reverse_qa = agent_context.get("reverse_qa") or {}
+    if not isinstance(reverse_qa, dict):
+        reverse_qa = {}
+    money_need = str(reverse_qa.get("money_need_6m") or "uncertain")
+    volatility = str(reverse_qa.get("volatility_reaction") or "discuss")
+    last_disagreement = str(reverse_qa.get("last_disagreement") or "").strip()
+
+    notes: list[str] = []
+    if money_need == "possible":
+        notes.append("如果半年内可能要用到这笔钱，现金缓冲和资金流动性要放在更靠前的位置看。")
+    elif money_need == "unlikely":
+        notes.append("如果半年内基本不会用这笔钱，语气可以更平稳，但仍要定期确认风险有没有变大。")
+
+    if volatility == "panic":
+        notes.append("如果遇到波动容易着急，最好提前想清楚家里能接受多大起伏。")
+    elif volatility == "tolerate":
+        notes.append("如果能接受波动，重点是持续观察风险来源，而不是被短期情绪带着走。")
+    else:
+        notes.append("如果需要一起商量，报告重点应放在家庭先沟通一致。")
+
+    if last_disagreement:
+        notes.append(f"上次不同意见提到“{last_disagreement[:60]}”，这次可以轻轻带到这个点。")
+    return "".join(notes)
+
+
 # ─────────────────────────────────────────────────────────────────
 # 三种报告模式的内部实现
 # ─────────────────────────────────────────────────────────────────
@@ -328,6 +354,7 @@ def _generate_brief_report(agent_context: dict[str, Any]) -> str:
     valuation_missing = bool(missing_data.get("估值数据缺失"))
     valuation_note = " 估值数据暂缺，本次不评价估值高低。" if valuation_missing else ""
     disagreement_note = _family_disagreement_note(agent_context)
+    reverse_note = _reverse_qa_note(agent_context)
 
     if max_position_ratio >= 0.40:
         conclusion = "集中度偏高，需多留意单只占比。"
@@ -340,7 +367,7 @@ def _generate_brief_report(agent_context: dict[str, Any]) -> str:
         f"【结论】综合评分 {risk_score}/100，风险等级{risk_level}。{conclusion}\n\n"
         f"【主要风险】{primary_risk}{' ' + disagreement_note if disagreement_note else ''}\n\n"
         f"【重点关注】现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}。"
-        f"{valuation_note}\n\n"
+        f"{valuation_note}{' ' + reverse_note if reverse_note else ''}\n\n"
         f"【免责声明】{DISCLAIMER}"
     )
     return _sanitize_report_text(report)
@@ -450,6 +477,7 @@ def _generate_parent_report(agent_context: dict[str, Any]) -> str:
     missing_note = "估值数据暂缺，本次不评价估值高低。" if valuation_missing else "这次体检数据基本齐全。"
     history_note = f"上次体检：{history_summary.split('；')[0]}。" if history_summary else ""
     disagreement_note = _family_disagreement_note(agent_context)
+    reverse_note = _reverse_qa_note(agent_context)
 
     report = f"""【整体判断】
 爸妈，{holding_names} 这个组合体检完了。评分是 {risk_score} 分（满分 100），等级是"{risk_level}"。{overall}现金占比大约 {_fmt_percent(cash_ratio)}，股票/基金占比大约 {_fmt_percent(stock_ratio)}。
@@ -461,7 +489,7 @@ def _generate_parent_report(agent_context: dict[str, Any]) -> str:
 {missing_note} 没有的数据我们不猜，只把有把握的部分放进结论里。
 
 【给爸妈重点看的地方】
-只需要记三件事：一，家里留的现金够不够用；二，有没有哪只股票放了太多钱；三，这个结果是参考，不是指令。{history_note} 有疑问可以继续问，或者等下次定期复盘再看。
+只需要记三件事：一，家里留的现金够不够用；二，有没有哪只股票放了太多钱；三，这个结果是参考，不是指令。{reverse_note}{history_note} 有疑问可以继续问，或者等下次定期复盘再看。
 
 【免责声明】
 {DISCLAIMER}"""
@@ -563,6 +591,7 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "pe_pb_status",
         "financial_status",
         "family_disagreement",
+        "reverse_qa",
     ]
     return {key: agent_context.get(key) for key in allowed_keys}
 

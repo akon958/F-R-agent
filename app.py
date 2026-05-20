@@ -1646,6 +1646,7 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
             family_cash=cash,
             risk_preference=risk_profile,
             user_goal="检查家庭持仓风险",
+            reverse_qa=_normalize_reverse_qa(st.session_state.get("reverse_qa")),
             progress_callback=update_progress,
         )
         if agent_result.get("report_source") == "local_fallback":
@@ -2274,6 +2275,40 @@ _STANCE_MAP = {
     "偏进取": "aggressive",
     "中性 / 只是记录": "neutral",
 }
+_REVERSE_QA_DEFAULT = {
+    "money_need_6m": "uncertain",
+    "volatility_reaction": "discuss",
+    "last_disagreement": "",
+}
+_MONEY_NEED_LABELS = ["可能要用", "不确定", "基本不会用"]
+_MONEY_NEED_MAP = {
+    "可能要用": "possible",
+    "不确定": "uncertain",
+    "基本不会用": "unlikely",
+}
+_VOLATILITY_LABELS = ["会比较慌，想马上处理", "能接受波动，先观察", "看情况，需要一起商量"]
+_VOLATILITY_MAP = {
+    "会比较慌，想马上处理": "panic",
+    "能接受波动，先观察": "tolerate",
+    "看情况，需要一起商量": "discuss",
+}
+
+
+def _normalize_reverse_qa(raw: Any) -> dict[str, str]:
+    data = dict(_REVERSE_QA_DEFAULT)
+    if isinstance(raw, dict):
+        data.update({k: str(v or "") for k, v in raw.items() if k in data})
+    if data["money_need_6m"] not in set(_MONEY_NEED_MAP.values()):
+        data["money_need_6m"] = _REVERSE_QA_DEFAULT["money_need_6m"]
+    if data["volatility_reaction"] not in set(_VOLATILITY_MAP.values()):
+        data["volatility_reaction"] = _REVERSE_QA_DEFAULT["volatility_reaction"]
+    data["last_disagreement"] = str(data.get("last_disagreement", "") or "").strip()
+    return data
+
+
+def _reverse_label(value: str, mapping: dict[str, str]) -> str:
+    reverse = {v: k for k, v in mapping.items()}
+    return reverse.get(value, value or "不确定")
 
 
 def _comment_stance_label(stance: str) -> str:
@@ -2309,21 +2344,15 @@ def discussion_block(run_id: str = "") -> None:
         with col2:
             focus_label = st.selectbox("关注点", _FOCUS_LABELS, key="comment_focus")
             stance_label = st.selectbox("立场", _STANCE_LABELS, key="comment_stance")
-        content = st.text_area(
-            "观察内容",
-            placeholder="例如：觉得估值偏高，先观察一个季度再说。",
-            label_visibility="visible",
-            key="comment_content",
-        )
-        submitted = st.form_submit_button("发布观察记录", use_container_width=True)
+        submitted = st.form_submit_button("保存立场记录", use_container_width=True)
 
-    if submitted and content.strip():
+    if submitted:
         comment = {
             "member": member,
             "comment_type": comment_type,
             "focus": _FOCUS_MAP.get(focus_label, "other"),
             "stance": _STANCE_MAP.get(stance_label, "neutral"),
-            "content": content.strip(),
+            "content": "",
             "run_id": run_id,
         }
         result: dict[str, Any] = {"success": False, "backend": "local_csv", "error": ""}
@@ -2344,7 +2373,8 @@ def discussion_block(run_id: str = "") -> None:
             for stale_key in ("comment_error", "save_error", "family_comment_error"):
                 st.session_state.pop(stale_key, None)
         # 也写旧版 note（保持 session_state.notes 展示兼容）
-        note = make_note(content.strip(), who=member)
+        note_body = f"{focus_label}｜{stance_label}"
+        note = make_note(note_body, who=member)
         try:
             get_storage().save_note(note)
         except Exception:  # noqa: BLE001
@@ -2360,7 +2390,7 @@ def discussion_block(run_id: str = "") -> None:
                     str(row.get("member", "")) == str(comment["member"])
                     and str(row.get("focus", "")) == str(comment["focus"])
                     and str(row.get("stance", "")) == str(comment["stance"])
-                    and str(row.get("content", "")) == str(comment["content"])
+                    and str(row.get("content", "") or "") == str(comment["content"])
                     and (not comment.get("run_id") or str(row.get("run_id", "")) == str(comment["run_id"]))
                     for row in st.session_state["family_comments"]
                 )
@@ -2418,7 +2448,7 @@ def discussion_block(run_id: str = "") -> None:
         st.session_state["family_comments_last_count"] = len(comments)
 
     if not comments:
-        st.info("暂无观察记录。填写上方表单即可新增。")
+        st.info("暂无观察记录。选择上方立场即可新增。")
         return
 
     def _render_comment(c: dict[str, Any]) -> None:
@@ -2428,6 +2458,7 @@ def discussion_block(run_id: str = "") -> None:
         stance_disp = html_escape(_comment_stance_label(c.get("stance") or "neutral"))
         text = html_escape(c.get("content") or c.get("comment_text") or "")
         when = format_datetime_for_display(c.get("created_at"))
+        content_line = f'<p class="muted" style="margin:0;">"{text}"</p>' if text else ""
         render_html(
             f"""
             <article class="note-card" style="margin-bottom:.7rem;">
@@ -2436,7 +2467,7 @@ def discussion_block(run_id: str = "") -> None:
                     <span class="muted">｜{ctype}｜{focus_disp}｜{stance_disp}</span>
                     <span class="muted" style="float:right;font-size:.78rem;">{when}</span>
                 </div>
-                <p class="muted" style="margin:0;">"{text}"</p>
+                {content_line}
             </article>
             """
         )
@@ -2647,6 +2678,63 @@ def _report_source_label(report_source: str) -> str:
     return "DeepSeek AI 生成" if report_source == "deepseek" else "本地规则兜底生成"
 
 
+def reverse_qa_block(agent_result: dict[str, Any], agent_context: dict[str, Any], mode: str) -> None:
+    current = _normalize_reverse_qa(
+        agent_result.get("reverse_qa")
+        or agent_context.get("reverse_qa")
+        or st.session_state.get("reverse_qa")
+    )
+    with st.expander("补充家庭情况，让报告更贴近实际", expanded=False):
+        st.caption("这是可选项，不填写也不影响体检。填写后会重新生成本次 AI 风险说明。")
+        with st.form("reverse_qa_form"):
+            money_label = st.selectbox(
+                "这笔钱半年内有没有可能要用？",
+                _MONEY_NEED_LABELS,
+                index=_MONEY_NEED_LABELS.index(_reverse_label(current["money_need_6m"], _MONEY_NEED_MAP)),
+                key="reverse_money_need_6m",
+            )
+            volatility_label = st.selectbox(
+                "如果最大那只持仓短期波动比较大，你第一反应更可能是？",
+                _VOLATILITY_LABELS,
+                index=_VOLATILITY_LABELS.index(_reverse_label(current["volatility_reaction"], _VOLATILITY_MAP)),
+                key="reverse_volatility_reaction",
+            )
+            last_disagreement = st.text_input(
+                "你们上一次因为投资有不同意见，是关于什么？",
+                value=current.get("last_disagreement", ""),
+                placeholder="例如：现金留多少、某只股票占比高不高、要不要继续观察等",
+                key="reverse_last_disagreement",
+            )
+            submitted = st.form_submit_button("更新本次 AI 风险说明", use_container_width=True)
+
+        if submitted:
+            reverse_qa = {
+                "money_need_6m": _MONEY_NEED_MAP.get(money_label, "uncertain"),
+                "volatility_reaction": _VOLATILITY_MAP.get(volatility_label, "discuss"),
+                "last_disagreement": str(last_disagreement or "").strip(),
+            }
+            st.session_state["reverse_qa"] = reverse_qa
+            agent_context["reverse_qa"] = reverse_qa
+            agent_result["reverse_qa"] = reverse_qa
+            with st.spinner("正在根据补充情况更新报告..."):
+                report_text, report_source, dinner_talk = _unpack_agent_report(
+                    generate_agent_report(agent_context, mode)
+                )
+            agent_result["ai_report"] = report_text
+            agent_result["dinner_talk"] = dinner_talk
+            agent_result["report_source"] = report_source
+            agent_result["report_mode"] = mode
+            agent_context["ai_report"] = report_text
+            agent_context["dinner_talk"] = dinner_talk
+            agent_context["report_source"] = report_source
+            agent_context["report_mode"] = mode
+            agent_result["agent_context"] = agent_context
+            st.session_state["agent_result"] = agent_result
+            st.session_state.pop("followup_questions", None)
+            st.success("已根据补充家庭情况更新本次报告。")
+            st.rerun()
+
+
 def family_disagreement_block(disagreement: dict[str, Any]) -> None:
     if not isinstance(disagreement, dict) or not disagreement.get("has_conflict"):
         return
@@ -2826,6 +2914,8 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     st.markdown(display_report)
     render_html("</div>")
 
+    reverse_qa_block(agent_result, agent_context, mode)
+
     # ── 5. 继续追问 ────────────────────────────────────────────
     if agent_context:
         followup_block(agent_context)
@@ -2960,6 +3050,11 @@ def inspection_process_block(agent_result: dict[str, Any]) -> None:
         for idx, (title, desc) in enumerate(_USER_STEPS, 1):
             st.write(f"**{idx}. {title}**")
             st.caption(desc)
+        reverse_qa = _normalize_reverse_qa(agent_result.get("reverse_qa") or agent_result.get("agent_context", {}).get("reverse_qa"))
+        st.markdown("**本次补充家庭情况**")
+        st.write(f"- 半年内资金使用：{_reverse_label(reverse_qa['money_need_6m'], _MONEY_NEED_MAP)}")
+        st.write(f"- 波动反应：{_reverse_label(reverse_qa['volatility_reaction'], _VOLATILITY_MAP)}")
+        st.write(f"- 过往分歧：{reverse_qa.get('last_disagreement') or '未填写'}")
 
 
 def history_records_block() -> None:

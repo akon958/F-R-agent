@@ -55,6 +55,25 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
+_REVERSE_QA_DEFAULT = {
+    "money_need_6m": "uncertain",
+    "volatility_reaction": "discuss",
+    "last_disagreement": "",
+}
+
+
+def _normalize_reverse_qa(raw: Any) -> dict[str, str]:
+    data = dict(_REVERSE_QA_DEFAULT)
+    if isinstance(raw, dict):
+        data.update({key: str(value or "") for key, value in raw.items() if key in data})
+    if data["money_need_6m"] not in ("possible", "uncertain", "unlikely"):
+        data["money_need_6m"] = "uncertain"
+    if data["volatility_reaction"] not in ("panic", "tolerate", "discuss"):
+        data["volatility_reaction"] = "discuss"
+    data["last_disagreement"] = str(data.get("last_disagreement", "") or "").strip()
+    return data
+
+
 def _first_value(row: dict[str, Any], keys: list[str], default: Any = "") -> Any:
     for key in keys:
         if key in row and row[key] not in (None, ""):
@@ -293,9 +312,11 @@ def run_family_risk_agent(
     family_cash: float,
     risk_preference: str = "稳健",
     user_goal: str = "检查家庭持仓风险",
+    reverse_qa: dict[str, Any] | None = None,
     progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
     run_id: str = uuid.uuid4().hex  # 本次体检唯一编号
+    reverse_qa_data = _normalize_reverse_qa(reverse_qa)
 
     def emit(step: str, percent: int) -> None:
         if progress_callback:
@@ -353,6 +374,7 @@ def run_family_risk_agent(
             "ai_report": "",
             "report_source": "local_fallback",
             "agent_context": {},
+            "reverse_qa": reverse_qa_data,
             "family_disagreement": no_disagreement,
             "saved_history": False,
             "storage_status": {
@@ -425,6 +447,7 @@ def run_family_risk_agent(
         family_disagreement = {"has_conflict": False, "conflicts": [], "summary": ""}
     agent_context["family_comments"] = family_comments[:20]
     agent_context["family_disagreement"] = family_disagreement
+    agent_context["reverse_qa"] = reverse_qa_data
 
     emit("调用 DeepSeek 生成 AI 风险说明", 72)
     debug_steps.append("生成家庭说明。")
@@ -471,6 +494,7 @@ def run_family_risk_agent(
         "dinner_talk": dinner_talk,
         "report_source": report_source,
         "report_mode": "爸妈版",
+        "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
         "watch_tasks": [],       # 第 6/8 步生成结构化任务，先占位
         "industry_conc": None,   # 后续行业集中度计算
