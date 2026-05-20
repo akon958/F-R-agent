@@ -5,6 +5,9 @@ import os
 import random
 from typing import Any
 
+from question_router import route_slash_command
+from validator import sanitize_compliance_text
+
 
 DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 
@@ -182,15 +185,18 @@ def _sanitize_report_text(text: str) -> str:
     replacements = {
         "买入": "继续观察",
         "卖出": "重点复盘",
-        "加仓": "增加投入前先讨论",
+        "加仓": "先一起商量",
         "减仓": "控制集中度",
-        "推荐": "提示",
+        "推荐": "风险提示",
         "强烈": "明显",
         "抄底": "低位判断",
-        "必涨": "确定上涨",
-        "一定赚钱": "确定有收益",
+        "必涨": "不判断短期方向",
+        "一定赚钱": "不承诺收益",
         "马上操作": "立刻处理",
-        "预测涨跌": "判断短期方向",
+        "预测涨跌": "不判断短期方向",
+        "预测上涨": "不判断短期方向",
+        "稳赚": "不承诺收益",
+        "保证收益": "不承诺收益",
         "我们可能需要慢慢调整": "后续讨论时可以重点关注这一点",
     }
     for old, new in replacements.items():
@@ -1129,7 +1135,7 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> di
     so app.py can verify main report and follow-up share the same DeepSeek client.
     """
     call_path = "ai_report.answer_followup_question -> _call_deepseek_followup -> _call_deepseek"
-    q = question.strip()
+    q = str(question or "").strip()
     if not q:
         return {
             "answer": _unrelated_followup_answer(),
@@ -1138,6 +1144,19 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> di
             "raw_error": "question is empty after strip()",
             "call_path": call_path,
         }
+
+    route = route_slash_command(q)
+    if route.get("is_command"):
+        if route.get("direct"):
+            return {
+                "answer": sanitize_compliance_text(str(route.get("answer", "") or "")),
+                "source": "local_command",
+                "error": "",
+                "raw_error": "",
+                "call_path": "ai_report.answer_followup_question -> question_router.route_slash_command",
+            }
+        q = str(route.get("routed_question", "") or q).strip()
+
     if not agent_context:
         return {
             "answer": _unrelated_followup_answer(),
@@ -1149,7 +1168,7 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> di
 
     try:
         return {
-            "answer": _call_deepseek_followup(agent_context, q),
+            "answer": sanitize_compliance_text(_call_deepseek_followup(agent_context, q)),
             "source": "deepseek",
             "error": "",
             "raw_error": "",
@@ -1157,7 +1176,7 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> di
         }
     except Exception as exc:  # noqa: BLE001
         return {
-            "answer": _generate_local_followup_answer(agent_context, q),
+            "answer": sanitize_compliance_text(_generate_local_followup_answer(agent_context, q)),
             "source": "local_fallback",
             "error": _safe_followup_error(exc),
             "raw_error": _raw_exception_chain(exc),

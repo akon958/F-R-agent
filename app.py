@@ -11,6 +11,8 @@ import streamlit as st
 
 from analyzer import analyze_portfolio
 from agent import run_family_risk_agent
+from question_router import route_slash_command, slash_command_help_text
+from validator import sanitize_compliance_text
 
 # ─────────────────────────────────────────────────────────────────
 # 追问功能本地实现：完整逻辑直接写在 app.py，
@@ -30,7 +32,10 @@ def _fmt_pct(value: Any) -> str:
 def _sanitize(text: str) -> str:
     for old, new in [
         ("买入", "继续观察"), ("卖出", "重点复盘"),
-        ("加仓", "增加投入前先讨论"), ("减仓", "控制集中度"),
+        ("加仓", "先一起商量"), ("减仓", "控制集中度"),
+        ("推荐", "风险提示"), ("预测上涨", "不判断短期方向"),
+        ("稳赚", "不承诺收益"), ("保证收益", "不承诺收益"),
+        ("必涨", "不判断短期方向"), ("一定赚钱", "不承诺收益"),
     ]:
         text = text.replace(old, new)
     return text
@@ -1387,6 +1392,25 @@ def display_settings() -> None:
             st.rerun()
 
 
+def agent_capabilities_block() -> None:
+    with st.expander("这个 Agent 会做什么", expanded=False):
+        st.markdown(
+            """
+**Risk Checker｜风险体检员**  
+看组合里哪些地方风险比较集中，比如单只占比、行业集中、估值偏高、波动偏大。
+
+**Family Translator｜爸妈版翻译员**  
+把复杂指标翻译成爸妈能听懂的话，不使用太多金融术语。
+
+**Disagreement Detector｜家庭分歧提醒员**  
+如果家里不同成员对同一件事看法不一样，只提醒需要沟通，不评判谁对谁错。
+
+**Compliance Guard｜合规守门员**  
+检查 AI 输出里是否出现不合适表达，确保只做风险体检和学习参考。
+"""
+        )
+
+
 def signed_change(value: float) -> str:
     arrow = "▲" if value >= 0 else "▼"
     return f"{arrow} {abs(value):.2f}%"
@@ -1833,6 +1857,7 @@ def home_page() -> None:
     home_hero()
     cache_tools()
     guide_block()
+    agent_capabilities_block()
     with st.expander("开发中功能（暂未接入实时数据 / 云数据库，后续开放）", expanded=False):
         st.info("以下功能正在开发中，当前展示为静态演示数据，不代表真实行情或真实账户。")
         st.markdown("#### 今日大盘")
@@ -2199,7 +2224,7 @@ def holdings_detail(analysis: dict[str, Any]) -> None:
 
 
 def risk_grid(analysis: dict[str, Any]) -> None:
-    notes = analysis["risk_notes"][:3] or ["当前组合没有明显刺眼的问题，但仍不代表一定赚钱。"]
+    notes = analysis["risk_notes"][:3] or ["当前组合没有明显刺眼的问题，但仍不代表没有风险。"]
     levels = [("中", "仓位与现金", "r-mid"), ("中", "公司与数据", "r-mid"), ("低", "短期波动", "r-lo")]
     if analysis["score"] < 60:
         levels[0] = ("高", "家庭承受度", "r-hi")
@@ -2522,7 +2547,11 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
 
 
 def followup_source_label(source: str) -> str:
-    return "DeepSeek AI" if source == "deepseek" else "本地规则兜底"
+    if source == "deepseek":
+        return "DeepSeek AI"
+    if source == "local_command":
+        return "本地命令"
+    return "本地规则兜底"
 
 
 def followup_save_label(item: dict[str, Any]) -> str:
@@ -2556,10 +2585,29 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
     clean_question = question.strip()
     if not clean_question:
         return
+    routed = route_slash_command(clean_question)
+    effective_question = clean_question
+    command = ""
     try:
-        answer, source, error, raw_error, call_path = unpack_followup_result(
-            answer_followup_question(agent_context, clean_question)
-        )
+        if routed.get("is_command"):
+            command = str(routed.get("command", "") or "")
+            if routed.get("direct"):
+                answer = sanitize_compliance_text(str(routed.get("answer", "") or ""))
+                source = "local_command"
+                error = ""
+                raw_error = ""
+                call_path = "app.save_followup_answer -> question_router.route_slash_command"
+            else:
+                effective_question = str(routed.get("routed_question", "") or clean_question)
+                answer, source, error, raw_error, call_path = unpack_followup_result(
+                    answer_followup_question(agent_context, effective_question)
+                )
+                answer = sanitize_compliance_text(answer)
+        else:
+            answer, source, error, raw_error, call_path = unpack_followup_result(
+                answer_followup_question(agent_context, clean_question)
+            )
+            answer = sanitize_compliance_text(answer)
     except Exception as exc:  # noqa: BLE001
         answer = _AI_REPORT_FALLBACK_MSG
         source = "local_fallback"
@@ -2577,6 +2625,10 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
         "raw_error": raw_error,
         "call_path": call_path,
     }
+    if command:
+        record["command"] = command
+    if effective_question != clean_question:
+        record["routed_question"] = effective_question
     if source == "local_fallback":
         st.session_state["last_followup_error"] = {
             "question": clean_question,
@@ -2653,6 +2705,9 @@ def followup_block(agent_context: dict[str, Any]) -> None:
         if col.button(f"AI 建议｜{question}", use_container_width=True, key=f"fq_{qi}"):
             save_followup_answer(agent_context, question)
             st.rerun()
+
+    with st.expander("可用斜杠命令", expanded=False):
+        st.markdown(slash_command_help_text().replace("\n", "  \n"))
 
     custom_question = st.text_input(
         "自定义追问",
@@ -3221,6 +3276,7 @@ def analysis_page() -> None:
             st.info("暂未接入新闻接口，后续开放。")
             news_block()
         deepseek_block(analysis)
+    agent_capabilities_block()
     developer_debug_block(agent_result)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
