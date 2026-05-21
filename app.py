@@ -3165,15 +3165,59 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     )
     render_html(
         f"""
-        <section class="block" style="padding:1rem 1.1rem;">
-            <div class="block-head" style="margin-bottom:.35rem;">
-                <div>
-                    <h2 class="block-title" style="font-size:1.18rem;">智能体检已完成</h2>
-                    <p class="block-subtitle">已检查持仓结构、现金比例、集中风险和数据完整性。</p>
-                    <p class="muted">当前数据来源：{html_escape(data_source_label)}　｜　存储方式：{html_escape(storage_label)}　｜　历史记录：{html_escape(saved_label)}</p>
-                    <p class="muted">{html_escape(storage_note)}</p>
-                </div>
+        <div style="display:flex;align-items:center;gap:0.55rem;
+                    padding:0.5rem 0.85rem;margin-bottom:0.25rem;
+                    background:var(--accent-soft);border-radius:10px;">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" style="flex-shrink:0;">
+                <circle cx="11" cy="11" r="11" fill="#7a3e2e" opacity="0.14"/>
+                <path d="M6.5 11.5 L9.5 14.5 L15.5 8" stroke="#7a3e2e"
+                      stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div style="min-width:0;">
+                <span style="font-size:0.92rem;font-weight:700;color:var(--text);">智能体检已完成</span>
+                <span style="font-size:0.75rem;color:var(--text-3);margin-left:0.45rem;">·&nbsp;已检查持仓结构、现金比例与集中风险</span>
             </div>
+        </div>
+        <p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.5rem;padding-left:0.2rem;">
+            数据来源：{html_escape(data_source_label)}&ensp;·&ensp;存储方式：{html_escape(storage_label)}&ensp;·&ensp;历史记录：{html_escape(saved_label)}&ensp;·&ensp;{html_escape(storage_note)}
+        </p>
+        """
+    )
+
+    # ── 风险预警：第一眼可见，不折叠 ──────────────────────────
+    _risk_rows = "".join(
+        f'<li style="padding:0.3rem 0;display:flex;align-items:baseline;gap:0.6rem;'
+        f'border-bottom:1px solid rgba(122,62,46,0.09);">'
+        f'<span style="flex-shrink:0;font-size:0.7rem;font-weight:700;color:#fff;'
+        f'background:#b94040;border-radius:50%;width:1.45em;height:1.45em;'
+        f'display:inline-flex;align-items:center;justify-content:center;line-height:1;">'
+        f'{i + 1}</span>'
+        f'<span style="font-size:0.88rem;line-height:1.5;color:var(--text);">{html_escape(r)}</span>'
+        f'</li>'
+        for i, r in enumerate(main_risks[:6])
+    )
+    render_html(
+        f"""
+        <section style="margin:0.5rem 0 0.7rem;border-radius:12px;
+                        border:1.5px solid #e8c4b2;background:#fff9f6;overflow:hidden;">
+            <div style="padding:0.5rem 0.9rem 0.35rem;display:flex;align-items:center;
+                        gap:0.45rem;border-bottom:1px solid #f0ddd3;">
+                <svg width="17" height="17" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
+                    <path d="M8.5 1.5 L15.5 14.5 L1.5 14.5 Z"
+                          fill="#b94040" opacity="0.18"
+                          stroke="#b94040" stroke-width="1.4" stroke-linejoin="round"/>
+                    <line x1="8.5" y1="6.5" x2="8.5" y2="10.5"
+                          stroke="#b94040" stroke-width="1.6" stroke-linecap="round"/>
+                    <circle cx="8.5" cy="12.5" r="0.85" fill="#b94040"/>
+                </svg>
+                <span style="font-size:0.9rem;font-weight:700;color:#7a3e2e;">本次风险预警</span>
+                <span style="font-size:0.72rem;color:var(--text-3);margin-left:auto;">
+                    共 {len(main_risks)} 项待关注
+                </span>
+            </div>
+            <ul style="margin:0;padding:0.15rem 0.9rem 0.45rem;list-style:none;">
+                {_risk_rows}
+            </ul>
         </section>
         """
     )
@@ -3231,25 +3275,24 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # ── 3. 主要风险 + 数据缺失（弱化为结论补充）───────────────
-    with st.expander("主要风险和数据缺失", expanded=False):
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("主要风险")
-            for risk in main_risks:
-                st.write(f"- {risk}")
-        with col2:
-            st.subheader("数据缺失")
-            has_missing = False
+    # ── 3. 核心财务指标 + 持仓概况（原普通分析入口内容）────────
+    _analysis = st.session_state.get("analysis") or {}
+    if _analysis:
+        allocation_block(_analysis)
+        metric_grid(_analysis)
+        with st.expander("持仓明细与数据来源", expanded=False):
+            holdings_detail(_analysis)
+
+    # ── 3b. 数据缺失（仅在有缺失时展示，默认收起）──────────────
+    has_missing = any(bool(v) for v in missing_data.values())
+    if has_missing:
+        with st.expander("数据缺失说明", expanded=False):
             for title, items in missing_data.items():
                 if items:
-                    has_missing = True
                     if "估值" in title:
-                        st.write("- 估值数据暂缺，本次不评价估值高低。")
+                        st.caption("· 估值数据暂缺，本次不评价估值高低。")
                     else:
-                        st.write(f"- {title}：{len(items)} 只")
-            if not has_missing:
-                st.write("- 暂未发现明显数据缺失。")
+                        st.caption(f"· {title}：{len(items)} 只数据缺失")
 
     # ── 4. 本次 AI 风险说明 + 报告模式选择 ───────────────────
     st.markdown("---")
@@ -3706,18 +3749,6 @@ def analysis_page() -> None:
             st.info(warning)
         else:
             st.warning(warning)
-    with st.expander("普通分析 / 调试入口", expanded=False):
-        stock_header(analysis)
-        ai_report_block(analysis)
-        allocation_block(analysis)
-        metric_grid(analysis)
-        risk_grid(analysis)
-        with st.expander("持仓明细与数据来源", expanded=False):
-            holdings_detail(analysis)
-        with st.expander("近期新闻与公告（开发中）", expanded=False):
-            st.info("暂未接入新闻接口，后续开放。")
-            news_block()
-        deepseek_block(analysis)
     developer_debug_block(agent_result)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
