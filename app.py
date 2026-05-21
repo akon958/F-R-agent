@@ -1395,6 +1395,34 @@ def inject_css() -> None:
             font-weight: 700;
             margin: 0.45rem 0;
         }}
+        /* ── 两列紧凑指标网格 ─────────────────────────────────── */
+        .metric-grid-2 {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.65rem;
+        }}
+        .metric-card-sm {{
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--surface);
+            padding: 0.8rem 0.9rem 0.75rem;
+            min-width: 0;
+        }}
+        .metric-value-sm {{
+            color: var(--text);
+            font-family: var(--font-num);
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin: 0.2rem 0 0.12rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .metric-note-sm {{
+            color: var(--text-3);
+            font-size: 0.72rem;
+            line-height: 1.3;
+        }}
         .metric-note {{
             color: var(--text-3);
             font-size: 0.85rem;
@@ -1525,6 +1553,21 @@ def inject_css() -> None:
             .verdict-card {{
                 grid-template-columns: 1fr;
             }}
+        }}
+        /* ── 持仓删除按钮：手机端紧凑化 ─────────────────────── */
+        [data-testid="stExpander"] [data-testid="column"]:last-child button {{
+            padding: 0 0.45rem !important;
+            min-height: 1.85rem !important;
+            height: 1.85rem !important;
+            font-size: 0.78rem !important;
+            line-height: 1 !important;
+            margin-top: 1.65rem !important;
+            opacity: 0.55;
+            background: transparent !important;
+            border-color: var(--border) !important;
+            color: var(--text-2) !important;
+            border-radius: 6px !important;
+            box-shadow: none !important;
         }}
         </style>
         """
@@ -1697,6 +1740,36 @@ def portfolio_form() -> None:
             key="amount_0",
         )
 
+    # Handle row deletion before widgets render (must precede the expander)
+    if "pending_delete_row" in st.session_state:
+        _del = st.session_state.pop("pending_delete_row")
+        for _j in range(_del, st.session_state.holding_rows - 1):
+            st.session_state[f"code_{_j}"] = st.session_state.get(f"code_{_j + 1}", "")
+            st.session_state[f"amount_{_j}"] = st.session_state.get(f"amount_{_j + 1}", 0.0)
+        st.session_state.holding_rows = max(1, st.session_state.holding_rows - 1)
+
+    with st.expander("＋ 添加更多持仓（可选）", expanded=False):
+        st.markdown('<p class="muted">填写第 2 只及之后的持仓；不填也可以直接体检。</p>', unsafe_allow_html=True)
+        for index in range(1, st.session_state.holding_rows):
+            cols = st.columns([1.4, 1, 0.25])
+            cols[0].text_input(
+                f"第 {index + 1} 只代码",
+                key=f"code_{index}",
+                placeholder="例如 000001",
+            )
+            cols[1].number_input(
+                f"第 {index + 1} 只金额（元）",
+                min_value=0.0,
+                step=1000.0,
+                key=f"amount_{index}",
+            )
+            if cols[2].button("×", key=f"del_row_{index}", help="删除这条持仓"):
+                st.session_state.pending_delete_row = index
+                st.rerun()
+        if st.button("＋ 继续添加一只", use_container_width=True, key="add_holding_row"):
+            st.session_state.holding_rows += 1
+            st.rerun()
+
     cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=50000.0, step=1000.0)
     current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
     if current_risk not in RISK_PROFILE_OPTIONS:
@@ -1719,36 +1792,6 @@ def portfolio_form() -> None:
                 st.session_state["risk_profile"] = _n
                 st.rerun()
     st.caption(f"{current_risk}：{RISK_PROFILE_HINTS.get(current_risk, '')}")
-
-    # Handle row deletion before widgets render (must precede the expander)
-    if "pending_delete_row" in st.session_state:
-        _del = st.session_state.pop("pending_delete_row")
-        for _j in range(_del, st.session_state.holding_rows - 1):
-            st.session_state[f"code_{_j}"] = st.session_state.get(f"code_{_j + 1}", "")
-            st.session_state[f"amount_{_j}"] = st.session_state.get(f"amount_{_j + 1}", 0.0)
-        st.session_state.holding_rows = max(1, st.session_state.holding_rows - 1)
-
-    with st.expander("更多持仓（可选）", expanded=False):
-        st.markdown('<p class="muted">这里填写第 2 只及之后的持仓；不填也可以直接体检。</p>', unsafe_allow_html=True)
-        for index in range(1, st.session_state.holding_rows):
-            cols = st.columns([1.4, 1, 0.28])
-            cols[0].text_input(
-                f"第 {index + 1} 只股票/基金代码",
-                key=f"code_{index}",
-                placeholder="例如 000001",
-            )
-            cols[1].number_input(
-                f"第 {index + 1} 只持仓金额（元）",
-                min_value=0.0,
-                step=1000.0,
-                key=f"amount_{index}",
-            )
-            if cols[2].button("✕", key=f"del_row_{index}", help="删除这条持仓"):
-                st.session_state.pending_delete_row = index
-                st.rerun()
-        if st.button("＋ 继续添加一只", use_container_width=True, key="add_holding_row"):
-            st.session_state.holding_rows += 1
-            st.rerun()
 
     submitted = st.button("开始一键智能体检", type="primary", use_container_width=True)
 
@@ -2398,6 +2441,59 @@ def metric_grid(analysis: dict[str, Any]) -> None:
                 </div>
             </div>
             <div class="metric-grid">{cards}</div>
+        </section>
+        """
+    )
+
+
+def portfolio_metrics_block(summary: dict[str, Any], analysis: dict[str, Any]) -> None:
+    """合并版指标卡：持仓结构 + 核心财务，两列紧凑布局，去除重复。"""
+    if not analysis:
+        return
+    stock = first_stock()
+    cash_ratio  = max(0.0, min(1.0, float(summary.get("cash_ratio",  0) or 0)))
+    stock_ratio = max(0.0, min(1.0, float(summary.get("stock_ratio", 0) or 0)))
+    top_industry = str(analysis.get("top_industry") or "")
+    ind_conc     = float(analysis.get("industry_concentration") or 0)
+
+    rows = [
+        ("家庭总资产",   money(float(summary.get("total_assets", 0) or 0)),                      "现金 + 持仓合计"),
+        ("现金比例",     percent(cash_ratio),                                                      "备用金厚度"),
+        ("股票/基金仓位", percent(stock_ratio),                                                    "资金暴露比例"),
+        ("单只最大占比", percent(float(summary.get("max_single_ratio", 0) or 0)),                 "集中度风险参考"),
+        ("行业集中度",   f"{html_escape(top_industry)}&nbsp;{percent(ind_conc)}" if top_industry else "暂无", "行业分布是否过于集中"),
+        ("PE 市盈率",    fmt_optional(stock_field(stock, "pe"),          default="暂缺"),          "估值高低参考"),
+        ("PB 市净率",    fmt_optional(stock_field(stock, "pb"),          default="暂缺"),          "账面价值倍数"),
+        ("ROE",          fmt_ratio(stock_field(stock, "roe")),                                     "公司用自己的钱赚钱的能力"),
+        ("净利率",       fmt_ratio(stock_field(stock, "net_margin")),                              "每百元营收留下的利润"),
+        ("毛利率",       fmt_ratio(stock_field(stock, "gross_margin")),                            "产品本身的盈利空间"),
+        ("资产负债率",   fmt_ratio(stock_field(stock, "debt_ratio")),                              "公司借钱占家底的比例"),
+    ]
+    cards = "".join(
+        f'<article class="metric-card-sm">'
+        f'<div class="metric-label">{label}</div>'
+        f'<div class="metric-value-sm">{value}</div>'
+        f'<div class="metric-note-sm">{note}</div>'
+        f'</article>'
+        for label, value, note in rows
+    )
+    render_html(
+        f"""
+        <section class="block">
+            <div class="block-head" style="margin-bottom:.6rem;">
+                <div>
+                    <h2 class="block-title">体检数据一览</h2>
+                    <p class="block-subtitle">持仓结构 · 核心财务 · 数据来源：最近报告期</p>
+                </div>
+            </div>
+            <div class="metric-grid-2">{cards}</div>
+            <div style="margin-top:.9rem;">
+                <div class="allocation-bar" aria-label="资产配置">
+                    <div class="allocation-cash"  style="width:{cash_ratio  * 100:.1f}%"></div>
+                    <div class="allocation-stock" style="width:{stock_ratio * 100:.1f}%"></div>
+                </div>
+                <p class="muted" style="margin-top:.3rem;">沉松绿代表现金，暖金代表股票/基金。</p>
+            </div>
         </section>
         """
     )
@@ -3254,32 +3350,14 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 </div>
                 {score_dial(risk_score)}
             </div>
-            <div class="metric-grid">
-                <article class="metric-card">
-                    <div class="metric-label">家庭总资产</div>
-                    <div class="metric-value">{money(float(summary.get("total_assets", 0) or 0))}</div>
-                    <div class="metric-note">现金 + 持仓金额</div>
-                </article>
-                <article class="metric-card">
-                    <div class="metric-label">现金比例</div>
-                    <div class="metric-value">{percent(float(summary.get("cash_ratio", 0) or 0))}</div>
-                    <div class="metric-note">备用金厚度</div>
-                </article>
-                <article class="metric-card">
-                    <div class="metric-label">股票/基金仓位</div>
-                    <div class="metric-value">{percent(float(summary.get("stock_ratio", 0) or 0))}</div>
-                    <div class="metric-note">家庭资金暴露比例</div>
-                </article>
-            </div>
         </section>
         """
     )
 
-    # ── 3. 核心财务指标 + 持仓概况（原普通分析入口内容）────────
+    # ── 3. 体检数据一览（持仓结构 + 核心财务，合并两列）──────────
     _analysis = st.session_state.get("analysis") or {}
     if _analysis:
-        allocation_block(_analysis)
-        metric_grid(_analysis)
+        portfolio_metrics_block(summary, _analysis)
         with st.expander("持仓明细与数据来源", expanded=False):
             holdings_detail(_analysis)
 
