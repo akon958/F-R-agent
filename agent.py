@@ -197,6 +197,116 @@ def _fallback_ai_report(analysis: dict[str, Any], missing_data: dict[str, list[s
     )
 
 
+def _generate_watch_tasks(
+    analysis: dict[str, Any],
+    portfolio_summary: dict[str, Any],
+    missing_data: dict[str, list[str]],
+    reverse_qa: dict[str, Any],
+    history_analysis: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """根据本次体检结果生成结构化待办任务，最多5条，按优先级排序。"""
+    tasks: list[dict[str, Any]] = []
+    cash_ratio    = float(portfolio_summary.get("cash_ratio", 0) or 0)
+    max_single    = float(portfolio_summary.get("max_single_ratio", 0) or 0)
+    score         = int(analysis.get("score", 0) or 0)
+    top_industry  = str(analysis.get("top_industry") or "")
+    industry_conc = float(analysis.get("industry_concentration", 0) or 0)
+    stock_results = list(analysis.get("stock_results", []) or [])
+    money_urgent  = reverse_qa.get("money_need_6m") == "possible"
+
+    # ── 1. 现金 / 流动性 ──────────────────────────────────────────
+    if money_urgent and cash_ratio < 0.20:
+        tasks.append({
+            "category": "cash", "priority": "high",
+            "title": "确认6个月内资金安排并补足备用金",
+            "desc": (
+                f"半年内可能有资金需求，当前现金比例仅 {cash_ratio:.0%}，"
+                "建议优先确保流动资金充足，避免被迫处置持仓。"
+            ),
+        })
+    elif cash_ratio < 0.10:
+        tasks.append({
+            "category": "cash", "priority": "high",
+            "title": "优先补足家庭备用金",
+            "desc": (
+                f"现金比例 {cash_ratio:.0%} 偏低，建议逐步补到 15% 以上，"
+                "先保障家庭急用钱需求，再考虑其他安排。"
+            ),
+        })
+    elif cash_ratio < 0.15:
+        tasks.append({
+            "category": "cash", "priority": "medium",
+            "title": "留意现金是否足够应急",
+            "desc": (
+                f"现金比例 {cash_ratio:.0%} 处于偏低区间，"
+                "下次体检时确认有没有补充。"
+            ),
+        })
+
+    # ── 2. 单只集中度 ──────────────────────────────────────────
+    if max_single > 0.30 and stock_results:
+        top_h = max(stock_results, key=lambda x: float(x.get("single_ratio", 0) or 0))
+        top_name = top_h.get("name") or top_h.get("code") or "最大持仓"
+        tasks.append({
+            "category": "concentration",
+            "priority": "high" if max_single > 0.40 else "medium",
+            "title": f"持续关注 {top_name} 的占比变化",
+            "desc": (
+                f"{top_name} 目前占家庭总资产 {max_single:.0%}，"
+                "下次体检时确认占比有没有进一步集中。"
+            ),
+        })
+
+    # ── 3. 行业集中 ──────────────────────────────────────────
+    if top_industry and top_industry not in ("未知", "无") and industry_conc > 0.60:
+        tasks.append({
+            "category": "industry", "priority": "medium",
+            "title": f"定期了解{top_industry}行业动态",
+            "desc": (
+                f"股票部分 {industry_conc:.0%} 集中在{top_industry}，"
+                "建议留意该行业有没有重大政策或经营变化。"
+            ),
+        })
+
+    # ── 4. 财务数据缺失 ──────────────────────────────────────
+    finance_missing = list(missing_data.get("财务数据缺失", []) or [])
+    if finance_missing:
+        tasks.append({
+            "category": "data", "priority": "medium",
+            "title": "季报更新后重新体检",
+            "desc": (
+                f"本次 {len(finance_missing)} 只标的财务数据暂缺，"
+                "建议下次季报发布后再跑一次体检，结论会更完整。"
+            ),
+        })
+
+    # ── 5. 历史重复风险 ──────────────────────────────────────
+    watch_pts = list(history_analysis.get("watch_points", []) or [])
+    if watch_pts and len(tasks) < 5:
+        snippet = "；".join(watch_pts[:2])[:60]
+        tasks.append({
+            "category": "history", "priority": "medium",
+            "title": "跟踪连续出现的风险点",
+            "desc": f"以下风险连续两次体检都存在：{snippet}。下次体检时重点确认是否改善。",
+        })
+
+    # ── 6. 评分偏低补充 ──────────────────────────────────────
+    if score < 60 and len(tasks) < 5:
+        tasks.append({
+            "category": "general", "priority": "high",
+            "title": "近期安排一次家庭复盘",
+            "desc": (
+                f"本次综合评分 {score}/100，风险偏高，"
+                "建议家人近期一起回顾一次，不要等到下次定期体检。"
+            ),
+        })
+
+    # 按优先级排序，最多5条
+    _order = {"high": 0, "medium": 1, "low": 2}
+    tasks.sort(key=lambda t: _order.get(t.get("priority", "low"), 2))
+    return tasks[:5]
+
+
 def _save_history(agent_result: dict[str, Any], analysis: dict[str, Any]) -> bool:
     try:
         holdings = agent_result.get("holdings", []) or []
@@ -538,7 +648,13 @@ def run_family_risk_agent(
         "report_mode": "爸妈版",
         "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
-        "watch_tasks": [],
+        "watch_tasks": _generate_watch_tasks(
+            analysis=analysis,
+            portfolio_summary=portfolio_summary,
+            missing_data=missing_data,
+            reverse_qa=reverse_qa_data,
+            history_analysis=history_analysis,
+        ),
         "industry_conc": analysis.get("industry_concentration"),
         "data_credit": round(
             (len(clean_holdings) - len(missing_data.get("行情数据缺失", [])))

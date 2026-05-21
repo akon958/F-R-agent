@@ -2460,6 +2460,61 @@ def metric_grid(analysis: dict[str, Any]) -> None:
     )
 
 
+def watch_tasks_block(agent_result: dict[str, Any]) -> None:
+    """体检后待办卡：展示 agent 生成的结构化观察任务。"""
+    tasks: list[dict[str, Any]] = list(agent_result.get("watch_tasks") or [])
+    if not tasks:
+        return
+
+    _PRIORITY_STYLE = {
+        "high":   ("高", "#b94040", "#fff5f5"),
+        "medium": ("中", "#b97a1a", "#fff9f0"),
+        "low":    ("低", "#666",    "#f5f5f5"),
+    }
+    _CATEGORY_ICON = {
+        "cash":          "💰",
+        "concentration": "📊",
+        "industry":      "🏭",
+        "data":          "📋",
+        "history":       "🔄",
+        "general":       "⚠️",
+    }
+
+    rows_html = ""
+    for task in tasks:
+        priority = task.get("priority", "medium")
+        label, color, bg = _PRIORITY_STYLE.get(priority, _PRIORITY_STYLE["medium"])
+        icon = _CATEGORY_ICON.get(task.get("category", "general"), "⚠️")
+        title = html_escape(str(task.get("title", "")))
+        desc  = html_escape(str(task.get("desc", "")))
+        rows_html += f"""
+        <li style="display:flex;gap:0.65rem;padding:0.55rem 0.9rem;
+                   border-bottom:1px solid var(--border);align-items:flex-start;">
+            <span style="flex-shrink:0;font-size:1rem;margin-top:0.05rem;">{icon}</span>
+            <div style="min-width:0;flex:1;">
+                <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.18rem;">
+                    <span style="font-size:0.82rem;font-weight:700;color:var(--text);">{title}</span>
+                    <span style="font-size:0.65rem;font-weight:700;color:{color};
+                                 background:{bg};padding:0.1rem 0.45rem;border-radius:10px;
+                                 white-space:nowrap;">{label}</span>
+                </div>
+                <p style="font-size:0.78rem;color:var(--text-2);margin:0;line-height:1.5;">{desc}</p>
+            </div>
+        </li>"""
+
+    render_html(f"""
+    <section style="margin:0.8rem 0;border-radius:12px;
+                    border:1px solid var(--border);background:var(--surface);overflow:hidden;">
+        <div style="padding:0.5rem 0.9rem;display:flex;align-items:center;
+                    justify-content:space-between;border-bottom:1px solid var(--border);">
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">📌&nbsp;体检后待办</span>
+            <span style="font-size:0.72rem;color:var(--text-3);">共 {len(tasks)} 项</span>
+        </div>
+        <ul style="margin:0;padding:0;list-style:none;">{rows_html}</ul>
+    </section>
+    """)
+
+
 def portfolio_metrics_block(summary: dict[str, Any], analysis: dict[str, Any]) -> None:
     """合并版指标卡：持仓结构 + 核心财务，两列紧凑布局，去除重复。"""
     if not analysis:
@@ -3385,6 +3440,9 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                         st.caption("· 估值数据暂缺，本次不评价估值高低。")
                     else:
                         st.caption(f"· {title}：{len(items)} 只数据缺失")
+
+    # ── 3c. 体检后待办 ──────────────────────────────────────
+    watch_tasks_block(agent_result)
 
     # ── 4. 本次 AI 风险说明 + 报告模式选择 ───────────────────
     st.markdown("---")
