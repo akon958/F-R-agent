@@ -5,20 +5,12 @@ import os
 import random
 from typing import Any
 
+from config import DEFAULT_FOLLOWUP_QUESTIONS, FIXED_DISCLAIMER as DISCLAIMER
 from question_router import route_slash_command
 from validator import sanitize_compliance_text
 
 
-DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
-
-FOLLOWUP_QUESTIONS = [
-    "现金比例怎么看？",
-    "哪只标的最需要关注？",
-    "PE/PB 对这次判断有什么帮助？",
-    "数据缺失会影响判断吗？",
-    "为什么这个组合还需要继续观察？",
-    "给爸妈一句话怎么说？",
-]
+FOLLOWUP_QUESTIONS = list(DEFAULT_FOLLOWUP_QUESTIONS)
 
 
 def get_dynamic_questions(agent_context: dict[str, Any]) -> list[str]:

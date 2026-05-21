@@ -122,6 +122,7 @@ Streamlit Cloud 自动重新部署
 | 文件 | 职责 |
 | --- | --- |
 | `app.py` | Streamlit 页面入口，只负责界面、按钮、展示、调用其他模块 |
+| `config.py` | 产品名、免责声明、报告模式、风险承受选项、合规替换词等统一配置 |
 | `agent.py` | 一键智能体检主流程，核心入口是 `run_family_risk_agent()` |
 | `data_fetcher.py` | 读取和标准化 `stock_metrics.csv`，处理缓存和字段映射 |
 | `analyzer.py` | 风险评分、组合分析、家庭分歧检测 |

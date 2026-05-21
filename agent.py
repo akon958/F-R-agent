@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from analyzer import analyze_history_changes, analyze_portfolio, detect_family_disagreement
+from config import DEFAULT_REPORT_MODE, FIXED_DISCLAIMER
 try:
     from ai_report import generate_agent_report  # type: ignore
 except ImportError:
-    def generate_agent_report(agent_context: dict, mode: str = "标准版") -> dict[str, str]:  # type: ignore[misc]
+    def generate_agent_report(agent_context: dict, mode: str = DEFAULT_REPORT_MODE) -> dict[str, str]:  # type: ignore[misc]
         return {
             "ai_report": (
                 "AI 报告模块需要重新部署最新版本。\n\n"
-                "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
+                f"{FIXED_DISCLAIMER}"
             ),
             "report_source": "local_fallback",
         }
@@ -127,7 +128,7 @@ def _try_realtime_data(codes: list[str]) -> tuple[list[dict[str, Any]] | None, s
 
 
 def _safe_ai_text(text: str) -> str:
-    disclaimer = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
+    disclaimer = FIXED_DISCLAIMER
     disclaimer_token = "__FIXED_DISCLAIMER__"
     safe = text.replace(disclaimer, disclaimer_token)
     replacements = {
@@ -193,7 +194,7 @@ def _fallback_ai_report(analysis: dict[str, Any], missing_data: dict[str, list[s
         f"【主要风险】\n{'; '.join(analysis.get('risk_notes', [])[:4]) or '暂时没有特别刺眼的问题，但仍要定期复盘。'}\n\n"
         f"【数据缺失说明】\n{missing_text}\n\n"
         "【爸妈重点看什么】\n先看现金够不够、单只股票会不会太集中，再看公司经营数据是否完整。不要因为短期涨跌冲动操作。\n\n"
-        "【免责声明】\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
+        f"【免责声明】\n{FIXED_DISCLAIMER}"
     )
 
 
@@ -605,7 +606,7 @@ def run_family_risk_agent(
     debug_steps.append("生成家庭说明。")
     report_source = "local_fallback"
     try:
-        report_result = generate_agent_report(agent_context, mode="标准版")
+        report_result = generate_agent_report(agent_context, mode=DEFAULT_REPORT_MODE)
     except Exception:  # noqa: BLE001
         report_result = {
             "ai_report": _fallback_ai_report(analysis, missing_data),
@@ -626,7 +627,7 @@ def run_family_risk_agent(
     agent_context["ai_report"] = ai_report  # 回填，让追问函数可读取本次报告内容
     agent_context["dinner_talk"] = dinner_talk
     agent_context["report_source"] = report_source
-    agent_context["report_mode"] = "标准版"
+    agent_context["report_mode"] = DEFAULT_REPORT_MODE
     agent_context["run_id"] = run_id  # 每次体检唯一编号
     ai_report_success = True
 
@@ -645,7 +646,7 @@ def run_family_risk_agent(
         "ai_report": ai_report,
         "dinner_talk": dinner_talk,
         "report_source": report_source,
-        "report_mode": "标准版",
+        "report_mode": DEFAULT_REPORT_MODE,
         "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
         "watch_tasks": _generate_watch_tasks(
