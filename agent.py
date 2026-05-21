@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -351,11 +352,8 @@ def _save_history(agent_result: dict[str, Any], analysis: dict[str, Any]) -> boo
         return False
 
 
-def _load_history_summary(limit: int = 3) -> str:
-    try:
-        rows = load_recent_analysis_history(limit=limit)
-    except Exception:  # noqa: BLE001
-        return ""
+def _load_history_summary(history_records: list[dict[str, Any]] | None = None, limit: int = 3) -> str:
+    rows = list(history_records or [])
     if not rows:
         return ""
     parts = []
@@ -367,6 +365,52 @@ def _load_history_summary(limit: int = 3) -> str:
     return "；".join(parts)
 
 
+def _load_memory_inputs_parallel(
+    comment_limit: int = 50,
+    history_limit: int = 5,
+) -> dict[str, Any]:
+    """Load Supabase-backed memory inputs in parallel.
+
+    family_comments and analysis_history are independent network calls. Running
+    them in two threads saves one round-trip on Streamlit Cloud while keeping
+    all storage access inside storage.py.
+    """
+    result: dict[str, Any] = {
+        "family_comments": [],
+        "history_records": [],
+        "errors": {},
+    }
+
+    def _load_comments() -> None:
+        try:
+            result["family_comments"] = load_recent_family_comments(limit=comment_limit)
+        except Exception as exc:  # noqa: BLE001
+            result["family_comments"] = []
+            result["errors"]["family_comments"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+
+    def _load_history() -> None:
+        try:
+            result["history_records"] = load_recent_analysis_history(limit=history_limit)
+        except Exception as exc:  # noqa: BLE001
+            result["history_records"] = []
+            result["errors"]["history_records"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+
+    threads = [
+        threading.Thread(target=_load_comments, name="family_comments_loader", daemon=True),
+        threading.Thread(target=_load_history, name="analysis_history_loader", daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=8)
+
+    for thread in threads:
+        if thread.is_alive():
+            result["errors"][thread.name] = "读取超时，已跳过，不影响本次体检。"
+
+    return result
+
+
 def _build_agent_context(
     clean_holdings: list[dict[str, Any]],
     cash: float,
@@ -375,6 +419,7 @@ def _build_agent_context(
     analysis: dict[str, Any],
     missing_data: dict[str, list[str]],
     main_risks: list[str],
+    history_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     stock_results = analysis.get("stock_results", [])
     name_by_code = {item.get("code"): item.get("name") for item in stock_results}
@@ -435,7 +480,7 @@ def _build_agent_context(
         "data_status": analysis.get("data_status", "本地缓存"),
         "pe_pb_status": pe_pb_status,
         "financial_status": financial_status,
-        "history_summary": _load_history_summary(),
+        "history_summary": _load_history_summary(history_records),
         "stock_details": stock_details,   # 个股实际财务数据，仅追问时用，不进入主报告 prompt
         "ai_report": "",  # 占位，由 run_family_risk_agent 生成后回填
     }
@@ -594,6 +639,15 @@ def run_family_risk_agent(
         if _liquidity_note not in main_risks:
             main_risks = [_liquidity_note] + [r for r in main_risks if r != _liquidity_note]
             main_risks = main_risks[:8]
+
+    # ── Memory Inputs：并行读取家庭观察与历史体检，减少 Supabase 往返等待 ──
+    emit("读取历史和家庭观察", 56)
+    debug_steps.append("并行读取家庭观察记录和历史体检记录。")
+    memory_inputs = _load_memory_inputs_parallel(comment_limit=50, history_limit=5)
+    family_comments = list(memory_inputs.get("family_comments") or [])
+    _history_records = list(memory_inputs.get("history_records") or [])
+    memory_errors = dict(memory_inputs.get("errors") or {})
+
     agent_context = _build_agent_context(
         clean_holdings=clean_holdings,
         cash=cash,
@@ -602,14 +656,13 @@ def run_family_risk_agent(
         analysis=analysis,
         missing_data=missing_data,
         main_risks=main_risks,
+        history_records=_history_records,
     )
     # ── Disagreement Detector：检测家庭分歧与意图-行动差距 ────────
     try:
-        family_comments = load_recent_family_comments(limit=50)
         family_disagreement = detect_family_disagreement(family_comments)
         intent_action_gap   = detect_intent_action_gap(family_comments, portfolio_summary)
     except Exception:  # noqa: BLE001
-        family_comments     = []
         family_disagreement = {"has_conflict": False, "conflicts": [], "summary": ""}
         intent_action_gap   = {"has_gap": False, "gaps": [], "summary": ""}
     agent_context["family_comments"]   = family_comments[:20]
@@ -619,7 +672,6 @@ def run_family_risk_agent(
 
     # ── Memory Agent：读取历史，提取行为变化规律 ─────────────────
     try:
-        _history_records = load_recent_analysis_history(limit=5)
         history_analysis = analyze_history_changes(_history_records)
     except Exception:  # noqa: BLE001
         history_analysis = {
@@ -629,6 +681,8 @@ def run_family_risk_agent(
         }
     agent_context["history_analysis"] = history_analysis
     agent_context["risk_factors"] = risk_factors
+    if memory_errors:
+        agent_context["memory_load_warnings"] = memory_errors
 
     # ── Family Translator：DeepSeek 将体检结论改写为适合家人阅读的版本 ──
     emit("调用 DeepSeek 生成 AI 风险说明", 72)
@@ -706,6 +760,7 @@ def run_family_risk_agent(
             "报告来源": report_source,
             "saved_history": False,
             "data_status 原始值": data_status,
+            "memory_load_warnings": memory_errors,
         },
         "analysis": analysis,
         "stocks": stocks,

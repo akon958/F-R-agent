@@ -632,7 +632,44 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "reverse_qa",
         "risk_factors",
     ]
-    return {key: agent_context.get(key) for key in allowed_keys}
+    context = {key: agent_context.get(key) for key in allowed_keys}
+
+    risk_factors = context.get("risk_factors")
+    if isinstance(risk_factors, dict):
+        compact_factors = []
+        for item in list(risk_factors.get("factors") or [])[:4]:
+            if not isinstance(item, dict):
+                continue
+            compact_factors.append(
+                {
+                    "name": item.get("name"),
+                    "score": item.get("score"),
+                    "tone": item.get("tone"),
+                }
+            )
+        weakest = risk_factors.get("weakest_factor")
+        context["risk_factors"] = {
+            "factors": compact_factors,
+            "weakest_factor": {
+                "name": weakest.get("name"),
+                "score": weakest.get("score"),
+                "tone": weakest.get("tone"),
+            } if isinstance(weakest, dict) else None,
+            "summary": risk_factors.get("summary", ""),
+        }
+
+    history_analysis = context.get("history_analysis")
+    if isinstance(history_analysis, dict):
+        context["history_analysis"] = {
+            "records_count": history_analysis.get("records_count", 0),
+            "score_change": history_analysis.get("score_change"),
+            "cash_ratio_change": history_analysis.get("cash_ratio_change"),
+            "stock_ratio_change": history_analysis.get("stock_ratio_change"),
+            "max_position_ratio_change": history_analysis.get("max_position_ratio_change"),
+            "summary": history_analysis.get("summary", ""),
+        }
+
+    return context
 
 
 def _agent_context_for_followup_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
