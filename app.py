@@ -1594,7 +1594,7 @@ def html_escape(value: Any) -> str:
 
 def site_header() -> None:
     render_html(
-        """
+        f"""
         <div class="brand" style="padding: 0.2rem 0 0.05rem;">
             <div class="brand-mark">
                 <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1610,8 +1610,8 @@ def site_header() -> None:
                 </svg>
             </div>
             <div>
-                <div class="brand-cn">FamilyReader<span class="brand-badge">AI</span></div>
-                <div class="brand-en">家庭持仓读懂器</div>
+                <div class="brand-cn">{html_escape(APP_TITLE)}<span class="brand-badge">AI</span></div>
+                <div class="brand-en">{html_escape(APP_SUBTITLE)}</div>
             </div>
         </div>
         """
@@ -1727,7 +1727,7 @@ def home_hero() -> None:
     render_html(
         """
         <div class="hero-card" style="padding: 1.3rem 1.3rem 0.6rem; margin-bottom: 0.5rem;">
-            <div class="eyebrow">家庭投资风险体检工具</div>
+            <div class="eyebrow">家庭持仓风险读懂工具</div>
             <h1 class="hero-title">输入持仓，看清风险。</h1>
             <p class="hero-subtitle">帮助家人看清这只标的的风险、数据是否完整，以及是否需要继续观察。不预测涨跌，不构成买卖建议。</p>
         </div>
@@ -3000,7 +3000,7 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
     st.download_button(
         "↓ 数据分析报告",
         data=report_text.encode("utf-8"),
-        file_name="家庭投资体检_数据报告.txt",
+        file_name="FamilyReader_体检数据报告.txt",
         mime="text/plain",
         use_container_width=True,
         help="包含评分、持仓明细、风险提示的结构化报告",

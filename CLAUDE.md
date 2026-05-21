@@ -13,7 +13,7 @@
 
 ## 1. 项目定位
 
-项目名：Family_Investment_Agent / FI_Agent
+项目名：FamilyReader
 
 产品名：FamilyReader / 家庭持仓读懂器
 

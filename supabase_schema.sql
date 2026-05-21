@@ -1,4 +1,4 @@
--- Family Investment Agent Supabase schema
+-- FamilyReader Supabase schema
 -- 在 Supabase SQL Editor 中执行本文件。
 
 create table if not exists analysis_history (
