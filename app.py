@@ -2722,6 +2722,21 @@ _STANCE_MAP = {
     "偏进取": "aggressive",
     "中性 / 只是记录": "neutral",
 }
+# ── 向导式家庭看法记录选项 ────────────────────────────────────────
+_GW_MEMBER_OPTIONS: list[str] = ["爸爸", "妈妈", "我", "全家一致"]
+_GW_FOCUS_OPTIONS: list[tuple[str, str]] = [
+    ("现金比例",  "cash"),
+    ("持仓集中",  "concentration"),
+    ("估值高低",  "valuation"),
+    ("财务数据",  "financial"),
+    ("整体风险",  "risk_tolerance"),
+    ("其他",     "other"),
+]
+_GW_STANCE_OPTIONS: list[tuple[str, str]] = [
+    ("偏谨慎",   "conservative"),
+    ("中性观察",  "neutral"),
+    ("偏进取",   "aggressive"),
+]
 _REVERSE_QA_DEFAULT = {
     "money_need_6m": "uncertain",
     "volatility_reaction": "discuss",
@@ -3822,6 +3837,21 @@ def followup_page(agent_result: dict[str, Any]) -> None:
     _fup_mode = agent_result.get("report_mode", "爸妈版") or "爸妈版"
     reverse_qa_block(agent_result, agent_context, _fup_mode)
     followup_block(agent_context)
+    # ── 追问完成后，引导进入向导式记录 ─────────────────────────
+    st.markdown("---")
+    render_html(
+        '<p style="font-size:0.85rem;color:var(--text-3);margin:0 0 0.4rem;">'
+        '追问完成后，可以记录家人对这次体检的看法。</p>'
+    )
+    _fup_run_id = str(agent_result.get("run_id", "") if agent_result else "")
+    if st.button("记录家人看法 →", use_container_width=True, key="fup_to_guided_comment"):
+        st.session_state["_guided_run_id"] = _fup_run_id
+        for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
+                   "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
+            st.session_state.pop(_k, None)
+        st.session_state["guided_step"] = 1
+        st.session_state["active_view"] = "guided_comment"
+        st.rerun()
     with st.expander("追问历史保存情况", expanded=False):
         latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
         backend = latest_status.get("backend", "local_csv")
@@ -3891,6 +3921,207 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
         st.rerun()
 
 
+def guided_comment_page(agent_result: dict[str, Any]) -> None:
+    """向导式家庭看法记录 — 分步引导（共 3 步 + 完成确认）。"""
+    step = int(st.session_state.get("guided_step", 1))
+    run_id = str(
+        st.session_state.get("_guided_run_id", "")
+        or (agent_result.get("run_id", "") if agent_result else "")
+    )
+
+    def _clear_wizard() -> None:
+        for _k in (
+            "guided_step", "guided_member", "guided_focus", "guided_focus_label",
+            "guided_stance", "guided_stance_label", "guided_text",
+            "guided_save_result", "gw_extra_text",
+        ):
+            st.session_state.pop(_k, None)
+
+    # ── 返回按钮（步骤 1~3 可以返回） ──────────────────────────
+    if step < 4:
+        if st.button("← 返回", key="guided_back_btn"):
+            _clear_wizard()
+            st.session_state["active_view"] = "records"
+            st.rerun()
+
+    # ── 进度指示器（步骤 1~3）──────────────────────────────────
+    if step <= 3:
+        _step_labels = ["谁来记录", "关注什么", "整体倾向"]
+        _chips = ""
+        for _i, _lbl in enumerate(_step_labels):
+            _is_active = (_i + 1 == step)
+            _bg    = "#7a3e2e" if _is_active else "#ece5e1"
+            _color = "#fff"    if _is_active else "#9e8070"
+            _fw    = "700"     if _is_active else "500"
+            _chips += (
+                '<span style="display:inline-block;padding:0.22rem 0.72rem;'
+                'border-radius:20px;font-size:0.72rem;font-weight:' + _fw + ';'
+                'background:' + _bg + ';color:' + _color + ';margin:0 0.15rem;">'
+                + html_escape(_lbl) + '</span>'
+            )
+        render_html('<div style="margin:0.3rem 0 1.1rem;">' + _chips + '</div>')
+
+    # ── 步骤 1：谁来记录 ────────────────────────────────────────
+    if step == 1:
+        render_html(
+            '<p style="font-size:1.05rem;font-weight:700;color:var(--text);'
+            'margin:0 0 0.85rem;">这次是谁来记录看法？</p>'
+        )
+        _c1, _c2 = st.columns(2)
+        for _i, _opt in enumerate(_GW_MEMBER_OPTIONS):
+            with (_c1 if _i % 2 == 0 else _c2):
+                if st.button(_opt, use_container_width=True, key=f"gw_m_{_i}"):
+                    st.session_state["guided_member"] = _opt
+                    st.session_state["guided_step"] = 2
+                    st.rerun()
+        render_html(
+            '<p style="font-size:0.82rem;color:var(--text-3);margin:0.75rem 0 0.3rem;">或者自填：</p>'
+        )
+        _custom = st.text_input(
+            "自填成员",
+            placeholder="例如：奶奶、全家讨论…",
+            key="gw_member_custom_input",
+            label_visibility="collapsed",
+        )
+        if st.button("确认并下一步 →", use_container_width=True, key="gw_m_custom_confirm"):
+            st.session_state["guided_member"] = (_custom.strip() or "其他")
+            st.session_state["guided_step"] = 2
+            st.rerun()
+
+    # ── 步骤 2：关注什么 ────────────────────────────────────────
+    elif step == 2:
+        _member = html_escape(str(st.session_state.get("guided_member", "") or ""))
+        render_html(
+            '<p style="font-size:1.05rem;font-weight:700;color:var(--text);'
+            'margin:0 0 0.85rem;">' + _member + ' 最关注哪一块？</p>'
+        )
+        _c1, _c2 = st.columns(2)
+        for _i, (_lbl, _val) in enumerate(_GW_FOCUS_OPTIONS):
+            with (_c1 if _i % 2 == 0 else _c2):
+                if st.button(_lbl, use_container_width=True, key=f"gw_f_{_i}"):
+                    st.session_state["guided_focus"] = _val
+                    st.session_state["guided_focus_label"] = _lbl
+                    st.session_state["guided_step"] = 3
+                    st.rerun()
+
+    # ── 步骤 3：整体倾向 → 可选文字 → 保存 ─────────────────────
+    elif step == 3:
+        _member      = html_escape(str(st.session_state.get("guided_member", "") or ""))
+        _focus_label = html_escape(str(st.session_state.get("guided_focus_label", "") or ""))
+        _stance_set  = bool(st.session_state.get("guided_stance"))
+
+        if not _stance_set:
+            # 3a：选择立场
+            render_html(
+                '<p style="font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 0.85rem;">'
+                + _member
+                + ' 对<span style="color:#7a3e2e;"> '
+                + _focus_label
+                + '</span> 的整体倾向是？</p>'
+            )
+            _sc1, _sc2, _sc3 = st.columns(3)
+            for _i, (_lbl, _val) in enumerate(_GW_STANCE_OPTIONS):
+                with [_sc1, _sc2, _sc3][_i]:
+                    if st.button(_lbl, use_container_width=True, key=f"gw_s_{_i}"):
+                        st.session_state["guided_stance"] = _val
+                        st.session_state["guided_stance_label"] = _lbl
+                        st.rerun()
+        else:
+            # 3b：立场已选，补充文字 + 保存
+            _stance_label = html_escape(str(st.session_state.get("guided_stance_label", "") or ""))
+            render_html(
+                '<div style="background:#fff9f6;border:1.5px solid #e8c4b2;'
+                'border-radius:12px;padding:0.85rem 1rem;margin-bottom:0.85rem;">'
+                '<p style="font-size:0.75rem;color:var(--text-3);margin:0 0 0.35rem;">已选择</p>'
+                '<p style="font-size:0.97rem;font-weight:600;color:var(--text);margin:0;">'
+                + _member + '&nbsp;·&nbsp;' + _focus_label + '&nbsp;·&nbsp;' + _stance_label
+                + '</p></div>'
+                '<p style="font-size:0.88rem;color:var(--text-3);margin:0 0 0.4rem;">'
+                '还有什么想补充的吗？（选填）</p>'
+            )
+            st.text_area(
+                "补充说明",
+                placeholder="例如：觉得现金再多一点会更安心…",
+                height=90,
+                key="gw_extra_text",
+                label_visibility="collapsed",
+            )
+            st.caption("记录仅供家庭参考，不作为任何操作建议。")
+            if st.button("保存这条记录 ✓", use_container_width=True, key="gw_save_btn"):
+                _text_val = str(st.session_state.get("gw_extra_text", "") or "").strip()
+                st.session_state["guided_text"] = _text_val
+                _comment: dict[str, Any] = {
+                    "member":       str(st.session_state.get("guided_member", "") or ""),
+                    "comment_type": "观察",
+                    "focus":        str(st.session_state.get("guided_focus", "other") or "other"),
+                    "stance":       str(st.session_state.get("guided_stance", "neutral") or "neutral"),
+                    "content":      _text_val,
+                    "run_id":       run_id,
+                }
+                try:
+                    _save_res = save_family_comment(_comment)
+                    st.session_state["guided_save_result"] = _save_res
+                    st.session_state["family_comment_last_save"] = get_last_family_comment_save_status()
+                    st.session_state.pop("family_comments_cache", None)
+                    st.session_state.pop("family_comments", None)
+                except Exception as _exc:  # noqa: BLE001
+                    st.session_state["guided_save_result"] = {
+                        "success": False,
+                        "backend": "local_csv",
+                        "error":   str(_exc)[:80],
+                    }
+                st.session_state["guided_step"] = 4
+                st.rerun()
+
+    # ── 步骤 4：完成确认 ────────────────────────────────────────
+    elif step == 4:
+        _save_result  = dict(st.session_state.get("guided_save_result") or {})
+        _member_raw   = str(st.session_state.get("guided_member", "") or "")
+        _focus_raw    = str(st.session_state.get("guided_focus_label", "") or "")
+        _stance_raw   = str(st.session_state.get("guided_stance_label", "") or "")
+        _extra_raw    = str(st.session_state.get("guided_text", "") or "")
+        _saved_ok     = bool(_save_result.get("success"))
+        _backend      = str(_save_result.get("backend", "local_csv") or "local_csv")
+        _backend_lbl  = "云端" if _backend == "supabase" else "本地"
+        _icon = "✅" if _saved_ok else "⚠️"
+        _msg  = ("记录已保存到" + _backend_lbl) if _saved_ok else "保存时遇到问题"
+
+        _extra_html = ""
+        if _extra_raw:
+            _extra_html = (
+                '<p style="font-size:0.85rem;color:var(--text-3);margin:0.3rem 0 0;">'
+                + html_escape(_extra_raw[:120]) + "</p>"
+            )
+        render_html(
+            '<div style="text-align:center;padding:1.1rem 0 0.6rem;">'
+            '<p style="font-size:2rem;margin:0 0 0.35rem;">' + _icon + '</p>'
+            '<p style="font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 0.2rem;">'
+            + html_escape(_msg) + '</p>'
+            '</div>'
+            '<div style="background:#fff9f6;border:1px solid #e8c4b2;border-radius:12px;'
+            'padding:0.85rem 1rem;margin:0.5rem 0 1rem;">'
+            '<p style="font-size:0.75rem;color:var(--text-3);margin:0 0 0.4rem;">这条记录内容</p>'
+            '<p style="font-size:0.95rem;font-weight:600;color:var(--text);margin:0;">'
+            + html_escape(_member_raw)
+            + '&nbsp;·&nbsp;' + html_escape(_focus_raw)
+            + '&nbsp;·&nbsp;' + html_escape(_stance_raw)
+            + '</p>'
+            + _extra_html
+            + '</div>'
+        )
+        _ca, _cb = st.columns(2)
+        with _ca:
+            if st.button("再记录一条", use_container_width=True, key="gw_another"):
+                _clear_wizard()
+                st.session_state["guided_step"] = 1
+                st.rerun()
+        with _cb:
+            if st.button("回到体检结论", use_container_width=True, key="gw_go_home"):
+                _clear_wizard()
+                st.session_state["active_view"] = "analysis"
+                st.rerun()
+
+
 def records_hub_page(agent_result: dict[str, Any]) -> None:
     """追问 / 家庭记录 / 历史 汇总子页面。"""
     if st.button("← 返回体检结论", key="records_hub_back_btn"):
@@ -3909,7 +4140,35 @@ def records_hub_page(agent_result: dict[str, Any]) -> None:
     agent_context = (agent_result.get("agent_context") or {}) if agent_result else {}
     run_id = str(agent_result.get("run_id", "") or "") if agent_result else ""
     followup_entry_block(agent_result, agent_context)
-    discussion_entry_block(run_id=run_id)
+    # ── 向导式家庭看法记录入口 ──────────────────────────────────
+    try:
+        _hub_comments: list[dict[str, Any]] = st.session_state.get("family_comments_cache") or []
+        if not _hub_comments:
+            _hub_comments = load_recent_family_comments(limit=5)
+            st.session_state["family_comments_cache"] = _hub_comments
+    except Exception:  # noqa: BLE001
+        _hub_comments = []
+    _hub_count = len(_hub_comments)
+    _hub_subtitle = (
+        f"已有 {_hub_count} 条记录，点击继续记录。"
+        if _hub_count
+        else "分步记录家人对这次体检的看法，30 秒完成，自动保存。"
+    )
+    render_html(
+        '<section class="block" style="padding:1rem 1.1rem;">'
+        '<div class="block-head" style="margin-bottom:.35rem;"><div>'
+        '<h2 class="block-title" style="font-size:1.18rem;">家庭观察记录</h2>'
+        '<p class="block-subtitle">' + html_escape(_hub_subtitle) + '</p>'
+        '</div></div></section>'
+    )
+    if st.button("开始记录家人看法 →", use_container_width=True, key="open_guided_comment"):
+        st.session_state["_guided_run_id"] = run_id
+        for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
+                   "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
+            st.session_state.pop(_k, None)
+        st.session_state["guided_step"] = 1
+        st.session_state["active_view"] = "guided_comment"
+        st.rerun()
     history_replay_block(agent_result)
     history_records_block()
 
@@ -3932,6 +4191,10 @@ def analysis_page() -> None:
         return
     if _active == "comments":
         comments_page(agent_result)
+        render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+        return
+    if _active == "guided_comment":
+        guided_comment_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     if _active == "records":
