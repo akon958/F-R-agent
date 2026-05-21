@@ -630,6 +630,7 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "financial_status",
         "family_disagreement",
         "reverse_qa",
+        "risk_factors",
     ]
     return {key: agent_context.get(key) for key in allowed_keys}
 
@@ -751,9 +752,10 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 2. 不给具体交易动作或仓位动作。
 3. 不使用"您家""贵家庭""您的家庭资产"。
 4. 必须结合现金比例、股票/基金持仓比例、最大单只持仓占比、主要风险和数据缺失情况。
-5. {valuation_rule}
-6. {disagreement_rule}
-7. {reverse_rule}
+5. 如果 agent_context 里有 risk_factors，请优先用它解释"为什么是这个评分"，但不要把它写成专业模型。
+6. {valuation_rule}
+7. {disagreement_rule}
+8. {reverse_rule}
 {_mode_rules}
 """.strip()
 

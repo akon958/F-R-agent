@@ -78,6 +78,88 @@ RISK_TARGETS = {
 }
 
 
+RISK_FACTOR_META = {
+    "家庭仓位安全": {
+        "plain": "家里的钱放得是否太集中",
+        "watch": "现金比例、股票/基金仓位、单只最大占比、行业集中度",
+    },
+    "公司财务质量": {
+        "plain": "持仓公司的底子是否稳",
+        "watch": "赚钱能力、利润率、负债压力、现金流质量",
+    },
+    "交易热度风险": {
+        "plain": "短期交易是否太热、波动是否偏大",
+        "watch": "换手率、量比、振幅、涨跌幅和成交活跃度",
+    },
+    "风险承受匹配": {
+        "plain": "当前仓位是否匹配家庭能承受的波动",
+        "watch": "选择的风险承受能力、股票仓位和单只集中度",
+    },
+}
+
+
+def build_risk_factor_breakdown(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Build a structured risk-factor breakdown from existing module scores.
+
+    This does not change scoring. It only makes the existing module_scores and
+    scoring_weights easier for the UI and AI report to reuse.
+    """
+    module_scores = analysis.get("module_scores") or {}
+    weights = analysis.get("scoring_weights") or {}
+    if not isinstance(module_scores, dict):
+        module_scores = {}
+    if not isinstance(weights, dict):
+        weights = {}
+
+    def _tone(score: float) -> tuple[str, str, str]:
+        if score >= 80:
+            return "steady", "稳", "目前压力较小"
+        if score >= 60:
+            return "watch", "看", "需要继续观察"
+        return "tight", "紧", "这项拉低评分"
+
+    factors: list[dict[str, Any]] = []
+    for name, raw_score in module_scores.items():
+        try:
+            score = float(raw_score or 0)
+        except (TypeError, ValueError):
+            continue
+        try:
+            weight = float(weights.get(name, 0) or 0)
+        except (TypeError, ValueError):
+            weight = 0.0
+        tone, tone_label, status = _tone(score)
+        meta = RISK_FACTOR_META.get(str(name), {})
+        factors.append(
+            {
+                "name": str(name),
+                "score": round(score, 1),
+                "weight": round(weight, 1),
+                "contribution": round(score * weight / 100, 1) if weight else round(score, 1),
+                "tone": tone,
+                "tone_label": tone_label,
+                "status": status,
+                "plain": meta.get("plain", str(name)),
+                "watch": meta.get("watch", "结合本次体检结果继续观察"),
+            }
+        )
+
+    factors.sort(key=lambda item: item.get("weight", 0), reverse=True)
+    if not factors:
+        return {"factors": [], "weakest_factor": None, "summary": ""}
+
+    weakest = min(factors, key=lambda item: item.get("score", 0))
+    summary = (
+        f"本次最需要先看的因子是{weakest['name']}，"
+        f"简单说就是{weakest['plain']}。"
+    )
+    return {
+        "factors": factors,
+        "weakest_factor": weakest,
+        "summary": summary,
+    }
+
+
 def detect_family_disagreement(comments: list[dict]) -> dict:
     """
     检测家庭成员在同一关注点上的风险立场分歧。

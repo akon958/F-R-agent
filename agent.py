@@ -5,7 +5,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from analyzer import analyze_history_changes, analyze_portfolio, detect_family_disagreement
+from analyzer import (
+    analyze_history_changes,
+    analyze_portfolio,
+    build_risk_factor_breakdown,
+    detect_family_disagreement,
+)
 from config import DEFAULT_REPORT_MODE, FIXED_DISCLAIMER
 try:
     from ai_report import generate_agent_report  # type: ignore
@@ -558,6 +563,7 @@ def run_family_risk_agent(
 
     debug_steps.append("完成风险计算。")
     analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
+    risk_factors = build_risk_factor_breakdown(analysis)
 
     emit("组装 agent_context", 60)
     debug_steps.append("整理体检上下文。")
@@ -601,6 +607,7 @@ def run_family_risk_agent(
             "watch_points": [], "summary": "历史记录还不够，先完成几次体检后，这里会显示风险变化。",
         }
     agent_context["history_analysis"] = history_analysis
+    agent_context["risk_factors"] = risk_factors
 
     emit("调用 DeepSeek 生成 AI 风险说明", 72)
     debug_steps.append("生成家庭说明。")
@@ -649,6 +656,7 @@ def run_family_risk_agent(
         "report_mode": DEFAULT_REPORT_MODE,
         "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
+        "risk_factors": risk_factors,
         "watch_tasks": _generate_watch_tasks(
             analysis=analysis,
             portfolio_summary=portfolio_summary,

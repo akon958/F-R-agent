@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from analyzer import analyze_history_changes, analyze_portfolio
+from analyzer import analyze_history_changes, analyze_portfolio, build_risk_factor_breakdown
 from agent import run_family_risk_agent
 from config import (
     APP_SUBTITLE,
@@ -3316,62 +3316,31 @@ def family_disagreement_block(disagreement: dict[str, Any]) -> None:
     )
 
 
-def risk_factor_breakdown_block(analysis: dict[str, Any]) -> None:
+def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str, Any] | None = None) -> None:
     """把现有评分拆成父母能看懂的风险因子，不改变分析逻辑。"""
-    if not analysis:
-        return
-    module_scores = analysis.get("module_scores") or {}
-    weights = analysis.get("scoring_weights") or {}
-    if not isinstance(module_scores, dict) or not module_scores:
+    factor_data = factor_data or build_risk_factor_breakdown(analysis or {})
+    factors = list((factor_data or {}).get("factors") or [])
+    weakest = (factor_data or {}).get("weakest_factor") or {}
+    if not factors:
         return
 
-    factor_meta = {
-        "家庭仓位安全": {
-            "plain": "家里的钱放得是否太集中",
-            "watch": "现金比例、股票/基金仓位、单只最大占比、行业集中度",
-        },
-        "公司财务质量": {
-            "plain": "持仓公司的底子是否稳",
-            "watch": "赚钱能力、利润率、负债压力、现金流质量",
-        },
-        "交易热度风险": {
-            "plain": "短期交易是否太热、波动是否偏大",
-            "watch": "换手率、量比、振幅、涨跌幅和成交活跃度",
-        },
-        "风险承受匹配": {
-            "plain": "当前仓位是否匹配家庭能承受的波动",
-            "watch": "选择的风险承受能力、股票仓位和单只集中度",
-        },
+    color_by_tone = {
+        "steady": "#3f7d55",
+        "watch": "#b97a1a",
+        "tight": "#b94040",
     }
 
-    def _factor_tone(score: float) -> tuple[str, str, str]:
-        if score >= 80:
-            return "稳", "#3f7d55", "目前压力较小"
-        if score >= 60:
-            return "看", "#b97a1a", "需要继续观察"
-        return "紧", "#b94040", "这项拉低评分"
-
-    normalized_items: list[tuple[str, float, float]] = []
-    for name, raw_score in module_scores.items():
-        try:
-            score = float(raw_score or 0)
-        except (TypeError, ValueError):
-            continue
-        try:
-            weight = float(weights.get(name, 0) or 0)
-        except (TypeError, ValueError, AttributeError):
-            weight = 0
-        normalized_items.append((str(name), score, weight))
-    if not normalized_items:
-        return
-
-    focus_name, focus_score, _ = min(normalized_items, key=lambda item: item[1])
-    focus_plain = factor_meta.get(focus_name, {}).get("plain", focus_name)
     cards = []
-    for name, score, weight in sorted(normalized_items, key=lambda item: item[2], reverse=True):
-        tone, color, status = _factor_tone(score)
-        meta = factor_meta.get(name, {"plain": name, "watch": "结合本次体检结果继续观察"})
-        contribution = score * weight / 100 if weight else score
+    for item in factors:
+        name = str(item.get("name", ""))
+        score = float(item.get("score", 0) or 0)
+        weight = float(item.get("weight", 0) or 0)
+        contribution = float(item.get("contribution", 0) or 0)
+        tone_label = str(item.get("tone_label", "看") or "看")
+        color = color_by_tone.get(str(item.get("tone", "")), "#b97a1a")
+        status = str(item.get("status", "") or "需要继续观察")
+        plain = str(item.get("plain", "") or name)
+        watch = str(item.get("watch", "") or "结合本次体检结果继续观察")
         cards.append(
             f"""
             <article style="border:1px solid var(--border);border-radius:12px;background:var(--surface);
@@ -3379,7 +3348,7 @@ def risk_factor_breakdown_block(analysis: dict[str, Any]) -> None:
                 <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.35rem;">
                     <span style="width:1.65rem;height:1.65rem;border-radius:999px;background:{color};
                                  color:#fff;display:inline-flex;align-items:center;justify-content:center;
-                                 font-size:0.78rem;font-weight:800;flex-shrink:0;">{html_escape(tone)}</span>
+                                 font-size:0.78rem;font-weight:800;flex-shrink:0;">{html_escape(tone_label)}</span>
                     <div style="min-width:0;">
                         <div style="font-size:0.9rem;font-weight:800;color:var(--text);line-height:1.25;">
                             {html_escape(name)}
@@ -3398,14 +3367,18 @@ def risk_factor_breakdown_block(analysis: dict[str, Any]) -> None:
                     {score:.0f}/100 · {html_escape(status)}
                 </div>
                 <p style="font-size:0.78rem;color:var(--text-2);line-height:1.5;margin:0 0 0.25rem;">
-                    {html_escape(meta["plain"])}
+                    {html_escape(plain)}
                 </p>
                 <p style="font-size:0.72rem;color:var(--text-3);line-height:1.45;margin:0;">
-                    看：{html_escape(meta["watch"])}
+                    看：{html_escape(watch)}
                 </p>
             </article>
             """
         )
+
+    focus_name = str(weakest.get("name", factors[0].get("name", "")) or "")
+    focus_score = float(weakest.get("score", factors[0].get("score", 0)) or 0)
+    focus_plain = str(weakest.get("plain", focus_name) or focus_name)
 
     render_html(
         f"""
@@ -3424,7 +3397,7 @@ def risk_factor_breakdown_block(analysis: dict[str, Any]) -> None:
                     简单说，就是{html_escape(focus_plain)}。
                 </p>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.6rem;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.6rem;">
                 {''.join(cards)}
             </div>
         </section>
@@ -3557,7 +3530,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     # ── 3. 体检数据一览（持仓结构 + 核心财务，合并两列）──────────
     _analysis = st.session_state.get("analysis") or agent_result.get("analysis") or {}
     if _analysis:
-        risk_factor_breakdown_block(_analysis)
+        risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
         portfolio_metrics_block(summary, _analysis)
         with st.expander("持仓明细与数据来源", expanded=False):
             holdings_detail(_analysis)
