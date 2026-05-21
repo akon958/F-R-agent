@@ -3590,6 +3590,45 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
                 )
 
 
+def _cross_validation_html(cv: dict[str, Any]) -> str:
+    """多重交叉验证结果的紧凑 HTML 片段。"""
+    if not cv or not cv.get("checks_run"):
+        return ""
+    issues = list(cv.get("issues") or [])
+    notes  = list(cv.get("notes")  or [])
+    passed = cv.get("passed", True)
+
+    if issues:
+        items = "".join(
+            f'<li style="margin:0.1rem 0;font-size:0.72rem;color:#b94040;">'
+            f'⚠ {html_escape(i)}</li>'
+            for i in issues
+        )
+        return (
+            f'<div style="margin:0 0 0.4rem;padding:0.35rem 0.7rem;'
+            f'background:rgba(185,64,64,0.07);border-radius:8px;'
+            f'border:1px solid rgba(185,64,64,0.18);">'
+            f'<ul style="margin:0;padding-left:0.1rem;list-style:none;">{items}</ul>'
+            f'</div>'
+        )
+    if notes:
+        items = "".join(
+            f'<li style="margin:0.08rem 0;font-size:0.7rem;color:var(--text-3);">'
+            f'· {html_escape(n)}</li>'
+            for n in notes
+        )
+        return (
+            f'<div style="margin:0 0 0.4rem;">'
+            f'<ul style="margin:0;padding-left:0.1rem;list-style:none;">{items}</ul>'
+            f'</div>'
+        )
+    n = int(cv.get("checks_run") or 0)
+    return (
+        f'<p style="margin:0 0 0.4rem;font-size:0.68rem;color:var(--text-3);">'
+        f'✓ {n} 项交叉校验通过</p>'
+    )
+
+
 def _confidence_badge_html(level: str, level_code: str, summary: str) -> str:
     """Compliance Guard 置信度标签 HTML 片段。无数据时返回空字符串。"""
     if not level:
@@ -3624,6 +3663,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     _conf_level   = str(_confidence.get("level") or "")
     _conf_code    = str(_confidence.get("level_code") or "")
     _conf_summary = str(_confidence.get("summary") or "")
+    _cross_val    = agent_result.get("cross_validation") or {}
     _history_analysis = agent_result.get("history_analysis") or {}
     _behavior_note = str(_history_analysis.get("behavior_note") or "")
 
@@ -3663,6 +3703,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             数据来源：{html_escape(data_source_label)}&ensp;·&ensp;存储方式：{html_escape(storage_label)}&ensp;·&ensp;历史记录：{html_escape(saved_label)}&ensp;·&ensp;{html_escape(storage_note)}
         </p>
         {_confidence_badge_html(_conf_level, _conf_code, _conf_summary)}
+        {_cross_validation_html(_cross_val)}
         """
     )
 

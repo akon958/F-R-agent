@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from config import COMPLIANCE_REPLACEMENTS
 
 
@@ -8,3 +10,85 @@ def sanitize_compliance_text(text: str) -> str:
     for old, new in COMPLIANCE_REPLACEMENTS.items():
         safe = safe.replace(old, new)
     return safe
+
+
+def cross_validate(
+    risk_score: int,
+    risk_level: str,
+    portfolio_summary: dict[str, Any],
+    risk_factors: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """多重交叉验证：对体检各模块输出做内部一致性检查。
+
+    三项检查：
+    1. 评分数字与风险等级文字是否吻合
+    2. 现金比例 + 持仓比例合计是否接近 100%
+    3. 风险因子加权合成分与综合评分是否一致
+
+    Returns
+    -------
+    {
+        "passed":     bool,       # True = 无明显矛盾
+        "issues":     list[str],  # 明显矛盾，需要提示用户
+        "notes":      list[str],  # 轻微差异，仅记录
+        "checks_run": int,        # 实际执行的检查项数
+    }
+    """
+    issues: list[str] = []
+    notes: list[str] = []
+    checks_run = 0
+
+    # ── 检查 1：评分与风险等级文字一致性 ──────────────────────────
+    checks_run += 1
+    level_text = str(risk_level or "")
+    if risk_score > 0:
+        is_high_label = any(kw in level_text for kw in ("红", "偏高"))
+        is_low_label  = any(kw in level_text for kw in ("绿", "较低"))
+        if risk_score >= 80 and is_high_label:
+            issues.append(
+                f"评分 {risk_score} 分，但风险等级标注为偏高；"
+                "两者不一致，可能因为持仓数据与缓存有延迟"
+            )
+        elif risk_score < 60 and is_low_label:
+            issues.append(
+                f"评分 {risk_score} 分偏低，但风险等级标注为较低；"
+                "两者不一致，建议重新检查持仓和缓存数据"
+            )
+
+    # ── 检查 2：现金 + 持仓比例是否自洽 ──────────────────────────
+    checks_run += 1
+    cash  = float(portfolio_summary.get("cash_ratio")  or 0)
+    stock = float(portfolio_summary.get("stock_ratio") or 0)
+    total = cash + stock
+    if total > 0.01:
+        if abs(total - 1.0) > 0.08:
+            notes.append(
+                f"现金 {cash * 100:.0f}% + 持仓 {stock * 100:.0f}% = {total * 100:.0f}%，"
+                "合计与 100% 有出入，可能有未归类资产或录入误差"
+            )
+
+    # ── 检查 3：因子加权合成分与综合评分一致性 ──────────────────
+    if risk_factors:
+        checks_run += 1
+        factors = list(risk_factors.get("factors") or [])
+        if factors and risk_score > 0:
+            try:
+                weighted_sum = sum(
+                    float(f.get("score") or 0) * float(f.get("weight") or 0) / 100
+                    for f in factors
+                )
+                gap = abs(weighted_sum - risk_score)
+                if gap > 15:
+                    notes.append(
+                        f"因子加权得分约 {weighted_sum:.0f} 分，与综合评分 {risk_score} 分"
+                        f"相差 {gap:.0f} 分，可能因数据缺失触发了保守限制"
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
+    return {
+        "passed":     len(issues) == 0,
+        "issues":     issues,
+        "notes":      notes,
+        "checks_run": checks_run,
+    }

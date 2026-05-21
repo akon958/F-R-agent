@@ -26,6 +26,7 @@ except ImportError:
             "report_source": "local_fallback",
         }
 from data_fetcher import get_stock_metrics, normalize_code
+from validator import cross_validate
 from storage import (
     format_datetime_for_display,
     get_last_analysis_save_status,
@@ -511,6 +512,7 @@ def run_family_risk_agent(
             "family_disagreement": no_disagreement,
             "intent_action_gap": {"has_gap": False, "gaps": [], "summary": ""},
             "data_confidence": {"level": "低", "level_code": "low", "summary": "输入不完整", "issues": []},
+            "cross_validation": {"passed": True, "issues": [], "notes": [], "checks_run": 0},
             "saved_history": False,
             "storage_status": {
                 "backend": "local_csv",
@@ -573,6 +575,11 @@ def run_family_risk_agent(
 
     # ── Compliance Guard：检查数据完整性，评估结论可信度 ─────────
     data_confidence = assess_data_confidence(analysis, missing_data)
+
+    # ── 多重交叉验证：检查各模块输出的内部一致性 ─────────────────
+    _cv_score = int(analysis.get("score", 0) or 0)
+    _cv_level = f"{analysis.get('level', '')}（{analysis.get('level_text', '')}）"
+    cross_validation = cross_validate(_cv_score, _cv_level, portfolio_summary, risk_factors)
 
     emit("组装 agent_context", 60)
     debug_steps.append("整理体检上下文。")
@@ -673,6 +680,7 @@ def run_family_risk_agent(
         "family_disagreement": family_disagreement,
         "intent_action_gap":   intent_action_gap,
         "data_confidence":     data_confidence,
+        "cross_validation":    cross_validation,
         "risk_factors": risk_factors,
         "watch_tasks": _generate_watch_tasks(
             analysis=analysis,
