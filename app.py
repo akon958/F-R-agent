@@ -3827,9 +3827,13 @@ def comments_page(agent_result: dict[str, Any]) -> None:
 
 def followup_page(agent_result: dict[str, Any]) -> None:
     agent_context = agent_result.get("agent_context", {}) if agent_result else {}
-    if st.button("← 返回", use_container_width=True, key="back_to_analysis_view"):
+    if st.button("← 返回继续深入", key="back_to_analysis_view"):
         st.session_state["active_view"] = "records"
         st.rerun()
+    render_html(
+        '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.6rem;">'
+        '体检结论 &rsaquo; 继续深入 &rsaquo; AI 追问</p>'
+    )
     if not agent_context:
         st.info("请先完成一次一键智能体检，再继续追问。")
         return
@@ -3939,10 +3943,14 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
 
     # ── 返回按钮（步骤 1~3 可以返回） ──────────────────────────
     if step < 4:
-        if st.button("← 返回", key="guided_back_btn"):
+        if st.button("← 返回继续深入", key="guided_back_btn"):
             _clear_wizard()
             st.session_state["active_view"] = "records"
             st.rerun()
+        render_html(
+            '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.3rem;">'
+            '体检结论 &rsaquo; 继续深入 &rsaquo; 记录家人看法</p>'
+        )
 
     # ── 进度指示器（步骤 1~3）──────────────────────────────────
     if step <= 3:
@@ -4123,52 +4131,51 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
 
 
 def records_hub_page(agent_result: dict[str, Any]) -> None:
-    """追问 / 家庭记录 / 历史 汇总子页面。"""
+    """追问 / 家庭记录 / 历史 汇总子页面（观察记录在追问后自动出现）。"""
     if st.button("← 返回体检结论", key="records_hub_back_btn"):
         st.session_state["active_view"] = "analysis"
         st.rerun()
+    render_html(
+        '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.5rem;">'
+        '体检结论 &rsaquo; 继续深入</p>'
+    )
     render_html("""
     <div style="padding:0.3rem 0 0.9rem;">
         <h2 style="font-size:1.2rem;font-weight:700;color:var(--text);margin:0 0 0.15rem;">
             继续深入这次体检
         </h2>
         <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
-            追问 AI · 记录家人看法 · 对比历史变化
+            先追问 AI，再记录家人看法
         </p>
     </div>
     """)
     agent_context = (agent_result.get("agent_context") or {}) if agent_result else {}
     run_id = str(agent_result.get("run_id", "") or "") if agent_result else ""
     followup_entry_block(agent_result, agent_context)
-    # ── 向导式家庭看法记录入口 ──────────────────────────────────
-    try:
-        _hub_comments: list[dict[str, Any]] = st.session_state.get("family_comments_cache") or []
-        if not _hub_comments:
-            _hub_comments = load_recent_family_comments(limit=5)
-            st.session_state["family_comments_cache"] = _hub_comments
-    except Exception:  # noqa: BLE001
-        _hub_comments = []
-    _hub_count = len(_hub_comments)
-    _hub_subtitle = (
-        f"已有 {_hub_count} 条记录，点击继续记录。"
-        if _hub_count
-        else "分步记录家人对这次体检的看法，30 秒完成，自动保存。"
-    )
-    render_html(
-        '<section class="block" style="padding:1rem 1.1rem;">'
-        '<div class="block-head" style="margin-bottom:.35rem;"><div>'
-        '<h2 class="block-title" style="font-size:1.18rem;">家庭观察记录</h2>'
-        '<p class="block-subtitle">' + html_escape(_hub_subtitle) + '</p>'
-        '</div></div></section>'
-    )
-    if st.button("开始记录家人看法 →", use_container_width=True, key="open_guided_comment"):
-        st.session_state["_guided_run_id"] = run_id
-        for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
-                   "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
-            st.session_state.pop(_k, None)
-        st.session_state["guided_step"] = 1
-        st.session_state["active_view"] = "guided_comment"
-        st.rerun()
+    # ── 追问后自动出现：家庭观察记录入口 ─────────────────────────
+    _fup_answers = list(st.session_state.get("followup_answers", []))
+    if _fup_answers:
+        _fup_n = len(_fup_answers)
+        render_html(
+            '<div style="background:#fff9f6;border:1.5px solid #e8c4b2;border-radius:14px;'
+            'padding:0.9rem 1rem;margin:0.5rem 0 0;">'
+            '<p style="font-size:0.72rem;font-weight:600;letter-spacing:.06em;'
+            'color:#7a3e2e;text-transform:uppercase;margin:0 0 0.3rem;">Agent · 下一步</p>'
+            '<p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.3rem;">'
+            + '已追问 ' + str(_fup_n) + ' 条，记录一下家人看法？'
+            + '</p>'
+            '<p style="font-size:0.82rem;color:var(--text-3);margin:0;">'
+            '30 秒完成，自动保存，方便以后对比家庭意见变化。</p>'
+            '</div>'
+        )
+        if st.button("开始记录家人看法 →", use_container_width=True, key="hub_auto_guided"):
+            st.session_state["_guided_run_id"] = run_id
+            for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
+                       "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
+                st.session_state.pop(_k, None)
+            st.session_state["guided_step"] = 1
+            st.session_state["active_view"] = "guided_comment"
+            st.rerun()
     history_replay_block(agent_result)
     history_records_block()
 
@@ -4176,15 +4183,18 @@ def records_hub_page(agent_result: dict[str, Any]) -> None:
 def analysis_page() -> None:
     analysis = st.session_state["analysis"]
     fetch_warnings = st.session_state.get("fetch_warnings", [])
-    if st.button("← 返回首页"):
-        st.session_state.pop("analysis", None)
-        st.session_state.pop("stocks", None)
-        st.session_state.pop("fetch_warnings", None)
-        st.session_state.pop("agent_result", None)
-        st.session_state["active_view"] = "analysis"
-        st.rerun()
     agent_result = st.session_state.get("agent_result", {})
     _active = st.session_state.get("active_view", "analysis")
+    # ── 顶部小导航：← 首页（窄列，视觉上明显小于子页的返回按钮）──
+    _hn_col, _ = st.columns([1, 5])
+    with _hn_col:
+        if st.button("← 首页", key="nav_back_home", use_container_width=True):
+            st.session_state.pop("analysis", None)
+            st.session_state.pop("stocks", None)
+            st.session_state.pop("fetch_warnings", None)
+            st.session_state.pop("agent_result", None)
+            st.session_state["active_view"] = "analysis"
+            st.rerun()
     if _active == "followup":
         followup_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
