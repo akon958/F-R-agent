@@ -631,6 +631,7 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "family_disagreement",
         "reverse_qa",
         "risk_factors",
+        "agent_memory",
     ]
     context = {key: agent_context.get(key) for key in allowed_keys}
 
@@ -667,6 +668,18 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
             "stock_ratio_change": history_analysis.get("stock_ratio_change"),
             "max_position_ratio_change": history_analysis.get("max_position_ratio_change"),
             "summary": history_analysis.get("summary", ""),
+        }
+
+    agent_memory = context.get("agent_memory")
+    if isinstance(agent_memory, dict):
+        context["agent_memory"] = {
+            "has_memory": agent_memory.get("has_memory", False),
+            "records_count": agent_memory.get("records_count", 0),
+            "comments_count": agent_memory.get("comments_count", 0),
+            "summary": agent_memory.get("summary", ""),
+            "recurring_risks": list(agent_memory.get("recurring_risks") or [])[:3],
+            "recurring_focus": list(agent_memory.get("recurring_focus") or [])[:3],
+            "next_watch_points": list(agent_memory.get("next_watch_points") or [])[:3],
         }
 
     return context
@@ -792,7 +805,8 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 5. 如果 agent_context 里有 risk_factors，请优先用它解释"为什么是这个评分"，但不要把它写成专业模型。
 6. {valuation_rule}
 7. {disagreement_rule}
-8. {reverse_rule}
+8. 如果 agent_context 里有 agent_memory 且 has_memory=true，可以用一句话呼应家庭反复关注的问题；不要展开太长，不要编造历史。
+9. {reverse_rule}
 {_mode_rules}
 """.strip()
 

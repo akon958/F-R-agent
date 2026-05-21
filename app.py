@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import random as _random
 from html import escape
 from math import pi
 from typing import Any
@@ -14,12 +13,10 @@ from agent import run_family_risk_agent
 from config import (
     APP_SUBTITLE,
     APP_TITLE,
-    COMPLIANCE_REPLACEMENTS,
     DEFAULT_AMOUNTS,
     DEFAULT_CODES,
     DEFAULT_FOLLOWUP_QUESTIONS,
     DEFAULT_REPORT_MODE,
-    FIXED_DISCLAIMER,
     HOME_DISCLAIMER,
     REPORT_DISCLAIMER,
     REPORT_MODES,
@@ -30,370 +27,22 @@ from config import (
 from question_router import route_slash_command
 from validator import sanitize_compliance_text
 
-# ─────────────────────────────────────────────────────────────────
-# 追问功能本地实现：完整逻辑直接写在 app.py，
-# 不依赖云端 ai_report.py 的版本，永远可用。
-# ─────────────────────────────────────────────────────────────────
-_DISCLAIMER = FIXED_DISCLAIMER
-FOLLOWUP_VERSION = "v4_raw_error_diagnostic"
+from ai_report import (
+    answer_followup_question,
+    generate_agent_report,
+    get_dynamic_questions,
+)
+from ui_shell import agent_flow_html, site_header_html
 
+FOLLOWUP_VERSION = "v5_single_ai_report_entry"
+FOLLOWUP_ANSWER_IMPL = "ai_report.answer_followup_question"
+_AI_REPORT_FALLBACK_MSG = (
+    "AI 报告模块暂时不可用。\n\n"
+    "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
+)
 
-def _fmt_pct(value: Any) -> str:
-    try:
-        return f"{float(value) * 100:.1f}%"
-    except (TypeError, ValueError):
-        return "暂无"
-
-
-def _sanitize(text: str) -> str:
-    for old, new in COMPLIANCE_REPLACEMENTS.items():
-        text = text.replace(old, new)
-    return text
-
-
-def get_dynamic_questions(agent_context: dict) -> list[str]:
-    """根据 agent_context 生成 6 个随机变体追问问题（本地实现，不依赖 ai_report.py）。"""
-    _random.seed()
-    cash_ratio = float(agent_context.get("cash_ratio", 0) or 0)
-    stock_ratio = float(agent_context.get("stock_ratio", 0) or 0)
-    max_pos = float(agent_context.get("max_position_ratio", 0) or 0)
-    risk_score = int(agent_context.get("risk_score", 0) or 0)
-    holdings = list(agent_context.get("holdings", []) or [])
-    missing_data = dict(agent_context.get("missing_data", {}) or {})
-
-    sorted_h = sorted(holdings, key=lambda x: x.get("amount", 0), reverse=True)
-    top = sorted_h[0] if sorted_h else {}
-    top_name = (top.get("name") or top.get("code") or "") if top else ""
-    top_pct = f"{max_pos * 100:.0f}%"
-    cash_pct = f"{cash_ratio * 100:.0f}%"
-    stock_pct = f"{stock_ratio * 100:.0f}%"
-    valuation_missing = bool(missing_data.get("估值数据缺失"))
-    finance_missing = bool(missing_data.get("财务数据缺失"))
-    questions: list[str] = []
-
-    # 槽 1：现金
-    if cash_ratio < 0.10:
-        opts = [f"现金只剩 {cash_pct}，备用金够用吗？",
-                f"家里现金只有 {cash_pct}，会不会太少了？",
-                f"现金比例 {cash_pct}，遇到急用钱能撑住吗？"]
-    elif cash_ratio < 0.15:
-        opts = [f"现金比例 {cash_pct} 偏低，需要担心吗？",
-                f"现金只有 {cash_pct}，够应对突发支出吗？",
-                f"备用金 {cash_pct} 是否太薄了？"]
-    elif cash_ratio >= 0.45:
-        opts = [f"现金留了 {cash_pct}，是不是太保守了？",
-                f"现金比例 {cash_pct}，还需要保留这么多吗？",
-                f"家里 {cash_pct} 是现金，这样合理吗？"]
-    else:
-        opts = ["现金比例怎么看？", "家里留多少现金比较合适？", "现金比例对这次体检影响大吗？"]
-    questions.append(_random.choice(opts))
-
-    # 槽 2：集中度
-    if top_name and max_pos >= 0.40:
-        opts = [f"{top_name} 占了 {top_pct}，集中度高有什么风险？",
-                f"最大持仓 {top_name} 占 {top_pct}，该怎么看？",
-                f"哪只标的占比最高（{top_pct}）？需要重点关注吗？"]
-    elif top_name and max_pos >= 0.25:
-        opts = [f"{top_name} 占比最高（{top_pct}），需要重点关注吗？",
-                "哪只标的目前持仓比例最重？",
-                f"持仓里 {top_name} 这只标的占比最大，有风险吗？"]
-    elif len(holdings) == 1:
-        opts = ["只有一只标的，风险是不是太集中了？",
-                "只持有一只，集中度风险怎么看？",
-                "单只标的持仓和多只持仓有什么区别？"]
-    else:
-        opts = ["哪只标的最需要关注？", "这些持仓里哪只标的最需要盯着看？",
-                "持仓里有没有特别需要关注的标的？"]
-    questions.append(_random.choice(opts))
-
-    # 槽 3：PE/PB
-    if valuation_missing:
-        opts = ["PE/PB 数据缺失，这次体检受影响吗？",
-                "没有 PE/PB 数据，结论还准确吗？",
-                "PE/PB 缺失会带来哪些判断盲区？"]
-    else:
-        opts = ["PE/PB 对这次判断有什么帮助？",
-                "PE/PB 数据在体检里起什么作用？",
-                "这次 PE/PB 数据说明了什么？"]
-    questions.append(_random.choice(opts))
-
-    # 槽 4：数据完整性
-    if finance_missing:
-        opts = ["财务数据有缺失，还能判断公司好坏吗？",
-                "财务数据不全，对体检判断有多大影响？",
-                "数据缺失的情况下，体检结论能信吗？"]
-    else:
-        opts = ["数据缺失会影响判断吗？", "这次体检数据缺失了哪些内容？",
-                "数据完不完整，对体检结论影响大吗？"]
-    questions.append(_random.choice(opts))
-
-    # 槽 5：风险原因
-    if risk_score < 50:
-        opts = [f"评分 {risk_score} 分偏低，主要原因是什么？",
-                f"这次评分只有 {risk_score} 分，说明了什么？",
-                f"评分 {risk_score} 分，哪些方面拉低了分数？"]
-    elif stock_ratio >= 0.85:
-        opts = [f"股票/基金仓位已达 {stock_pct}，算重仓吗？",
-                f"仓位 {stock_pct}，遇到市场大波动怎么看？",
-                f"仓位这么重（{stock_pct}），风险怎么评估？"]
-    else:
-        opts = ["为什么这个组合还需要继续观察？",
-                "体检完了，还需要继续观察哪些方面？",
-                "这个组合为什么不能就此放心？"]
-    questions.append(_random.choice(opts))
-
-    # 槽 6：给爸妈一句话
-    opts = ["给爸妈一句话怎么说？", "用一句话总结这次体检，怎么说？",
-            "爸妈看这个结果，一句话能记住什么？",
-            "如果只说一句话，爸妈最该知道什么？"]
-    questions.append(_random.choice(opts))
-
-    return questions
-
-
-def _legacy_local_answer_followup_question(agent_context: dict, question: str) -> str:
-    """根据 agent_context 回答追问（本地实现，不依赖 ai_report.py）。"""
-    risk_score = int(agent_context.get("risk_score", 0) or 0)
-    risk_level = agent_context.get("risk_level", "暂无") or "暂无"
-    cash_ratio = float(agent_context.get("cash_ratio", 0) or 0)
-    stock_ratio = float(agent_context.get("stock_ratio", 0) or 0)
-    max_position_ratio = float(agent_context.get("max_position_ratio", 0) or 0)
-    main_risks = list(agent_context.get("main_risks", []) or [])
-    holdings = list(agent_context.get("holdings", []) or [])
-    missing_data = dict(agent_context.get("missing_data", {}) or {})
-    pe_pb_status: str = agent_context.get("pe_pb_status", "") or ""
-    financial_status: str = agent_context.get("financial_status", "") or ""
-
-    sorted_h = sorted(holdings, key=lambda x: x.get("amount", 0), reverse=True)
-    top = sorted_h[0] if sorted_h else {}
-    top_name = (top.get("name") or top.get("code") or "最大持仓") if top else "暂无"
-    top_ratio = float(top.get("position_ratio", max_position_ratio) if top else max_position_ratio)
-    valuation_missing = bool(missing_data.get("估值数据缺失"))
-    finance_missing = bool(missing_data.get("财务数据缺失"))
-
-    q = question.strip()
-
-    # 问题 1：现金
-    if "现金" in q or "备用金" in q:
-        if cash_ratio >= 0.30:
-            level_desc, advice = "比较充足", "短期用钱压力相对小，不必过于紧张；但现金闲置太多也未必是最优安排，可以定期复盘是否合适。"
-        elif cash_ratio >= 0.15:
-            level_desc, advice = "基本合理", "整体在参考范围内。如果近期有大额支出计划（装修、医疗、教育），提前留出充足流动资金更稳妥。"
-        else:
-            level_desc, advice = "偏低", "如果家里突然有急用，可能比较被动。备用金的重要性不低于持仓本身，建议优先确保现金储备充足。"
-        body = (
-            f"这次体检显示，家庭现金占比约 {_fmt_pct(cash_ratio)}，整体感觉属于「{level_desc}」。\n\n"
-            f"通常家庭保留 15%–30% 现金是比较常见的参考范围，但每家情况不同，"
-            f"关键是能不能覆盖突发的用钱需求。\n\n{advice}"
-        )
-
-    # 问题 2：集中度
-    elif "哪只" in q or "集中" in q or ("占" in q and "%" in q) or "标的" in q or "一只" in q:
-        if not top:
-            body = "当前没有有效持仓数据，无法判断哪只标的最需要关注。请确认持仓信息填写正确。"
-        else:
-            body = f"从持仓金额来看，{top_name} 目前占比最高，约为家庭总资产的 {_fmt_pct(top_ratio)}。\n\n"
-            if top_ratio >= 0.40:
-                body += "这个占比已偏高（超过 40%），单只集中度风险比较突出。如果这只标的出现较大变化，家庭的感受会比较直接，需要多留意它的后续动态。"
-            elif top_ratio >= 0.25:
-                body += "占比处于中等水平，不算极端，但建议定期确认这只标的有没有出现值得关注的基本面变化，定期复盘比较稳妥。"
-            else:
-                body += "占比目前不算极端，整体集中度尚可，保持关注即可。"
-            if finance_missing:
-                body += "\n\n另外这次财务数据有部分缺失，对公司质量的判断会有一定局限，建议等数据补全后再做更完整的评估。"
-
-    # 问题 3：PE/PB
-    elif "PE" in q or "PB" in q or "市盈率" in q or "市净率" in q:
-        if valuation_missing:
-            status_desc = pe_pb_status or "PE/PB 数据暂缺"
-            body = (
-                f"这次体检中估值数据（PE/PB）暂缺（{status_desc}），所以本次结论里没有对股价高低做评判。\n\n"
-                "PE（市盈率）是看「按现在股价买，大约需要多少年回本」；"
-                "PB（市净率）是看「股价相对公司账面资产是贵还是便宜」。\n\n"
-                "这两个数字缺失，意味着这次无法判断各持仓现在是否处于合理定价区间。"
-                "但这不影响对持仓结构、现金比例和集中度的判断——这些结论依然有效。\n\n"
-                "后续如果数据补全，可以再跑一次体检，会得到关于估值层面更完整的参考。"
-            )
-        else:
-            status_desc = pe_pb_status or "PE/PB 数据已有一定覆盖"
-            body = (
-                f"这次体检中估值数据（{status_desc}）。\n\n"
-                "PE（市盈率）反映「按现在股价买要多少年回本」，"
-                "PB（市净率）反映「股价相对公司账面资产是贵还是便宜」。\n\n"
-                "体检用这两个数据来辅助判断各持仓是否处于合理区间。"
-                "不过它们只是参考，不是买卖的唯一依据——市场很多时候不按估值出牌。\n\n"
-                "有了 PE/PB，这次体检的结论在估值层面会更有依据，整体可信度相对更高。"
-            )
-
-    # 问题 4：数据完整性
-    elif "数据缺失" in q or ("数据" in q and ("影响" in q or "缺" in q)) or ("财务" in q and "判断" in q):
-        missing_parts: list[str] = []
-        for title, items in missing_data.items():
-            if items:
-                if "估值" in title:
-                    missing_parts.append(f"估值数据（PE/PB）暂缺，涉及 {len(items)} 只")
-                elif "财务" in title:
-                    missing_parts.append(f"财务数据（ROE、净利率等）暂缺，涉及 {len(items)} 只")
-                else:
-                    missing_parts.append(f"{title}涉及 {len(items)} 只")
-        if not missing_parts:
-            body = (
-                "这次体检的数据基本完整，没有发现明显缺口，各项判断的依据相对充分。\n\n"
-                "数据完整时，可以同时评估现金比例、持仓结构和公司基本面三个维度，结论的可信度会更高。"
-            )
-        else:
-            body = f"这次体检发现：{'；'.join(missing_parts)}。\n\n缺失的数据不会被编造进结论，只做保守判断。\n\n"
-            impacts: list[str] = []
-            if finance_missing:
-                impacts.append("财务数据缺失时，对公司盈利能力、资产质量的判断会有局限，只能依靠持仓结构层面做评估。")
-            if valuation_missing:
-                impacts.append("估值（PE/PB）数据缺失时，不对股价贵不贵做任何评价，以免误导判断。")
-            body += "\n".join(impacts) if impacts else "当前缺失影响有限，主要结论仍然有效。"
-
-    # 问题 5a：评分偏低
-    elif "评分" in q and ("低" in q or "原因" in q or "分" in q):
-        primary = main_risks[0] if main_risks else "持仓结构有待优化"
-        if risk_score < 50:
-            body = (
-                f"评分主要由三部分影响：持仓集中度、现金比例和财务数据质量。\n\n"
-                f"这次评分 {risk_score}/100 偏低，最主要的拉分项是：{primary}。\n\n"
-                f"现金占比约 {_fmt_pct(cash_ratio)}，最大单只占比约 {_fmt_pct(max_position_ratio)}——"
-                f"{'这两项都给评分带来了压力。' if cash_ratio < 0.15 and max_position_ratio > 0.35 else '集中度是主要影响因素。'}"
-                f"{'财务数据缺失也会让体检保守降分。' if finance_missing else ''}"
-            )
-        else:
-            body = (
-                f"评分 {risk_score}/100 属于中等，整体没有特别极端的问题。"
-                f"主要关注点是：{primary}。"
-                f"现金比例 {_fmt_pct(cash_ratio)}，最大单只占比 {_fmt_pct(max_position_ratio)}，整体结构尚可。"
-            )
-
-    # 问题 5b：重仓/仓位
-    elif "仓位" in q or "重仓" in q:
-        if stock_ratio >= 0.85:
-            body = (
-                f"股票/基金占比 {_fmt_pct(stock_ratio)}，已经属于比较重的仓位。"
-                f"在这种情况下，市场整体波动时对家庭的影响会比较明显。\n\n"
-                f"家庭的备用金只有 {_fmt_pct(cash_ratio)}，"
-                f"{'这个比例偏低，遇到急用钱时可能比较被动。' if cash_ratio < 0.15 else '这个比例尚可，短期用钱压力相对可控。'}"
-            )
-        elif stock_ratio >= 0.70:
-            body = (
-                f"股票/基金占比 {_fmt_pct(stock_ratio)}，处于中等偏高水平。"
-                f"大部分资金在权益类资产里，遇到市场波动时感受会比较明显，"
-                f"但只要家庭现金（{_fmt_pct(cash_ratio)}）够应急，整体还在可接受范围内。"
-            )
-        else:
-            body = (
-                f"当前股票/基金占比 {_fmt_pct(stock_ratio)}，整体仓位不算极端。"
-                f"保持现金比例（{_fmt_pct(cash_ratio)}）充足是最重要的保障，"
-                "仓位本身不是越低越好，关键是结构合不合理。"
-            )
-
-    # 问题 5c：继续观察
-    elif "继续观察" in q or ("为什么" in q and "组合" in q) or ("需要" in q and "观察" in q):
-        reasons: list[str] = []
-        if cash_ratio < 0.15:
-            reasons.append(f"现金比例偏低（约 {_fmt_pct(cash_ratio)}），备用金储备需要持续关注")
-        if max_position_ratio >= 0.35:
-            reasons.append(f"最大单只持仓占比较高（约 {_fmt_pct(max_position_ratio)}），集中度风险需要定期确认")
-        if finance_missing:
-            reasons.append("财务数据有缺失，对部分标的的公司质量判断尚不完整")
-        if valuation_missing:
-            reasons.append("估值数据暂缺，还无法判断各持仓的定价是否合理")
-        if main_risks:
-            reasons.append(f"体检发现的主要风险点：{main_risks[0]}")
-        if not reasons:
-            reasons.append("市场环境持续变化，定期复盘是任何组合的基本要求")
-        reason_text = "；\n".join(f"• {r}" for r in reasons[:4])
-        body = (
-            f"这个组合评分 {risk_score}/100，等级{risk_level}。"
-            f"需要继续关注的原因主要有：\n\n{reason_text}\n\n"
-            "持续观察不代表要频繁操作，而是要定期确认这些关注点有没有出现明显变化。"
-            "家庭投资组合最重要的是「结构稳」，不是「短期涨跌」。"
-        )
-
-    # 问题 6：一句话总结
-    elif "一句话" in q:
-        primary = main_risks[0] if main_risks else "持仓集中度"
-        if risk_score >= 75:
-            sentence = (
-                f"这个组合评分 {risk_score} 分，整体暂时没有特别刺眼的问题，"
-                "按现在的安排定期看一看就行，不用急着做什么。"
-            )
-        elif risk_score >= 55:
-            sentence = (
-                f"这个组合评分 {risk_score} 分，有几个地方值得留意，"
-                f"特别是{primary}，不用慌，但心里要有数，过一段时间再看看有没有变化。"
-            )
-        else:
-            sentence = (
-                f"这个组合评分 {risk_score} 分，{primary}这块需要认真对待，"
-                "建议家人一起讨论一下，看看结构上有没有可以调整的地方。"
-            )
-        body = (
-            f"给爸妈的一句话：\n\n「{sentence}」\n\n"
-            "（这是本次体检的参考，不是操作建议。具体怎么做，还是要结合家庭实际情况讨论。）"
-        )
-
-    # 旧兼容兜底：相关但未命中特定关键词时，不再输出固定体检摘要
-    else:
-        body = "这个追问区主要回答本次投资体检相关问题。你可以问现金比例、持仓集中度、PE/PB、数据缺失或主要风险。"
-
-    return _sanitize(f"{body}\n\n{_DISCLAIMER}")
-
-
-# ─────────────────────────────────────────────────────────────────
-# 兼容导入：若云端 ai_report.py 是新版本则用新版本覆盖上面的本地实现
-# ─────────────────────────────────────────────────────────────────
-_AI_REPORT_FALLBACK_MSG = "AI 报告模块需要重新部署最新版本。\n\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
-
-try:
-    from ai_report import generate_agent_report  # type: ignore
-except ImportError:
-    def generate_agent_report(agent_context: dict, mode: str = DEFAULT_REPORT_MODE) -> dict[str, str]:  # type: ignore[misc]
-        return {"ai_report": _AI_REPORT_FALLBACK_MSG, "report_source": "local_fallback"}
-
-try:
-    from ai_report import generate_parent_friendly_report  # type: ignore
-except ImportError:
-    def generate_parent_friendly_report(analysis: dict, api_key: str) -> str:  # type: ignore[misc]
-        return _AI_REPORT_FALLBACK_MSG
 
 _FALLBACK_QUESTIONS: list[str] = list(DEFAULT_FOLLOWUP_QUESTIONS)
-
-try:
-    from ai_report import answer_followup_question as _ai_answer, FOLLOWUP_QUESTIONS, get_dynamic_questions as _ai_get_q  # type: ignore
-    answer_followup_question = _ai_answer  # type: ignore[assignment]
-    get_dynamic_questions = _ai_get_q  # type: ignore[assignment]
-    FOLLOWUP_ANSWER_IMPL = "ai_report.answer_followup_question"
-except ImportError:
-    FOLLOWUP_QUESTIONS: list[str] = _FALLBACK_QUESTIONS  # type: ignore[assignment]
-    FOLLOWUP_ANSWER_IMPL = "app.local_fallback"
-
-    def _app_fallback_answer_followup_question(agent_context: dict, question: str) -> dict[str, str]:
-        q = question.strip()
-        unrelated = (
-            "这个追问区主要回答本次投资体检相关问题。"
-            "你可以问现金比例、持仓集中度、PE/PB、数据缺失或主要风险。"
-        )
-        if not q:
-            return {"answer": f"{unrelated}\n\n{_DISCLAIMER}", "source": "local_fallback", "error": "问题为空"}
-        if "现金" in q:
-            answer = f"这次体检显示，现金比例约 {_fmt_pct(agent_context.get('cash_ratio', 0))}。可以重点看备用金是否够覆盖家庭近期支出。"
-        elif "PE" in q or "PB" in q or "估值" in q:
-            answer = "PE/PB 主要帮助观察估值高低。如果数据暂缺，本次不评价估值高低，只看现金、仓位和集中度。"
-        elif any(word in q for word in ["茅台", "占比", "集中", "持仓"]):
-            answer = f"这次体检显示，最大单只占比约 {_fmt_pct(agent_context.get('max_position_ratio', 0))}。占比越高，组合越容易受单只标的影响。"
-        elif "数据" in q or "缺失" in q:
-            answer = "数据缺失会让判断更保守。缺失的数据不会被编造进结论，只对已有数据做风险体检。"
-        elif any(word in q for word in ["值得买吗", "能买吗", "要不要买", "要不要卖", "卖吗"]):
-            answer = "这个工具不能给买卖结论，也不预测涨跌。可以从占比、现金比例、估值数据是否完整和主要风险几个角度观察。"
-        else:
-            answer = unrelated
-        return {"answer": f"{answer}\n\n{_DISCLAIMER}", "source": "local_fallback", "error": "ai_report.py 导入失败，使用 app 本地兜底"}
-
-    answer_followup_question = _app_fallback_answer_followup_question  # type: ignore[assignment]
 
 
 from data_fetcher import (
@@ -1685,30 +1334,7 @@ def _hesc(d: dict, key: str, default: str = "") -> str:
 
 
 def site_header() -> None:
-    render_html(
-        f"""
-        <div class="brand" style="padding: 0.2rem 0 0.05rem;">
-            <div class="brand-mark">
-                <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <defs>
-                        <radialGradient id="fi-bg" cx="50%" cy="40%" r="60%">
-                            <stop offset="0%" stop-color="#fff8f5"/>
-                            <stop offset="100%" stop-color="#edddd6"/>
-                        </radialGradient>
-                    </defs>
-                    <circle cx="20" cy="20" r="18.5" fill="url(#fi-bg)" stroke="#7a3e2e" stroke-width="1.5"/>
-                    <path d="M5 20 L12 20 L13 22 L15 10 L17 28 L19 19 L21 20 L35 20"
-                          stroke="#7a3e2e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </div>
-            <div>
-                <div class="brand-cn">{html_escape(APP_TITLE)}<span class="brand-badge">AI</span></div>
-                <div class="brand-en">{html_escape(APP_SUBTITLE)}</div>
-            </div>
-        </div>
-        """
-    )
-
+    render_html(site_header_html(APP_TITLE, APP_SUBTITLE))
 
 def display_settings() -> None:
     c1, c2, c3 = st.columns(3)
@@ -2163,24 +1789,7 @@ def recent_block() -> None:
 
 
 def guide_block() -> None:
-    render_html(
-        f"""
-        <section class="agent-flow-card">
-            <div class="agent-flow-head">
-                <div class="eyebrow mini">Agent 流程</div>
-                <p>填持仓，看风险，再追问和记录家人看法。</p>
-            </div>
-            <div class="agent-flow-steps">
-                <span><b>1</b> 输入</span>
-                <span><b>2</b> 体检</span>
-                <span><b>3</b> 追问</span>
-                <span><b>4</b> 记录</span>
-            </div>
-            <div class="agent-flow-note">{HOME_DISCLAIMER}</div>
-        </section>
-        """
-    )
-
+    render_html(agent_flow_html(HOME_DISCLAIMER))
 
 def cache_tools() -> None:
     with st.expander("高级选项：数据缓存工具", expanded=False):
@@ -3546,6 +3155,50 @@ def intent_action_gap_block(gap_data: dict[str, Any]) -> None:
     )
 
 
+
+def agent_memory_block(memory: dict[str, Any]) -> None:
+    """Show a compact Agent memory card based on previous checks and family notes."""
+    if not isinstance(memory, dict) or not memory.get("has_memory"):
+        return
+    summary = str(memory.get("summary") or "").strip()
+    watch_points = [str(item) for item in (memory.get("next_watch_points") or []) if str(item or "").strip()]
+    focus_items = memory.get("recurring_focus") or []
+    focus_text = ""
+    if focus_items and isinstance(focus_items[0], dict):
+        focus_text = str(focus_items[0].get("focus_label") or "")
+    chips = "".join(
+        f'<span style="font-size:0.68rem;color:#7a3e2e;background:rgba(122,62,46,0.08);'
+        f'border-radius:999px;padding:0.14rem 0.46rem;margin-right:0.28rem;display:inline-block;">'
+        f'{html_escape(item)}</span>'
+        for item in watch_points[:3]
+    )
+    focus_html = (
+        f'<p style="font-size:0.72rem;color:var(--text-3);margin:0.12rem 0 0;">'
+        f'家庭记录里较常出现：{html_escape(focus_text)}</p>'
+        if focus_text else ""
+    )
+    render_html(
+        f"""
+        <section style="margin:0.25rem 0 0.45rem;border:1px solid var(--border);
+                        background:var(--surface);border-radius:12px;padding:0.7rem 0.85rem;">
+            <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.28rem;">
+                <span style="width:1.55rem;height:1.55rem;border-radius:999px;background:var(--accent-soft);
+                             display:inline-flex;align-items:center;justify-content:center;color:#7a3e2e;
+                             font-weight:800;font-size:0.78rem;flex-shrink:0;">M</span>
+                <div style="min-width:0;">
+                    <div style="font-size:0.9rem;font-weight:800;color:var(--text);line-height:1.2;">Agent 记忆</div>
+                    <div style="font-size:0.68rem;color:var(--text-3);">来自历史体检和家庭观察，不替家人做决定</div>
+                </div>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text-2);line-height:1.55;margin:0;">
+                {html_escape(summary)}
+            </p>
+            {focus_html}
+            <div style="margin-top:0.45rem;line-height:1.75;">{chips}</div>
+        </section>
+        """
+    )
+
 def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str, Any] | None = None) -> None:
     """把现有评分拆成父母能看懂的风险因子，不改变分析逻辑。"""
     factor_data = factor_data or build_risk_factor_breakdown(analysis or {})
@@ -3764,6 +3417,8 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             f'background:var(--accent-soft);border-radius:8px;">'
             f'📌&nbsp;{html_escape(_behavior_note)}</p>'
         )
+
+    agent_memory_block(agent_result.get("agent_memory", {}))
 
     _show_risks = main_risks[:4]
     _extra_risk_n = max(0, len(main_risks) - 4)

@@ -27,6 +27,7 @@ except ImportError:
             "report_source": "local_fallback",
         }
 from data_fetcher import get_stock_metrics, normalize_code
+from memory_agent import build_agent_memory_summary
 from validator import cross_validate
 from storage import (
     format_datetime_for_display,
@@ -679,8 +680,16 @@ def run_family_risk_agent(
             "score_change": None, "risk_factor_changes": [], "family_focus_changes": [],
             "watch_points": [], "summary": "历史记录还不够，先完成几次体检后，这里会显示风险变化。",
         }
+    agent_memory = build_agent_memory_summary(
+        history_records=_history_records,
+        family_comments=family_comments,
+        history_analysis=history_analysis,
+        portfolio_summary=portfolio_summary,
+        risk_factors=risk_factors,
+    )
     agent_context["history_analysis"] = history_analysis
     agent_context["risk_factors"] = risk_factors
+    agent_context["agent_memory"] = agent_memory
     if memory_errors:
         agent_context["memory_load_warnings"] = memory_errors
 
@@ -736,6 +745,7 @@ def run_family_risk_agent(
         "data_confidence":     data_confidence,
         "cross_validation":    cross_validation,
         "risk_factors": risk_factors,
+        "agent_memory": agent_memory,
         "watch_tasks": _generate_watch_tasks(
             analysis=analysis,
             portfolio_summary=portfolio_summary,
@@ -758,6 +768,7 @@ def run_family_risk_agent(
             "analyzer.py 调用成功": True,
             "ai_report.py 调用成功": ai_report_success,
             "报告来源": report_source,
+            "Agent Memory": agent_memory.get("summary", ""),
             "saved_history": False,
             "data_status 原始值": data_status,
             "memory_load_warnings": memory_errors,
