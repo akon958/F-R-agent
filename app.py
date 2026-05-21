@@ -418,8 +418,8 @@ from storage import (
 )
 
 
-APP_TITLE = "家庭投资助手"
-APP_SUBTITLE = "Family Investment Agent"
+APP_TITLE = "FamilyReader"
+APP_SUBTITLE = "家庭持仓读懂器"
 DEFAULT_CODES = ["600519", "000001", "300750"]
 DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
 HOME_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
@@ -1610,8 +1610,8 @@ def site_header() -> None:
                 </svg>
             </div>
             <div>
-                <div class="brand-cn">家庭投资助手<span class="brand-badge">AI</span></div>
-                <div class="brand-en">Family Investment Agent</div>
+                <div class="brand-cn">FamilyReader<span class="brand-badge">AI</span></div>
+                <div class="brand-en">家庭持仓读懂器</div>
             </div>
         </div>
         """
@@ -3950,24 +3950,37 @@ def followup_page(agent_result: dict[str, Any]) -> None:
     _fup_mode = agent_result.get("report_mode", "标准版") or "标准版"
     reverse_qa_block(agent_result, agent_context, _fup_mode)
     followup_block(agent_context)
-    # ── 追问完成后，直接进入向导式记录 ─────────────────────────
+    # ── 问卷式流程：追问完成后，直接进入家庭记录向导 ─────────────
     st.markdown("---")
     _has_followup = bool(st.session_state.get("followup_answers", []))
+    _flow_title = "下一步：记录家人看法" if _has_followup else "第 1 步：先完成一次 AI 追问"
+    _flow_note = (
+        "AI 已经回答过本次体检问题。点击完成追问，会直接进入家庭记录问卷。"
+        if _has_followup
+        else "先从上方选择一个问题，或自己输入问题；问完后再进入家庭记录。"
+    )
     render_html(
-        '<p style="font-size:0.85rem;color:var(--text-3);margin:0 0 0.4rem;">'
-        + (
-            '追问完成后，点下面按钮直接记录家人看法。'
-            if _has_followup
-            else '先问 AI 一个问题，完成后再记录家人看法。'
-        )
-        + '</p>'
+        f"""
+        <div style="border:1.5px solid #e8c4b2;background:#fff9f6;border-radius:14px;
+                    padding:0.95rem 1rem;margin:0.3rem 0 0.75rem;">
+            <p style="font-size:0.72rem;font-weight:700;color:#7a3e2e;letter-spacing:.04em;
+                      margin:0 0 0.35rem;">追问流程</p>
+            <p style="font-size:1rem;font-weight:800;color:var(--text);margin:0 0 0.25rem;">
+                {html_escape(_flow_title)}
+            </p>
+            <p style="font-size:0.82rem;color:var(--text-3);line-height:1.55;margin:0;">
+                {html_escape(_flow_note)}
+            </p>
+        </div>
+        """
     )
     _fup_run_id = str(agent_result.get("run_id", "") if agent_result else "")
     if st.button(
-        "完成追问，记录家人看法 →",
+        "完成追问 →",
         use_container_width=True,
         key="fup_to_guided_comment",
         disabled=not _has_followup,
+        type="primary",
     ):
         st.session_state["_guided_run_id"] = _fup_run_id
         for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
@@ -4269,7 +4282,7 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
                 st.session_state["guided_step"] = 1
                 st.rerun()
         with _cb:
-            if st.button("回到体检结论", use_container_width=True, key="gw_go_home"):
+            if st.button("返回主页面", use_container_width=True, key="gw_go_home"):
                 _clear_wizard()
                 st.session_state["active_view"] = "analysis"
                 st.rerun()
