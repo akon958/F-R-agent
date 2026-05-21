@@ -11,7 +11,7 @@ import streamlit as st
 
 from analyzer import analyze_history_changes, analyze_portfolio
 from agent import run_family_risk_agent
-from question_router import route_slash_command, slash_command_help_text
+from question_router import route_slash_command
 from validator import sanitize_compliance_text
 
 # ─────────────────────────────────────────────────────────────────
@@ -3167,9 +3167,6 @@ def followup_block(agent_context: dict[str, Any]) -> None:
             save_followup_answer(agent_context, question)
             st.rerun()
 
-    with st.expander("可用斜杠命令", expanded=False):
-        st.markdown(slash_command_help_text().replace("\n", "  \n"))
-
     custom_question = st.text_input(
         "自定义追问",
         placeholder="也可以自己输入问题，例如：这次主要风险到底是什么？",
@@ -3953,14 +3950,25 @@ def followup_page(agent_result: dict[str, Any]) -> None:
     _fup_mode = agent_result.get("report_mode", "标准版") or "标准版"
     reverse_qa_block(agent_result, agent_context, _fup_mode)
     followup_block(agent_context)
-    # ── 追问完成后，引导进入向导式记录 ─────────────────────────
+    # ── 追问完成后，直接进入向导式记录 ─────────────────────────
     st.markdown("---")
+    _has_followup = bool(st.session_state.get("followup_answers", []))
     render_html(
         '<p style="font-size:0.85rem;color:var(--text-3);margin:0 0 0.4rem;">'
-        '追问完成后，可以记录家人对这次体检的看法。</p>'
+        + (
+            '追问完成后，点下面按钮直接记录家人看法。'
+            if _has_followup
+            else '先问 AI 一个问题，完成后再记录家人看法。'
+        )
+        + '</p>'
     )
     _fup_run_id = str(agent_result.get("run_id", "") if agent_result else "")
-    if st.button("记录家人看法 →", use_container_width=True, key="fup_to_guided_comment"):
+    if st.button(
+        "完成追问，记录家人看法 →",
+        use_container_width=True,
+        key="fup_to_guided_comment",
+        disabled=not _has_followup,
+    ):
         st.session_state["_guided_run_id"] = _fup_run_id
         for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
             "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
