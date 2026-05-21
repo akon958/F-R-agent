@@ -2651,23 +2651,19 @@ def financial_insight_card(item: dict[str, Any]) -> None:
     fin_text  = str(item.get("financial_text") or "")
     fin_notes = list(item.get("financial_notes") or [])
 
+    _FIN_METRICS = [
+        ("roe",        "ROE",    100, "%"),
+        ("net_margin", "净利率", 100, "%"),
+        ("debt_ratio", "负债率", 100, "%"),
+        ("pe",         "PE",     1,   ""),
+        ("pb",         "PB",     1,   ""),
+    ]
     metrics: list[str] = []
-    for raw_key, display, multiplier in [
-        ("roe",        "ROE",    100),
-        ("net_margin", "净利率", 100),
-        ("debt_ratio", "负债率", 100),
-    ]:
+    for raw_key, display, mult, unit in _FIN_METRICS:
         val = item.get(raw_key)
         if val is not None:
             try:
-                metrics.append(f"{display} {float(val) * multiplier:.1f}%")
-            except (TypeError, ValueError):
-                pass
-    for raw_key, display in [("pe", "PE"), ("pb", "PB")]:
-        val = item.get(raw_key)
-        if val is not None:
-            try:
-                metrics.append(f"{display} {float(val):.1f}")
+                metrics.append(f"{display} {float(val) * mult:.1f}{unit}")
             except (TypeError, ValueError):
                 pass
     metrics_str = "　".join(metrics) if metrics else "核心指标暂缺"

@@ -377,51 +377,49 @@ def assess_data_confidence(
 
 def _build_behavior_note(
     score_change: float | None,
-    cash_change: float | None,
-    max_change: float | None,
-    stock_change: float | None,
-    latest_score: float | None,
-    prev_score: float | None,
-    latest_cash: float | None,
-    prev_cash: float | None,
-    latest_max: float | None,
-    prev_max: float | None,
+    latest_snapshot: dict[str, Any],
+    previous_snapshot: dict[str, Any],
 ) -> str:
     """
-    从两次体检的数据变化中提取一句"家庭行为反馈"说明。
+    从两次体检快照中提取一句"家庭行为反馈"说明。
     只在变化幅度超过阈值（5pp 或 5 分）时才生成，避免噪声。
     """
+    def _delta(key: str) -> float | None:
+        a = latest_snapshot.get(key)
+        b = previous_snapshot.get(key)
+        if a is None or b is None:
+            return None
+        return round(float(a) - float(b), 4)
+
+    max_change  = _delta("max_position_ratio")
+    cash_change = _delta("cash_ratio")
+    latest_max  = latest_snapshot.get("max_position_ratio")
+    prev_max    = previous_snapshot.get("max_position_ratio")
+    latest_cash = latest_snapshot.get("cash_ratio")
+    prev_cash   = previous_snapshot.get("cash_ratio")
+
     notes: list[str] = []
 
     if max_change is not None and prev_max and latest_max and abs(max_change) >= 0.05:
-        if max_change < 0:
-            notes.append(
-                f"最大单只持仓从 {prev_max * 100:.0f}% 降到 {latest_max * 100:.0f}%，"
-                "集中度提示有响应"
-            )
-        else:
-            notes.append(
-                f"最大单只持仓从 {prev_max * 100:.0f}% 升至 {latest_max * 100:.0f}%，"
-                "集中度有所增加"
-            )
+        verb = "降到" if max_change < 0 else "升至"
+        tail = "集中度提示有响应" if max_change < 0 else "集中度有所增加"
+        notes.append(
+            f"最大单只持仓从 {prev_max * 100:.0f}% {verb} {latest_max * 100:.0f}%，{tail}"
+        )
 
     if cash_change is not None and prev_cash and latest_cash and abs(cash_change) >= 0.05:
-        if cash_change > 0:
-            notes.append(
-                f"现金比例从 {prev_cash * 100:.0f}% 提升到 {latest_cash * 100:.0f}%，"
-                "备用金有改善"
-            )
-        else:
-            notes.append(
-                f"现金比例从 {prev_cash * 100:.0f}% 降至 {latest_cash * 100:.0f}%，"
-                "需留意流动性"
-            )
+        verb = "提升到" if cash_change > 0 else "降至"
+        tail = "备用金有改善" if cash_change > 0 else "需留意流动性"
+        notes.append(
+            f"现金比例从 {prev_cash * 100:.0f}% {verb} {latest_cash * 100:.0f}%，{tail}"
+        )
 
     if not notes and score_change is not None and abs(score_change) >= 5:
-        direction = "上升" if score_change > 0 else "下降"
-        notes.append(
-            f"综合评分从 {prev_score:.0f} {direction}到 {latest_score:.0f} 分"
-        )
+        latest_score = latest_snapshot.get("score")
+        prev_score   = previous_snapshot.get("score")
+        if latest_score is not None and prev_score is not None:
+            direction = "上升" if score_change > 0 else "下降"
+            notes.append(f"综合评分从 {prev_score:.0f} {direction}到 {latest_score:.0f} 分")
 
     if not notes:
         return ""
@@ -443,6 +441,7 @@ def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, 
         "family_focus_changes": [],
         "watch_points": [],
         "summary": "历史记录还不够，先完成几次体检后，这里会显示风险变化。",
+        "behavior_note": "",
     }
     if not history_records:
         return dict(_empty)
@@ -577,6 +576,21 @@ def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, 
 
     summary = f"和上次体检相比，{trend}{risk_note}。"
 
+    latest_snap: dict[str, Any] = {
+        "score": latest_score,
+        "risk_level": latest.get("risk_level") or latest.get("风险等级") or "",
+        "cash_ratio": latest_cash,
+        "stock_ratio": latest_stock,
+        "max_position_ratio": latest_max,
+    }
+    previous_snap: dict[str, Any] = {
+        "score": prev_score,
+        "risk_level": previous.get("risk_level") or previous.get("风险等级") or "",
+        "cash_ratio": previous_cash,
+        "stock_ratio": previous_stock,
+        "max_position_ratio": previous_max,
+    }
+
     return {
         "has_history": True,
         "records_count": count,
@@ -586,34 +600,13 @@ def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, 
         "cash_ratio_change": _change(latest_cash, previous_cash),
         "stock_ratio_change": _change(latest_stock, previous_stock),
         "max_position_ratio_change": _change(latest_max, previous_max),
-        "latest_snapshot": {
-            "score": latest_score,
-            "risk_level": latest.get("risk_level") or latest.get("风险等级") or "",
-            "cash_ratio": latest_cash,
-            "stock_ratio": latest_stock,
-            "max_position_ratio": latest_max,
-        },
-        "previous_snapshot": {
-            "score": prev_score,
-            "risk_level": previous.get("risk_level") or previous.get("风险等级") or "",
-            "cash_ratio": previous_cash,
-            "stock_ratio": previous_stock,
-            "max_position_ratio": previous_max,
-        },
+        "latest_snapshot": latest_snap,
+        "previous_snapshot": previous_snap,
         "risk_factor_changes": risk_factor_changes,
         "family_focus_changes": family_focus_changes,
         "watch_points": watch_points,
         "summary": summary,
-        "behavior_note": _build_behavior_note(
-            score_change,
-            _change(latest_cash,  previous_cash),
-            _change(latest_max,   previous_max),
-            _change(latest_stock, previous_stock),
-            latest_score,
-            prev_score,
-            latest_cash,  previous_cash,
-            latest_max,   previous_max,
-        ),
+        "behavior_note": _build_behavior_note(score_change, latest_snap, previous_snap),
     }
 
 
