@@ -2605,6 +2605,106 @@ def allocation_block(analysis: dict[str, Any]) -> None:
     )
 
 
+def financial_insight_card(item: dict[str, Any]) -> None:
+    """为单只持仓渲染公司底子说明卡、交易热度卡和仓位说明卡。"""
+
+    def _tone(score: float) -> tuple[str, str, str]:
+        """返回 (标签, 文字色, 背景色)。"""
+        if score >= 75:
+            return "稳", "#3f7d55", "rgba(63,125,85,0.10)"
+        if score >= 55:
+            return "看", "#b97a1a", "rgba(185,122,26,0.10)"
+        return "紧", "#b94040", "rgba(185,64,64,0.10)"
+
+    def _badge(label: str, fg: str, bg: str, score: float) -> str:
+        return (
+            f'<span style="font-size:0.68rem;font-weight:700;color:{fg};'
+            f'background:{bg};border-radius:6px;padding:0.1rem 0.48rem;">'
+            f'{label}&nbsp;{score:.0f}</span>'
+        )
+
+    def _notes_html(notes: list[str], limit: int = 3) -> str:
+        return "".join(
+            f'<li style="font-size:0.8rem;color:var(--text);'
+            f'margin:0.1rem 0;line-height:1.45;">{html_escape(n)}</li>'
+            for n in notes[:limit]
+        )
+
+    def _card(icon: str, title: str, badge_html: str, subtitle: str,
+              notes_html: str) -> str:
+        return (
+            f'<div style="border:1px solid rgba(0,0,0,0.08);border-radius:10px;'
+            f'padding:0.65rem 0.9rem;margin:0.3rem 0;">'
+            f'<div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.3rem;">'
+            f'<span style="font-size:0.88rem;">{icon}</span>'
+            f'<span style="font-size:0.85rem;font-weight:700;color:var(--text);">{title}</span>'
+            f'{badge_html}'
+            f'</div>'
+            f'<p style="font-size:0.73rem;color:var(--text-3);margin:0 0 0.28rem;">{subtitle}</p>'
+            f'<ul style="margin:0;padding-left:0.9rem;list-style:disc;">{notes_html}</ul>'
+            f'</div>'
+        )
+
+    # ── 公司底子 ────────────────────────────────────────────────
+    fin_score = float(item.get("financial_score") or 0)
+    fin_label, fin_fg, fin_bg = _tone(fin_score)
+    fin_text  = str(item.get("financial_text") or "")
+    fin_notes = list(item.get("financial_notes") or [])
+
+    metrics: list[str] = []
+    for raw_key, display, multiplier in [
+        ("roe",        "ROE",    100),
+        ("net_margin", "净利率", 100),
+        ("debt_ratio", "负债率", 100),
+    ]:
+        val = item.get(raw_key)
+        if val is not None:
+            try:
+                metrics.append(f"{display} {float(val) * multiplier:.1f}%")
+            except (TypeError, ValueError):
+                pass
+    for raw_key, display in [("pe", "PE"), ("pb", "PB")]:
+        val = item.get(raw_key)
+        if val is not None:
+            try:
+                metrics.append(f"{display} {float(val):.1f}")
+            except (TypeError, ValueError):
+                pass
+    metrics_str = "　".join(metrics) if metrics else "核心指标暂缺"
+
+    fin_sub_notes = ([fin_text] if fin_text else []) + fin_notes
+    render_html(_card(
+        "📊", "公司底子",
+        _badge(fin_label, fin_fg, fin_bg, fin_score),
+        metrics_str,
+        _notes_html(fin_sub_notes, limit=3),
+    ))
+
+    # ── 交易热度 ────────────────────────────────────────────────
+    heat_score = float(item.get("heat_score") or 0)
+    heat_label, heat_fg, heat_bg = _tone(heat_score)
+    heat_text  = str(item.get("heat_text") or "")
+    heat_notes = list(item.get("heat_notes") or [])
+    heat_sub   = ([heat_text] if heat_text else []) + heat_notes
+    render_html(_card(
+        "🌡", "交易热度",
+        _badge(heat_label, heat_fg, heat_bg, heat_score),
+        "换手率 / 量比 / 振幅 / 涨跌幅",
+        _notes_html(heat_sub, limit=2),
+    ))
+
+    # ── 仓位占比 ────────────────────────────────────────────────
+    pos_notes    = list(item.get("position_notes") or [])
+    single_ratio = float(item.get("single_ratio") or 0)
+    render_html(_card(
+        "⚖️", "持仓占比",
+        f'<span style="font-size:0.72rem;color:var(--text-3);">'
+        f'占家庭总资产 {single_ratio * 100:.1f}%</span>',
+        "单只集中度 / 整体仓位 / 风险承受匹配",
+        _notes_html(pos_notes, limit=2),
+    ))
+
+
 def holdings_detail(analysis: dict[str, Any]) -> None:
     detail_rows = []
     for item in analysis["stock_results"]:
@@ -2635,16 +2735,8 @@ def holdings_detail(analysis: dict[str, Any]) -> None:
     st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
     for item in analysis["stock_results"]:
-        with st.expander(f"查看 {item['name']} 的原因", expanded=False):
-            st.write("公司财务质量评价")
-            for note in item["financial_notes"]:
-                st.write(f"- {note}")
-            st.write("交易热度评价")
-            for note in item["heat_notes"]:
-                st.write(f"- {note}")
-            st.write("仓位风险评价")
-            for note in item["position_notes"]:
-                st.write(f"- {note}")
+        with st.expander(f"📊 {item['name']} 底子说明", expanded=False):
+            financial_insight_card(item)
 
 
 def risk_grid(analysis: dict[str, Any]) -> None:
@@ -3471,6 +3563,27 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
     )
 
 
+def _confidence_badge_html(level: str, level_code: str, summary: str) -> str:
+    """Compliance Guard 置信度标签 HTML 片段。无数据时返回空字符串。"""
+    if not level:
+        return ""
+    colors = {
+        "high":   ("#3f7d55", "rgba(63,125,85,0.10)"),
+        "medium": ("#b97a1a", "rgba(185,122,26,0.10)"),
+        "low":    ("#b94040", "rgba(185,64,64,0.10)"),
+    }
+    fg, bg = colors.get(level_code, ("#888", "rgba(0,0,0,0.06)"))
+    return (
+        f'<p style="margin:0 0 0.45rem;padding-left:0.2rem;">'
+        f'<span style="font-size:0.68rem;font-weight:700;color:{fg};'
+        f'background:{bg};border-radius:6px;padding:0.1rem 0.5rem;">'
+        f'数据置信度：{html_escape(level)}</span>'
+        f'<span style="font-size:0.68rem;color:var(--text-3);margin-left:0.4rem;">'
+        f'{html_escape(summary)}</span>'
+        f'</p>'
+    )
+
+
 def agent_result_block(agent_result: dict[str, Any]) -> None:
     if not agent_result:
         return
@@ -3480,6 +3593,12 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     missing_data = agent_result.get("missing_data", {})
     data_status = agent_result.get("data_status", "未知")
     agent_context = agent_result.get("agent_context", {})
+    _confidence = agent_result.get("data_confidence") or {}
+    _conf_level   = str(_confidence.get("level") or "")
+    _conf_code    = str(_confidence.get("level_code") or "")
+    _conf_summary = str(_confidence.get("summary") or "")
+    _history_analysis = agent_result.get("history_analysis") or {}
+    _behavior_note = str(_history_analysis.get("behavior_note") or "")
 
     # ── 1. 简洁状态卡（4 行以内，不含技术词）──────────────────
     data_source_label = (
@@ -3513,11 +3632,20 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 <span style="font-size:0.75rem;color:var(--text-3);margin-left:0.45rem;">·&nbsp;已检查持仓结构、现金比例与集中风险</span>
             </div>
         </div>
-        <p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.5rem;padding-left:0.2rem;">
+        <p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.4rem;padding-left:0.2rem;">
             数据来源：{html_escape(data_source_label)}&ensp;·&ensp;存储方式：{html_escape(storage_label)}&ensp;·&ensp;历史记录：{html_escape(saved_label)}&ensp;·&ensp;{html_escape(storage_note)}
         </p>
+        {_confidence_badge_html(_conf_level, _conf_code, _conf_summary)}
         """
     )
+
+    if _behavior_note:
+        render_html(
+            f'<p style="font-size:0.78rem;color:var(--text-3);'
+            f'margin:0 0 0.4rem;padding:0.35rem 0.75rem;'
+            f'background:var(--accent-soft);border-radius:8px;">'
+            f'📌&nbsp;{html_escape(_behavior_note)}</p>'
+        )
 
     _show_risks = main_risks[:4]
     _extra_risk_n = max(0, len(main_risks) - 4)

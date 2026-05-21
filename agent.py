@@ -8,6 +8,7 @@ from typing import Any, Callable
 from analyzer import (
     analyze_history_changes,
     analyze_portfolio,
+    assess_data_confidence,
     build_risk_factor_breakdown,
     detect_family_disagreement,
     detect_intent_action_gap,
@@ -509,6 +510,7 @@ def run_family_risk_agent(
             "reverse_qa": reverse_qa_data,
             "family_disagreement": no_disagreement,
             "intent_action_gap": {"has_gap": False, "gaps": [], "summary": ""},
+            "data_confidence": {"level": "低", "level_code": "low", "summary": "输入不完整", "issues": []},
             "saved_history": False,
             "storage_status": {
                 "backend": "local_csv",
@@ -518,6 +520,7 @@ def run_family_risk_agent(
             },
         }
 
+    # ── Data Agent：读取并标准化行情 / 财务缓存 ──────────────────
     codes = [item["code"] for item in clean_holdings]
     emit("读取行情和财务缓存", 20)
     debug_steps.append("读取本地数据。")
@@ -563,9 +566,13 @@ def run_family_risk_agent(
     debug_steps.append("识别行情、估值和财务数据缺失")
     missing_data = _collect_missing_data(stocks)
 
+    # ── Risk Agent：四维评分（仓位安全 / 财务质量 / 交易热度 / 风险匹配）──
     debug_steps.append("完成风险计算。")
     analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
     risk_factors = build_risk_factor_breakdown(analysis)
+
+    # ── Compliance Guard：检查数据完整性，评估结论可信度 ─────────
+    data_confidence = assess_data_confidence(analysis, missing_data)
 
     emit("组装 agent_context", 60)
     debug_steps.append("整理体检上下文。")
@@ -589,6 +596,7 @@ def run_family_risk_agent(
         missing_data=missing_data,
         main_risks=main_risks,
     )
+    # ── Disagreement Detector：检测家庭分歧与意图-行动差距 ────────
     try:
         family_comments = load_recent_family_comments(limit=50)
         family_disagreement = detect_family_disagreement(family_comments)
@@ -602,6 +610,7 @@ def run_family_risk_agent(
     agent_context["intent_action_gap"]   = intent_action_gap
     agent_context["reverse_qa"]          = reverse_qa_data
 
+    # ── Memory Agent：读取历史，提取行为变化规律 ─────────────────
     try:
         _history_records = load_recent_analysis_history(limit=5)
         history_analysis = analyze_history_changes(_history_records)
@@ -614,6 +623,7 @@ def run_family_risk_agent(
     agent_context["history_analysis"] = history_analysis
     agent_context["risk_factors"] = risk_factors
 
+    # ── Family Translator：DeepSeek 将体检结论改写为适合家人阅读的版本 ──
     emit("调用 DeepSeek 生成 AI 风险说明", 72)
     debug_steps.append("生成家庭说明。")
     report_source = "local_fallback"
@@ -662,6 +672,7 @@ def run_family_risk_agent(
         "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
         "intent_action_gap":   intent_action_gap,
+        "data_confidence":     data_confidence,
         "risk_factors": risk_factors,
         "watch_tasks": _generate_watch_tasks(
             analysis=analysis,

@@ -337,6 +337,97 @@ def detect_intent_action_gap(
     return {"has_gap": True, "gaps": gaps, "summary": summary}
 
 
+def assess_data_confidence(
+    analysis: dict[str, Any],
+    missing_data: dict[str, list[str]],
+) -> dict[str, Any]:
+    """
+    Compliance Guard：在 Risk Agent 评分后评估本次数据可信度。
+    不修改评分，只描述依据的充分程度，供界面渲染置信度标签。
+    """
+    cap_reasons       = list(analysis.get("cap_reasons") or [])
+    missing_market_n  = len(missing_data.get("行情数据缺失")  or [])
+    missing_finance_n = len(missing_data.get("财务数据缺失") or [])
+
+    issues: list[str] = []
+    if missing_market_n:
+        issues.append(f"{missing_market_n} 只行情数据缺失")
+    if missing_finance_n:
+        issues.append(f"{missing_finance_n} 只财务数据不完整")
+    if cap_reasons:
+        issues.append(f"评分因 {len(cap_reasons)} 项原因被保守限制")
+
+    if missing_market_n > 0:
+        level, level_code = "低", "low"
+        summary = "关键行情数据缺失，结论仅供参考"
+    elif missing_finance_n > 0 or cap_reasons:
+        level, level_code = "中等", "medium"
+        summary = "部分数据不完整，已保守处理"
+    else:
+        level, level_code = "高", "high"
+        summary = "数据完整，结论可信度较高"
+
+    return {
+        "level": level,
+        "level_code": level_code,
+        "summary": summary,
+        "issues": issues,
+    }
+
+
+def _build_behavior_note(
+    score_change: float | None,
+    cash_change: float | None,
+    max_change: float | None,
+    stock_change: float | None,
+    latest_score: float | None,
+    prev_score: float | None,
+    latest_cash: float | None,
+    prev_cash: float | None,
+    latest_max: float | None,
+    prev_max: float | None,
+) -> str:
+    """
+    从两次体检的数据变化中提取一句"家庭行为反馈"说明。
+    只在变化幅度超过阈值（5pp 或 5 分）时才生成，避免噪声。
+    """
+    notes: list[str] = []
+
+    if max_change is not None and prev_max and latest_max and abs(max_change) >= 0.05:
+        if max_change < 0:
+            notes.append(
+                f"最大单只持仓从 {prev_max * 100:.0f}% 降到 {latest_max * 100:.0f}%，"
+                "集中度提示有响应"
+            )
+        else:
+            notes.append(
+                f"最大单只持仓从 {prev_max * 100:.0f}% 升至 {latest_max * 100:.0f}%，"
+                "集中度有所增加"
+            )
+
+    if cash_change is not None and prev_cash and latest_cash and abs(cash_change) >= 0.05:
+        if cash_change > 0:
+            notes.append(
+                f"现金比例从 {prev_cash * 100:.0f}% 提升到 {latest_cash * 100:.0f}%，"
+                "备用金有改善"
+            )
+        else:
+            notes.append(
+                f"现金比例从 {prev_cash * 100:.0f}% 降至 {latest_cash * 100:.0f}%，"
+                "需留意流动性"
+            )
+
+    if not notes and score_change is not None and abs(score_change) >= 5:
+        direction = "上升" if score_change > 0 else "下降"
+        notes.append(
+            f"综合评分从 {prev_score:.0f} {direction}到 {latest_score:.0f} 分"
+        )
+
+    if not notes:
+        return ""
+    return "和上次相比：" + "；".join(notes[:2]) + "。"
+
+
 def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, Any]:
     """Compare the two most recent check-up records and summarise changes.
 
@@ -513,6 +604,16 @@ def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, 
         "family_focus_changes": family_focus_changes,
         "watch_points": watch_points,
         "summary": summary,
+        "behavior_note": _build_behavior_note(
+            score_change,
+            _change(latest_cash,  previous_cash),
+            _change(latest_max,   previous_max),
+            _change(latest_stock, previous_stock),
+            latest_score,
+            prev_score,
+            latest_cash,  previous_cash,
+            latest_max,   previous_max,
+        ),
     }
 
 
