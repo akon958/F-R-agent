@@ -1554,6 +1554,20 @@ def inject_css() -> None:
                 grid-template-columns: 1fr;
             }}
         }}
+        /* ── 体检进度：步骤转圈动画 ──────────────────────────── */
+        @keyframes fi-spin {{
+            to {{ transform: rotate(360deg); }}
+        }}
+        .fi-spinner {{
+            display: inline-block;
+            width: 0.85em; height: 0.85em;
+            border: 2px solid rgba(122,62,46,0.18);
+            border-top-color: #7a3e2e;
+            border-radius: 50%;
+            animation: fi-spin 0.75s linear infinite;
+            vertical-align: middle;
+            flex-shrink: 0;
+        }}
         /* ── 持仓删除按钮：手机端紧凑化 ─────────────────────── */
         [data-testid="stExpander"] [data-testid="column"]:last-child button {{
             padding: 0 0.45rem !important;
@@ -1618,24 +1632,6 @@ def display_settings() -> None:
             st.session_state.dark_mode = not st.session_state.dark_mode
             st.rerun()
 
-
-def agent_capabilities_block() -> None:
-    with st.expander("这个 Agent 会做什么", expanded=False):
-        st.markdown(
-            """
-**Risk Checker｜风险体检员**  
-看组合里哪些地方风险比较集中，比如单只占比、行业集中、估值偏高、波动偏大。
-
-**Family Translator｜爸妈版翻译员**  
-把复杂指标翻译成爸妈能听懂的话，不使用太多金融术语。
-
-**Disagreement Detector｜家庭分歧提醒员**  
-如果家里不同成员对同一件事看法不一样，只提醒需要沟通，不评判谁对谁错。
-
-**Compliance Guard｜合规守门员**  
-检查 AI 输出里是否出现不合适表达，确保只做风险体检和学习参考。
-"""
-        )
 
 
 def signed_change(value: float) -> str:
@@ -1842,6 +1838,19 @@ AGENT_PROGRESS_STEPS = [
     "完成体检",
 ]
 
+# 对用户展示的友好文案（与 AGENT_PROGRESS_STEPS 一一对应）
+_STEP_LABELS = [
+    "检查持仓输入是否完整",
+    "读取行情和财务数据",
+    "计算持仓比例和现金比例",
+    "识别集中风险和数据缺失",
+    "整理本次体检数据",
+    "AI 正在生成风险说明（需几秒）",
+    "保存本次记录",
+    "准备追问建议",
+    "体检完成 ✓",
+]
+
 
 def render_agent_progress(
     card_placeholder: Any,
@@ -1850,37 +1859,43 @@ def render_agent_progress(
     percent_value: int,
 ) -> None:
     percent_value = max(0, min(100, int(percent_value)))
-    if current_step == "调用 DeepSeek 生成 AI 风险说明":
-        note = "正在调用 DeepSeek 生成说明，可能需要几秒钟。"
-    elif current_step == "保存历史记录到 Supabase":
-        note = "正在保存历史记录。"
-    else:
-        note = "正在检查持仓结构、现金比例和数据完整性。"
 
+    # ── 顶部进度卡（极简）──────────────────────────────────────
     with card_placeholder.container():
-        with st.container():
-            st.markdown("**智能体检进行中**")
-            st.caption(f"正在：{current_step}")
-            st.progress(percent_value)
-            st.caption(f"进度：{percent_value}%")
-            st.caption(note)
+        st.markdown("**智能体检进行中…**")
+        st.progress(percent_value)
 
+    # ── 步骤列表：按进度逐条揭示 ───────────────────────────────
     try:
         current_index = AGENT_PROGRESS_STEPS.index(current_step)
     except ValueError:
         current_index = 0
+
+    done_all = percent_value >= 100
+    rows_html = ""
+    for idx in range(current_index + 1):          # 只显示已到达的步骤
+        label = _STEP_LABELS[idx] if idx < len(_STEP_LABELS) else AGENT_PROGRESS_STEPS[idx]
+        if idx < current_index or done_all:
+            # 已完成：细小勾 + 灰色文字
+            rows_html += (
+                f'<div style="display:flex;align-items:center;gap:0.55rem;padding:0.25rem 0;">'
+                f'<span style="color:#7a3e2e;font-size:0.78rem;width:1em;text-align:center;flex-shrink:0;">✓</span>'
+                f'<span style="font-size:0.82rem;color:var(--text-3);">{html_escape(label)}</span>'
+                f'</div>'
+            )
+        else:
+            # 进行中：转圈 + 正常色粗体
+            rows_html += (
+                f'<div style="display:flex;align-items:center;gap:0.55rem;padding:0.28rem 0;">'
+                f'<span class="fi-spinner"></span>'
+                f'<span style="font-size:0.87rem;color:var(--text);font-weight:600;">{html_escape(label)}</span>'
+                f'</div>'
+            )
+
     with detail_placeholder.container():
-        with st.expander("查看执行细节", expanded=False):
-            for idx, step in enumerate(AGENT_PROGRESS_STEPS):
-                if idx < current_index:
-                    prefix = "✓"
-                elif idx == current_index and percent_value < 100:
-                    prefix = "⏳"
-                elif percent_value >= 100:
-                    prefix = "✓"
-                else:
-                    prefix = "○"
-                st.caption(f"{prefix} {step}")
+        render_html(
+            f'<div style="padding:0.1rem 0 0.3rem;">{rows_html}</div>'
+        )
 
 
 def _safe_error_text(value: Any) -> str:
@@ -2122,7 +2137,6 @@ def cache_tools() -> None:
 def home_page() -> None:
     home_hero()
     guide_block()
-    agent_capabilities_block()
     st.divider()
     cache_tools()
     with st.expander("开发中功能（暂未接入实时数据 / 云数据库，后续开放）", expanded=False):
