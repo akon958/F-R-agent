@@ -3426,10 +3426,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     st.markdown(display_report)
     render_html("</div>")
 
-    # ── 5. 继续追问 入口（补充情况已移入追问页）──────────────────
-    if agent_context:
-        followup_entry_block(agent_result, agent_context)
-
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:
     if not agent_result:
@@ -3556,19 +3552,8 @@ def developer_debug_block(agent_result: dict[str, Any]) -> None:
 def inspection_process_block(agent_result: dict[str, Any]) -> None:
     if not agent_result:
         return
-    with st.expander("体检过程详情", expanded=False):
-        st.caption("仅用于查看 Agent 执行步骤。")
-        _USER_STEPS = [
-            ("识别家庭持仓", "确认持仓金额、家庭现金和风险承受能力。"),
-            ("检查数据完整性", "检查行情、估值和财务数据是否足够支持本次判断。"),
-            ("评估家庭风险", "计算持仓占比、现金比例、集中度风险和主要数据缺口。"),
-            ("生成家庭说明", "把体检结果转成爸妈能看懂的风险说明。"),
-        ]
-        for idx, (title, desc) in enumerate(_USER_STEPS, 1):
-            st.write(f"**{idx}. {title}**")
-            st.caption(desc)
+    with st.expander("本次补充家庭情况", expanded=False):
         reverse_qa = _normalize_reverse_qa(agent_result.get("reverse_qa") or agent_result.get("agent_context", {}).get("reverse_qa"))
-        st.markdown("**本次补充家庭情况**")
         st.write(f"- 半年内资金使用：{_reverse_label(reverse_qa['money_need_6m'], _MONEY_NEED_MAP)}")
         st.write(f"- 波动反应：{_reverse_label(reverse_qa['volatility_reaction'], _VOLATILITY_MAP)}")
         st.write(f"- 过往分歧：{reverse_qa.get('last_disagreement') or '未填写'}")
@@ -3759,8 +3744,8 @@ def discussion_entry_block(run_id: str = "") -> None:
 
 def comments_page(agent_result: dict[str, Any]) -> None:
     """家庭观察记录专属子页。"""
-    if st.button("← 返回体检结果", use_container_width=True, key="back_from_comments_view"):
-        st.session_state["active_view"] = "analysis"
+    if st.button("← 返回", use_container_width=True, key="back_from_comments_view"):
+        st.session_state["active_view"] = "records"
         st.rerun()
     run_id = str(st.session_state.get("_comments_run_id", "") or
                  (agent_result.get("run_id", "") if agent_result else ""))
@@ -3769,8 +3754,8 @@ def comments_page(agent_result: dict[str, Any]) -> None:
 
 def followup_page(agent_result: dict[str, Any]) -> None:
     agent_context = agent_result.get("agent_context", {}) if agent_result else {}
-    if st.button("← 返回体检结果", use_container_width=True, key="back_to_analysis_view"):
-        st.session_state["active_view"] = "analysis"
+    if st.button("← 返回", use_container_width=True, key="back_to_analysis_view"):
+        st.session_state["active_view"] = "records"
         st.rerun()
     if not agent_context:
         st.info("请先完成一次一键智能体检，再继续追问。")
@@ -3800,6 +3785,77 @@ def followup_page(agent_result: dict[str, Any]) -> None:
                 st.write(f"- {created_at}｜{row.get('question', '')}")
 
 
+def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
+    """智能引导卡 — 体检结论底部，感知上下文，引导进入追问/记录/历史子页。"""
+    followup_answers = list(st.session_state.get("followup_answers", []))
+    followup_count = len(followup_answers)
+    try:
+        comments: list[dict[str, Any]] = st.session_state.get("family_comments_cache") or []
+        if not comments:
+            comments = load_recent_family_comments(limit=5)
+            st.session_state["family_comments_cache"] = comments
+    except Exception:  # noqa: BLE001
+        comments = []
+    comment_count = len(comments)
+
+    followup_chip = f"{followup_count} 条追问" if followup_count else "可追问 AI"
+    comment_chip  = f"{comment_count} 条记录" if comment_count else "记录家人看法"
+
+    render_html(f"""
+    <div style="margin:1rem 0 0.5rem;border-radius:14px;
+                border:1.5px solid #e8c4b2;background:#fff9f6;
+                padding:1rem 1.1rem 0.9rem;">
+        <p style="font-size:0.73rem;font-weight:600;letter-spacing:.06em;
+                  color:#7a3e2e;text-transform:uppercase;margin:0 0 0.5rem;">
+            Agent · 下一步
+        </p>
+        <p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.65rem;">
+            体检结论已生成。还想继续深入吗？
+        </p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0;">
+            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
+                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
+                💬&nbsp;{html_escape(followup_chip)}
+            </span>
+            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
+                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
+                👨‍👩‍👧&nbsp;{html_escape(comment_chip)}
+            </span>
+            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
+                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
+                📋&nbsp;历史对比
+            </span>
+        </div>
+    </div>
+    """)
+    if st.button("继续深入这次体检 →", use_container_width=True, key="open_records_hub"):
+        st.session_state["active_view"] = "records"
+        st.rerun()
+
+
+def records_hub_page(agent_result: dict[str, Any]) -> None:
+    """追问 / 家庭记录 / 历史 汇总子页面。"""
+    if st.button("← 返回体检结论", key="records_hub_back_btn"):
+        st.session_state["active_view"] = "analysis"
+        st.rerun()
+    render_html("""
+    <div style="padding:0.3rem 0 0.9rem;">
+        <h2 style="font-size:1.2rem;font-weight:700;color:var(--text);margin:0 0 0.15rem;">
+            继续深入这次体检
+        </h2>
+        <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
+            追问 AI · 记录家人看法 · 对比历史变化
+        </p>
+    </div>
+    """)
+    agent_context = (agent_result.get("agent_context") or {}) if agent_result else {}
+    run_id = str(agent_result.get("run_id", "") or "") if agent_result else ""
+    followup_entry_block(agent_result, agent_context)
+    discussion_entry_block(run_id=run_id)
+    history_replay_block(agent_result)
+    history_records_block()
+
+
 def analysis_page() -> None:
     analysis = st.session_state["analysis"]
     fetch_warnings = st.session_state.get("fetch_warnings", [])
@@ -3820,18 +3876,15 @@ def analysis_page() -> None:
         comments_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
+    if _active == "records":
+        records_hub_page(agent_result)
+        render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+        return
     agent_result_block(agent_result)
 
-    # ── 追问 / 观察记录 / 历史 ──────────────────────────────────
-    st.divider()
+    # ── Agent 下一步引导 ─────────────────────────────────────────
     if agent_result:
-        _cur_run_id = str(agent_result.get("run_id", "") or "")
-        discussion_entry_block(run_id=_cur_run_id)
-    else:
-        with st.expander("家庭观察记录", expanded=False):
-            st.info("完成一次体检后，可以记录家人的观察和分歧。")
-    history_replay_block(agent_result)
-    history_records_block()
+        next_steps_entry_block(agent_result)
 
     # ── 体检过程 / 调试 ──────────────────────────────────────────
     st.divider()
