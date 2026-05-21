@@ -585,9 +585,13 @@ def inject_css() -> None:
         [data-testid="stAppViewContainer"] > .main {{
             background: var(--bg);
         }}
-        .main .block-container {{
-            max-width: 960px;
-            padding: 1.25rem 1.5rem 90px;
+        .main .block-container,
+        [data-testid="stAppViewContainer"] .main .block-container {{
+            width: min(100% - 2rem, 920px) !important;
+            max-width: 920px !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+            padding: 1.25rem 0 90px !important;
         }}
         header[data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer {{
             visibility: hidden;
@@ -1473,6 +1477,10 @@ def inject_css() -> None:
         }}
 
         @media (max-width: 1000px) {{
+            .main .block-container,
+            [data-testid="stAppViewContainer"] .main .block-container {{
+                width: min(100% - 1.5rem, 820px) !important;
+            }}
             .site-header {{
                 grid-template-columns: 1fr auto;
             }}
@@ -1490,8 +1498,11 @@ def inject_css() -> None:
             }}
         }}
         @media (max-width: 640px) {{
-            .main .block-container {{
-                padding: 1rem 0.85rem 90px;
+            .main .block-container,
+            [data-testid="stAppViewContainer"] .main .block-container {{
+                width: 100% !important;
+                max-width: 100% !important;
+                padding: 1rem 0.85rem 90px !important;
             }}
             .site-header {{
                 margin-left: -0.85rem;
