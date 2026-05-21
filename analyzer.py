@@ -225,6 +225,33 @@ def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, 
     if latest_score is not None and prev_score is not None:
         score_change = round(latest_score - prev_score, 1)
 
+    def _ratio(row: dict[str, Any], key: str, fallback_key: str = "") -> float | None:
+        full = _load_full(row)
+        portfolio = full.get("portfolio_summary") if isinstance(full.get("portfolio_summary"), dict) else {}
+        candidates = [
+            row.get(key),
+            row.get(fallback_key) if fallback_key else None,
+            portfolio.get(key),
+            portfolio.get("max_single_ratio") if key == "max_position_ratio" else None,
+        ]
+        for item in candidates:
+            val = _to_num(item)
+            if val is not None:
+                return val
+        return None
+
+    latest_cash = _ratio(latest, "cash_ratio", "现金比例")
+    previous_cash = _ratio(previous, "cash_ratio", "现金比例")
+    latest_stock = _ratio(latest, "stock_ratio", "股票仓位")
+    previous_stock = _ratio(previous, "stock_ratio", "股票仓位")
+    latest_max = _ratio(latest, "max_position_ratio")
+    previous_max = _ratio(previous, "max_position_ratio")
+
+    def _change(now: float | None, before: float | None) -> float | None:
+        if now is None or before is None:
+            return None
+        return round(now - before, 4)
+
     latest_risks = _load_risks(latest)
     prev_risks = _load_risks(previous)
     risk_factor_changes: list[dict[str, str]] = []
@@ -276,6 +303,23 @@ def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, 
         "latest_date": str(latest.get("created_at", "")),
         "previous_date": str(previous.get("created_at", "")),
         "score_change": score_change,
+        "cash_ratio_change": _change(latest_cash, previous_cash),
+        "stock_ratio_change": _change(latest_stock, previous_stock),
+        "max_position_ratio_change": _change(latest_max, previous_max),
+        "latest_snapshot": {
+            "score": latest_score,
+            "risk_level": latest.get("risk_level") or latest.get("风险等级") or "",
+            "cash_ratio": latest_cash,
+            "stock_ratio": latest_stock,
+            "max_position_ratio": latest_max,
+        },
+        "previous_snapshot": {
+            "score": prev_score,
+            "risk_level": previous.get("risk_level") or previous.get("风险等级") or "",
+            "cash_ratio": previous_cash,
+            "stock_ratio": previous_stock,
+            "max_position_ratio": previous_max,
+        },
         "risk_factor_changes": risk_factor_changes,
         "family_focus_changes": family_focus_changes,
         "watch_points": watch_points,

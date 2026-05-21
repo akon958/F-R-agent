@@ -3657,80 +3657,169 @@ def inspection_process_block(agent_result: dict[str, Any]) -> None:
 
 def history_replay_block(agent_result: dict[str, Any] | None) -> None:
     """历史体检回放：对比最近两次体检的风险变化。"""
-    with st.expander("历史体检回放", expanded=False):
-        # 优先读 agent_result 中已计算好的 history_analysis
-        history_analysis: dict[str, Any] = {}
-        if agent_result:
-            history_analysis = agent_result.get("history_analysis") or {}
-        if not history_analysis:
-            try:
-                _rows = load_recent_analysis_history(limit=5)
-                history_analysis = analyze_history_changes(_rows)
-            except Exception:  # noqa: BLE001
-                history_analysis = {}
+    try:
+        rows = load_recent_analysis_history(limit=5)
+    except Exception:  # noqa: BLE001
+        rows = []
 
-        count = int(history_analysis.get("records_count", 0) or 0)
-        summary = str(history_analysis.get("summary", "") or "")
+    history_analysis: dict[str, Any] = {}
+    if rows:
+        history_analysis = analyze_history_changes(rows)
+    elif agent_result:
+        history_analysis = agent_result.get("history_analysis") or {}
 
-        if count == 0:
-            st.info("历史记录还不够，先完成几次体检后，这里会显示风险变化。")
-            return
+    count = int(history_analysis.get("records_count", 0) or len(rows) or 0)
+    summary = str(history_analysis.get("summary", "") or "")
 
-        latest_date = format_datetime_for_display(history_analysis.get("latest_date", ""))
+    render_html(
+        """
+        <section class="block" style="padding:1rem 1rem 0.85rem;margin-bottom:0.9rem;">
+            <div class="block-head" style="margin-bottom:.45rem;">
+                <div>
+                    <h2 class="block-title" style="font-size:1.15rem;">历史体检回放</h2>
+                    <p class="block-subtitle">看最近几次体检里，分数、现金和主要风险有没有变化。</p>
+                </div>
+            </div>
+        </section>
+        """
+    )
 
-        if count == 1:
-            st.info("目前只有一次体检记录，暂时无法比较变化。")
-            st.caption(f"最近一次体检：{latest_date}")
-            return
+    if count == 0:
+        st.info("历史记录还不够，先完成几次体检后，这里会显示风险变化。")
+        return
 
-        # ── 2 条以上，展示对比 ──────────────────────────────────────
-        previous_date = format_datetime_for_display(history_analysis.get("previous_date", ""))
-        st.caption(f"共 {count} 次体检记录，以下对比最近两次")
+    latest_date = format_datetime_for_display(history_analysis.get("latest_date", ""))
+    if count == 1:
+        st.info("目前只有一次体检记录，暂时无法比较变化。")
+        st.caption(f"最近一次体检：{latest_date}")
+        return
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"**本次体检**  \n{latest_date}")
-        with c2:
-            st.markdown(f"**上次体检**  \n{previous_date}")
+    previous_date = format_datetime_for_display(history_analysis.get("previous_date", ""))
+    score_change = history_analysis.get("score_change")
 
-        st.divider()
+    if score_change is None:
+        trend_title = "评分变化暂时无法判断"
+        trend_note = "历史记录里缺少完整评分，后续新体检会自动补齐。"
+        trend_color = "#7a3e2e"
+    elif score_change > 5:
+        trend_title = f"评分比上次上升 {score_change:+.1f} 分"
+        trend_note = "整体风险压力比上次低一些，但仍要看具体风险点。"
+        trend_color = "#3f7d55"
+    elif score_change < -5:
+        trend_title = f"评分比上次下降 {score_change:.1f} 分"
+        trend_note = "这次比上次更需要留意，先看新增风险和仓位变化。"
+        trend_color = "#b94040"
+    else:
+        trend_title = f"评分基本持平（{score_change:+.1f} 分）"
+        trend_note = "整体变化不大，重点看哪些风险仍然反复出现。"
+        trend_color = "#8a6a2a"
 
-        # 综合评分变化
-        score_change = history_analysis.get("score_change")
-        if score_change is not None:
-            if score_change > 5:
-                st.success(f"综合评分上升 {score_change:+.1f} 分")
-            elif score_change < -5:
-                st.warning(f"综合评分下降 {score_change:.1f} 分，需要关注")
-            else:
-                st.info(f"综合评分基本持平（{score_change:+.1f} 分）")
+    def _ratio_change_text(key: str, label: str) -> str:
+        val = history_analysis.get(key)
+        if val is None:
+            return f"{label}：暂无对比"
+        sign = "+" if float(val) >= 0 else ""
+        return f"{label}：{sign}{float(val) * 100:.1f} 个百分点"
 
-        # 风险因子变化
-        risk_changes = history_analysis.get("risk_factor_changes") or []
-        new_risks = [c["text"] for c in risk_changes if c.get("type") == "new"]
-        resolved_risks = [c["text"] for c in risk_changes if c.get("type") == "resolved"]
-        if new_risks:
-            st.warning(f"新出现的风险点：{new_risks[0][:80]}")
-        if resolved_risks:
-            st.success(f"已改善的风险点：{resolved_risks[0][:80]}")
-        if not new_risks and not resolved_risks and score_change is not None:
-            st.caption("风险因子和上次相比没有明显变化。")
+    change_lines = [
+        _ratio_change_text("cash_ratio_change", "现金比例"),
+        _ratio_change_text("stock_ratio_change", "股票/基金仓位"),
+        _ratio_change_text("max_position_ratio_change", "最大单只占比"),
+    ]
 
-        # 上次已提示、本次仍需关注的观察点
-        watch_points = history_analysis.get("watch_points") or []
-        if watch_points:
-            with st.expander(f"上次已提示、本次仍需关注（{len(watch_points)} 条）", expanded=False):
-                for wp in watch_points:
-                    st.caption(f"• {str(wp)[:100]}")
+    render_html(
+        f"""
+        <div style="border:1px solid var(--border);border-radius:14px;background:var(--surface);
+                    padding:1rem 1rem 0.85rem;margin-bottom:0.85rem;">
+            <div style="display:flex;align-items:flex-start;gap:0.75rem;">
+                <div style="width:0.7rem;height:0.7rem;border-radius:999px;background:{trend_color};
+                            margin-top:0.35rem;flex-shrink:0;"></div>
+                <div style="min-width:0;">
+                    <div style="font-size:1rem;font-weight:800;color:var(--text);line-height:1.35;">
+                        {html_escape(trend_title)}
+                    </div>
+                    <p style="margin:0.25rem 0 0;color:var(--text-2);font-size:0.82rem;line-height:1.55;">
+                        {html_escape(trend_note)}
+                    </p>
+                    <p style="margin:0.45rem 0 0;color:var(--text-3);font-size:0.74rem;">
+                        本次：{html_escape(latest_date)}　上次：{html_escape(previous_date)}
+                    </p>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.45rem;margin-top:0.85rem;">
+                {''.join(
+                    f'<div style="border:1px solid var(--border);border-radius:10px;padding:0.55rem 0.5rem;background:var(--bg-2);">'
+                    f'<div style="font-size:0.72rem;color:var(--text-3);line-height:1.35;">{html_escape(line.split("：")[0])}</div>'
+                    f'<div style="font-size:0.85rem;font-weight:700;color:var(--text);line-height:1.4;">{html_escape(line.split("：", 1)[1])}</div>'
+                    f'</div>'
+                    for line in change_lines
+                )}
+            </div>
+        </div>
+        """
+    )
 
-        # 家庭分歧变化
-        family_changes = history_analysis.get("family_focus_changes") or []
-        for fc in family_changes:
-            st.caption(f"家庭分歧：{fc}")
+    risk_changes = history_analysis.get("risk_factor_changes") or []
+    new_risks = [str(c.get("text", "")) for c in risk_changes if c.get("type") == "new" and c.get("text")]
+    resolved_risks = [str(c.get("text", "")) for c in risk_changes if c.get("type") == "resolved" and c.get("text")]
+    watch_points = [str(wp) for wp in (history_analysis.get("watch_points") or []) if wp]
+    family_changes = [str(fc) for fc in (history_analysis.get("family_focus_changes") or []) if fc]
 
-        # 简短总结
-        if summary:
-            st.info(summary)
+    focus_items: list[tuple[str, str, str]] = []
+    if new_risks:
+        focus_items.append(("新出现", new_risks[0][:100], "#b94040"))
+    if resolved_risks:
+        focus_items.append(("已改善", resolved_risks[0][:100], "#3f7d55"))
+    if watch_points:
+        focus_items.append(("仍需关注", watch_points[0][:100], "#8a6a2a"))
+    if family_changes:
+        focus_items.append(("家庭沟通", family_changes[0][:100], "#7a3e2e"))
+    if not focus_items and summary:
+        focus_items.append(("回放结论", summary[:120], "#7a3e2e"))
+
+    if focus_items:
+        rows_html = "".join(
+            f"""
+            <li style="display:flex;gap:0.6rem;align-items:flex-start;padding:0.55rem 0;
+                       border-bottom:1px solid var(--border);">
+                <span style="font-size:0.72rem;font-weight:800;color:#fff;background:{color};
+                             border-radius:999px;padding:0.14rem 0.55rem;white-space:nowrap;">{html_escape(label)}</span>
+                <span style="font-size:0.84rem;color:var(--text);line-height:1.55;">{html_escape(text)}</span>
+            </li>
+            """
+            for label, text, color in focus_items
+        )
+        render_html(
+            f"""
+            <div style="border:1px solid var(--border);border-radius:14px;background:var(--surface);
+                        padding:0.45rem 0.9rem;margin-bottom:0.85rem;">
+                <div style="font-size:0.9rem;font-weight:800;color:var(--text);padding:0.35rem 0 0.15rem;">
+                    这次回放重点
+                </div>
+                <ul style="list-style:none;margin:0;padding:0;">{rows_html}</ul>
+            </div>
+            """
+        )
+
+    timeline_rows = rows[:5]
+    if timeline_rows:
+        with st.expander("最近 5 次体检轨迹", expanded=False):
+            for row in timeline_rows:
+                full = row.get("full_agent_result") if isinstance(row.get("full_agent_result"), dict) else {}
+                portfolio = full.get("portfolio_summary") if isinstance(full.get("portfolio_summary"), dict) else {}
+                created_at = format_datetime_for_display(row.get("created_at") or row.get("分析时间"))
+                score = row.get("risk_score") or row.get("综合评分") or ""
+                level = str(row.get("risk_level") or row.get("风险等级") or "")
+                cash_ratio = float(row.get("cash_ratio") or portfolio.get("cash_ratio") or 0)
+                stock_ratio = float(row.get("stock_ratio") or portfolio.get("stock_ratio") or 0)
+                max_ratio = float(row.get("max_position_ratio") or portfolio.get("max_single_ratio") or 0)
+                st.caption(
+                    f"{created_at}｜评分 {score}｜{level}｜现金 {percent(cash_ratio)}｜"
+                    f"持仓 {percent(stock_ratio)}｜最大单只 {percent(max_ratio)}"
+                )
+
+    if summary:
+        st.info(summary)
 
 
 def _level_icon(level: str) -> str:
