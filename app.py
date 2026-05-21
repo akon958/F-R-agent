@@ -3160,10 +3160,9 @@ def followup_block(agent_context: dict[str, Any]) -> None:
 
     followup_answers: list[dict[str, str]] = st.session_state.get("followup_answers", [])
     if followup_answers:
-        st.markdown("**最近追问**")
-        recent_answers = followup_answers[:3]
-        for item in recent_answers:
-            with st.container():
+        _ans_n = len(followup_answers)
+        with st.expander(f"📝 查看 AI 回答（{_ans_n} 条）", expanded=True):
+            for item in followup_answers[:3]:
                 st.markdown(f"**问题：** {item['question']}")
                 st.markdown(f"**AI 回答：**\n\n{item['answer']}")
                 source = item.get("source", "local_fallback")
@@ -3177,8 +3176,7 @@ def followup_block(agent_context: dict[str, Any]) -> None:
                             cp = item.get("call_path", "")
                             if cp:
                                 st.caption(f"调用路径：{cp}")
-        if len(followup_answers) > 3:
-            with st.expander("查看全部追问记录", expanded=False):
+            if _ans_n > 3:
                 for item in followup_answers[3:]:
                     st.markdown(f"**问题：** {item['question']}")
                     st.markdown(f"**AI 回答：**\n\n{item['answer']}")
@@ -3527,67 +3525,47 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # ── 3. 体检数据一览（持仓结构 + 核心财务，合并两列）──────────
+    # ── 3. 详细数据折叠（不阻断主流程，按需展开）──────────────
     _analysis = st.session_state.get("analysis") or agent_result.get("analysis") or {}
-    if _analysis:
-        risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
-        portfolio_metrics_block(summary, _analysis)
-        with st.expander("持仓明细与数据来源", expanded=False):
-            holdings_detail(_analysis)
-
-    # ── 3b. 数据缺失（仅在有缺失时展示，默认收起）──────────────
-    has_missing = any(bool(v) for v in missing_data.values())
-    if has_missing:
-        with st.expander("数据缺失说明", expanded=False):
+    with st.expander("📊 查看完整持仓数据", expanded=False):
+        if _analysis:
+            risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
+            portfolio_metrics_block(summary, _analysis)
+            with st.expander("持仓明细与数据来源", expanded=False):
+                holdings_detail(_analysis)
+        has_missing = any(bool(v) for v in missing_data.values())
+        if has_missing:
+            st.markdown("**数据缺失说明**")
             for title, items in missing_data.items():
                 if items:
                     if "估值" in title:
                         st.caption("· 估值数据暂缺，本次不评价估值高低。")
                     else:
                         st.caption(f"· {title}：{len(items)} 只数据缺失")
+        watch_tasks_block(agent_result)
 
-    # ── 3c. 体检后待办 ──────────────────────────────────────
-    watch_tasks_block(agent_result)
-
-    # ── 4. 本次 AI 风险说明 + 报告模式选择 ───────────────────
+    # ── 4. 下一步 CTA：进入 AI 风险说明页 ──────────────────────
     st.markdown("---")
-    render_html(
-        """
-        <div class="block-head" style="margin-bottom:.5rem;">
-            <div>
-                <h2 class="block-title">本次 AI 风险说明</h2>
-                <p class="block-subtitle">基于本次体检数据生成，不构成买卖建议。</p>
-            </div>
-        </div>
-        """
-    )
-    mode = st.radio(
-        "报告模式",
-        options=REPORT_MODES,
-        horizontal=True,
-        key="report_mode",
-    )
-    display_report = str(agent_result.get("ai_report", "") or "暂无风险说明。")
-    report_source = str(agent_result.get("report_source", "local_fallback") or "local_fallback")
-    cached_mode = str(agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE)
-    if agent_context and mode != cached_mode:
-        with st.spinner("正在按新的报告模式生成说明..."):
-            report_text, report_source, dinner_talk = _unpack_agent_report(generate_agent_report(agent_context, mode))
-        display_report = report_text
-        agent_result["ai_report"] = display_report
-        agent_result["dinner_talk"] = dinner_talk
-        agent_result["report_source"] = report_source
-        agent_result["report_mode"] = mode
-        agent_context["ai_report"] = display_report
-        agent_context["dinner_talk"] = dinner_talk
-        agent_context["report_source"] = report_source
-        agent_context["report_mode"] = mode
-        agent_result["agent_context"] = agent_context
-        st.session_state["agent_result"] = agent_result
-    st.caption(f"报告来源：{_report_source_label(report_source)}")
-    render_html('<div class="card" style="padding:1.4rem;">')
-    st.markdown(display_report)
-    render_html("</div>")
+    render_html("""
+    <div style="margin:0.2rem 0 0.65rem;border-radius:14px;
+                border:1.5px solid #e8c4b2;background:#fff9f6;
+                padding:0.9rem 1.1rem 0.75rem;">
+        <p style="font-size:0.73rem;font-weight:600;letter-spacing:.06em;
+                  color:#7a3e2e;text-transform:uppercase;margin:0 0 0.35rem;">
+            第 2 步
+        </p>
+        <p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.2rem;">
+            查看 AI 对这次风险的完整说明
+        </p>
+        <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
+            基于本次体检数据生成，不构成买卖建议。
+        </p>
+    </div>
+    """)
+    if st.button("查看 AI 风险说明 →", use_container_width=True,
+                 key="goto_ai_report_btn", type="primary"):
+        st.session_state["active_view"] = "ai_report"
+        st.rerun()
 
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:
@@ -4004,49 +3982,99 @@ def comments_page(agent_result: dict[str, Any]) -> None:
     discussion_block(run_id=run_id)
 
 
-def followup_page(agent_result: dict[str, Any]) -> None:
+def ai_report_page(agent_result: dict[str, Any]) -> None:
+    """第 2 步：AI 风险说明页（从体检结论点进来，报告 + 模式切换 + 进入追问）。"""
     agent_context = agent_result.get("agent_context", {}) if agent_result else {}
-    if st.button("← 体检结论", key="back_to_analysis_view"):
+
+    # ── 返回按钮 + 面包屑 ─────────────────────────────────────
+    if st.button("← 体检结论", key="back_from_ai_report"):
         st.session_state["active_view"] = "analysis"
         st.rerun()
     render_html(
         '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.6rem;">'
-        '体检结论 &rsaquo; AI 追问</p>'
+        '体检结论 &rsaquo; AI 风险说明</p>'
+    )
+
+    # ── 页面标题 ──────────────────────────────────────────────
+    render_html("""
+    <div style="padding:0.1rem 0 0.8rem;">
+        <h2 style="font-size:1.2rem;font-weight:700;color:var(--text);margin:0 0 0.12rem;">
+            本次 AI 风险说明
+        </h2>
+        <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
+            基于本次体检数据生成，不构成买卖建议。
+        </p>
+    </div>
+    """)
+
+    if not agent_result:
+        st.info("请先完成一次一键智能体检，再查看 AI 风险说明。")
+        return
+
+    # ── 报告模式选择 ─────────────────────────────────────────
+    mode = st.radio(
+        "报告模式",
+        options=REPORT_MODES,
+        horizontal=True,
+        key="report_mode",
+    )
+    display_report = str(agent_result.get("ai_report", "") or "暂无风险说明。")
+    report_source = str(agent_result.get("report_source", "local_fallback") or "local_fallback")
+    cached_mode = str(agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE)
+    if agent_context and mode != cached_mode:
+        with st.spinner("正在按新的报告模式生成说明..."):
+            report_text, report_source, dinner_talk = _unpack_agent_report(
+                generate_agent_report(agent_context, mode)
+            )
+        display_report = report_text
+        agent_result["ai_report"] = display_report
+        agent_result["dinner_talk"] = dinner_talk
+        agent_result["report_source"] = report_source
+        agent_result["report_mode"] = mode
+        agent_context["ai_report"] = display_report
+        agent_context["dinner_talk"] = dinner_talk
+        agent_context["report_source"] = report_source
+        agent_context["report_mode"] = mode
+        agent_result["agent_context"] = agent_context
+        st.session_state["agent_result"] = agent_result
+    st.caption(f"报告来源：{_report_source_label(report_source)}")
+
+    # ── CTA 前置：看过报告后点进追问，不需要滚动到底部 ──────────
+    if st.button("看完了，开始 AI 追问 →", use_container_width=True,
+                 key="goto_followup_from_report", type="primary"):
+        st.session_state["active_view"] = "followup"
+        st.rerun()
+
+    # ── 报告正文（可上下滑动查看完整内容）────────────────────────
+    render_html('<div class="card" style="padding:1.4rem;margin-top:0.6rem;">')
+    st.markdown(display_report)
+    render_html("</div>")
+
+
+def followup_page(agent_result: dict[str, Any]) -> None:
+    agent_context = agent_result.get("agent_context", {}) if agent_result else {}
+    if st.button("← AI 风险说明", key="back_to_analysis_view"):
+        st.session_state["active_view"] = "ai_report"
+        st.rerun()
+    render_html(
+        '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.6rem;">'
+        '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问</p>'
     )
     if not agent_context:
         st.info("请先完成一次一键智能体检，再继续追问。")
         return
-    # 补充家庭情况（移入追问页，和 AI 追问放在一起更自然）
-    _fup_mode = agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE
-    reverse_qa_block(agent_result, agent_context, _fup_mode)
-    followup_block(agent_context)
-    # ── 问卷式流程：追问完成后，直接进入家庭记录向导 ─────────────
-    st.markdown("---")
+
+    # ── CTA 前置：有回答即可点，无需滚到底部找按钮 ──────────────
     _has_followup = bool(st.session_state.get("followup_answers", []))
-    _flow_title = "下一步：记录家人看法" if _has_followup else "第 1 步：先完成一次 AI 追问"
-    _flow_note = (
-        "AI 已经回答过本次体检问题。点击完成追问，会直接进入家庭记录问卷。"
-        if _has_followup
-        else "先从上方选择一个问题，或自己输入问题；问完后再进入家庭记录。"
-    )
-    render_html(
-        f"""
-        <div style="border:1.5px solid #e8c4b2;background:#fff9f6;border-radius:14px;
-                    padding:0.95rem 1rem;margin:0.3rem 0 0.75rem;">
-            <p style="font-size:0.72rem;font-weight:700;color:#7a3e2e;letter-spacing:.04em;
-                      margin:0 0 0.35rem;">追问流程</p>
-            <p style="font-size:1rem;font-weight:800;color:var(--text);margin:0 0 0.25rem;">
-                {html_escape(_flow_title)}
-            </p>
-            <p style="font-size:0.82rem;color:var(--text-3);line-height:1.55;margin:0;">
-                {html_escape(_flow_note)}
-            </p>
-        </div>
-        """
-    )
     _fup_run_id = str(agent_result.get("run_id", "") if agent_result else "")
+    _fup_ans_n = len(st.session_state.get("followup_answers", []))
+    _cta_label = (
+        f"追问完成（{_fup_ans_n} 条），记录家人看法 →"
+        if _has_followup
+        else "完成追问后，点这里记录家人看法 →"
+    )
     if st.button(
-        "完成追问 →",
+        _cta_label,
         use_container_width=True,
         key="fup_to_guided_comment",
         disabled=not _has_followup,
@@ -4059,6 +4087,11 @@ def followup_page(agent_result: dict[str, Any]) -> None:
         st.session_state["guided_step"] = 1
         st.session_state["active_view"] = "guided_comment"
         st.rerun()
+
+    # ── 补充家庭情况 + 追问区（在 CTA 下方） ────────────────────
+    _fup_mode = agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE
+    reverse_qa_block(agent_result, agent_context, _fup_mode)
+    followup_block(agent_context)
     with st.expander("追问历史保存情况", expanded=False):
         latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
         backend = latest_status.get("backend", "local_csv")
@@ -4127,10 +4160,14 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
                   color:#7a3e2e;text-transform:uppercase;margin:0 0 0.5rem;">
             Agent · 下一步
         </p>
-        <p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.65rem;">
-            体检结论已生成。可以直接继续问 AI。
+        <p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.35rem;">
+            结论已生成，继续深入了解这次风险
         </p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0;">
+            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
+                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
+                📋&nbsp;AI 风险说明
+            </span>
             <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
                          background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
                 💬&nbsp;{html_escape(followup_chip)}
@@ -4142,15 +4179,10 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
         </div>
     </div>
     """)
-    btn_follow, btn_history = st.columns(2)
-    with btn_follow:
-        if st.button("继续追问 →", use_container_width=True, key="open_followup_direct"):
-            st.session_state["active_view"] = "followup"
-            st.rerun()
-    with btn_history:
-        if st.button("查看历史体检 →", use_container_width=True, key="open_history_from_result"):
-            st.session_state["active_view"] = "history"
-            st.rerun()
+    if st.button("查看 AI 风险说明 →", use_container_width=True,
+                 key="open_ai_report_from_next", type="primary"):
+        st.session_state["active_view"] = "ai_report"
+        st.rerun()
 
 
 def guided_comment_page(agent_result: dict[str, Any]) -> None:
@@ -4171,13 +4203,13 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
 
     # ── 返回按钮（步骤 1~3 可以返回） ──────────────────────────
     if step < 4:
-        if st.button("← 返回继续深入", key="guided_back_btn"):
+        if st.button("← 返回 AI 追问", key="guided_back_btn"):
             _clear_wizard()
             st.session_state["active_view"] = "followup"
             st.rerun()
         render_html(
             '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.3rem;">'
-            '体检结论 &rsaquo; 继续深入 &rsaquo; 记录家人看法</p>'
+            '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问 &rsaquo; 记录家人看法</p>'
         )
 
     # ── 进度指示器（步骤 1~3）──────────────────────────────────
@@ -4433,20 +4465,20 @@ def analysis_page() -> None:
         followup_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
+    if _active == "ai_report":
+        ai_report_page(agent_result)
+        render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+        return
     agent_result_block(agent_result)
 
-    # ── Agent 下一步引导 ─────────────────────────────────────────
-    if agent_result:
-        next_steps_entry_block(agent_result)
-
-    # ── 体检过程 / 调试 ──────────────────────────────────────────
-    st.divider()
-    inspection_process_block(agent_result)
-    for warning in fetch_warnings:
-        if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
-            st.info(warning)
-        else:
-            st.warning(warning)
+    # ── 体检过程 / 调试（折叠，不占主流程空间）──────────────────
+    with st.expander("⚙️ 体检过程详情", expanded=False):
+        inspection_process_block(agent_result)
+        for warning in fetch_warnings:
+            if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
+                st.info(warning)
+            else:
+                st.warning(warning)
     developer_debug_block(agent_result)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
