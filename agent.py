@@ -273,6 +273,20 @@ def _build_agent_context(
             }
         )
 
+    # 每只持仓的实际财务数据（仅包含非空字段），供 AI 追问时使用
+    stock_details: list[dict[str, Any]] = []
+    for sr in stock_results:
+        detail: dict[str, Any] = {
+            "code": sr.get("code", ""),
+            "name": sr.get("name", ""),
+        }
+        for _field in ["pe", "pb", "roe", "net_margin", "gross_margin", "debt_ratio", "industry",
+                       "financial_score", "heat_score"]:
+            _val = sr.get(_field)
+            if _val is not None:
+                detail[_field] = _val
+        stock_details.append(detail)
+
     # ── PE/PB 状态描述 ──────────────────────────────────────────
     valuation_missing_items = missing_data.get("估值数据缺失", [])
     if valuation_missing_items:
@@ -303,6 +317,7 @@ def _build_agent_context(
         "pe_pb_status": pe_pb_status,
         "financial_status": financial_status,
         "history_summary": _load_history_summary(),
+        "stock_details": stock_details,   # 个股实际财务数据，仅追问时用，不进入主报告 prompt
         "ai_report": "",  # 占位，由 run_family_risk_agent 生成后回填
     }
 
@@ -417,7 +432,14 @@ def run_family_risk_agent(
     debug_steps.append("判断单只集中风险和现金压力")
     if portfolio_summary["max_single_ratio"] > 0.40:
         warnings.append("单只持仓超过家庭可投资资金的 40%，集中度偏高。")
-    if portfolio_summary["cash_ratio"] < 0.10:
+    # 现金预警：若用户表示半年内可能用钱，阈值提高至 20%
+    _money_urgent = reverse_qa_data.get("money_need_6m") == "possible"
+    if _money_urgent and portfolio_summary["cash_ratio"] < 0.20:
+        warnings.append(
+            f"半年内可能有资金需求，当前现金比例仅 {portfolio_summary['cash_ratio']:.0%}，"
+            "流动性风险需要优先关注。"
+        )
+    elif portfolio_summary["cash_ratio"] < 0.10:
         warnings.append("现金比例偏低，家庭备用金需要优先关注。")
 
     debug_steps.append("识别行情、估值和财务数据缺失")
@@ -430,6 +452,15 @@ def run_family_risk_agent(
     debug_steps.append("整理体检上下文。")
     data_status = analysis.get("data_status", "本地缓存")
     main_risks = analysis.get("risk_notes", [])[:8]
+    # 若用户表示半年内可能用钱且现金不足，将流动性风险前置到主要风险列表
+    if _money_urgent and portfolio_summary["cash_ratio"] < 0.20:
+        _liquidity_note = (
+            f"半年内可能有资金需求，当前现金比例仅 {portfolio_summary['cash_ratio']:.0%}，"
+            "流动性应作为首要关注。"
+        )
+        if _liquidity_note not in main_risks:
+            main_risks = [_liquidity_note] + [r for r in main_risks if r != _liquidity_note]
+            main_risks = main_risks[:8]
     agent_context = _build_agent_context(
         clean_holdings=clean_holdings,
         cash=cash,
@@ -507,9 +538,12 @@ def run_family_risk_agent(
         "report_mode": "爸妈版",
         "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
-        "watch_tasks": [],       # 第 6/8 步生成结构化任务，先占位
-        "industry_conc": None,   # 后续行业集中度计算
-        "data_credit": None,     # 后续数据可信度评分
+        "watch_tasks": [],
+        "industry_conc": analysis.get("industry_concentration"),
+        "data_credit": round(
+            (len(clean_holdings) - len(missing_data.get("行情数据缺失", [])))
+            / len(clean_holdings) * 100
+        ) if clean_holdings else 0,
         "history_analysis": history_analysis,
         "saved_history": False,
         "agent_context": agent_context,

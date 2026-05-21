@@ -321,6 +321,9 @@ def weighted_average(items: list[tuple[float, float]], default: float = 0) -> fl
 def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     name = stock_value(stock, "name") or stock_value(stock, "code")
     source = stock.get("财务数据来源") or stock_value(stock, "data_source")
+    industry = str(stock_value(stock, "industry") or "").strip()
+    # 银行/金融/保险/证券：高负债是业务模式，不按普通企业标准惩罚债务率
+    _is_finance_sector = any(kw in industry for kw in ("银行", "金融", "保险", "证券", "信托", "期货"))
     values = {
         standard: to_float(stock_value(stock, standard) if stock_value(stock, standard) is not None else stock.get(legacy))
         for standard, legacy in FINANCIAL_FIELD_ALIASES.items()
@@ -350,12 +353,18 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     score += clamp(gross_margin / 0.40 * 7)
     score += clamp((revenue_growth + 0.10) / 0.30 * 14)
     score += clamp((profit_growth + 0.10) / 0.35 * 14)
-    score += clamp((0.85 - debt_ratio) / 0.85 * 18)
+    if _is_finance_sector:
+        # 银行/金融业高负债是正常业务模式，给固定分，不按普通企业标准扣分
+        score += 9
+    else:
+        score += clamp((0.85 - debt_ratio) / 0.85 * 18)
     score += clamp(cash_profit / 1.00 * 19)
     score -= missing_count * 4
     score = clamp(score)
 
     notes: list[str] = []
+    if _is_finance_sector:
+        notes.append(f"{name} 属于银行/金融行业，高资产负债率是正常业务特征，不按普通企业标准判断。")
     if roe >= 0.15:
         notes.append(f"{name} 的 ROE（公司用自己的钱赚钱的能力）看起来较强。")
     elif roe < 0.08:
@@ -369,7 +378,7 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     if revenue_growth < 0 or profit_growth < 0:
         notes.append(f"{name} 营收增长率或净利润增长率（公司收入和利润有没有在增加）出现下滑，先别只看短期热闹。")
 
-    if debt_ratio > 0.75:
+    if not _is_finance_sector and debt_ratio > 0.75:
         notes.append(f"{name} 资产负债率（公司借了多少钱相对自己的家底）偏高，环境不好时压力可能更大。")
 
     if cash_profit < 0.8:

@@ -103,13 +103,42 @@ def get_dynamic_questions(agent_context: dict[str, Any]) -> list[str]:
         ]
     questions.append(random.choice(opts))
 
-    # ── 槽 3：PE/PB（路由关键词："PE" 或 "PB"）──────────────────
+    # ── 槽 3：PE/PB（路由关键词："PE" 或 "PB"）——尽量用实际数值──
+    _stock_details = list(agent_context.get("stock_details") or [])
+    _top_detail = next(
+        (s for s in _stock_details if top and s.get("code") == top.get("code")),
+        {}
+    )
+    try:
+        _top_pe: float | None = float(_top_detail["pe"]) if "pe" in _top_detail else None
+    except (TypeError, ValueError):
+        _top_pe = None
+
     if valuation_missing:
         opts = [
             "PE/PB 数据缺失，这次体检受影响吗？",
             "没有 PE/PB 数据，结论还准确吗？",
             "PE/PB 缺失会带来哪些判断盲区？",
         ]
+    elif _top_pe is not None and top_name:
+        if _top_pe > 40:
+            opts = [
+                f"{top_name} 的 PE 是 {_top_pe:.0f} 倍，这算贵吗？",
+                f"PE 超过 {_top_pe:.0f} 倍，怎么理解这个估值？",
+                f"{top_name} PE {_top_pe:.0f} 倍，风险大吗？",
+            ]
+        elif 0 < _top_pe < 15:
+            opts = [
+                f"{top_name} 的 PE 只有 {_top_pe:.0f} 倍，是低估了吗？",
+                f"PE {_top_pe:.0f} 倍这么低，说明什么问题？",
+                f"{top_name} PE {_top_pe:.0f} 倍，为什么这么低？",
+            ]
+        else:
+            opts = [
+                f"{top_name} 目前 PE 是 {_top_pe:.0f} 倍，这个估值怎么看？",
+                "PE/PB 对这次判断有什么帮助？",
+                "这次 PE/PB 数据说明了什么？",
+            ]
     else:
         opts = [
             "PE/PB 对这次判断有什么帮助？",
@@ -339,7 +368,7 @@ def _reverse_qa_note(agent_context: dict[str, Any]) -> str:
         notes.append("如果需要一起商量，报告重点应放在家庭先沟通一致。")
 
     if last_disagreement:
-        notes.append(f"上次不同意见提到“{last_disagreement[:60]}”，这次可以轻轻带到这个点。")
+        notes.append(f'上次不同意见提到"{last_disagreement[:60]}"，这次可以轻轻带到这个点。')
     return "".join(notes)
 
 
@@ -520,7 +549,7 @@ def _ensure_disclaimer(text: str) -> str:
     safe = _safe_text(text).strip()
     if not safe:
         safe = "本次报告暂时无法生成完整说明。"
-    # 兼容早期兜底里曾把“推荐”替换成“提示”的情况，固定免责声明保持原文。
+    # 兼容早期兜底里曾把"推荐"替换成"提示"的情况，固定免责声明保持原文。
     safe = safe.replace(DISCLAIMER.replace("推荐", "提示"), DISCLAIMER)
     if DISCLAIMER not in safe:
         if "【免责声明】" in safe:
@@ -589,6 +618,7 @@ def _call_deepseek(
 
 
 def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
+    """主报告用的精简上下文（白名单过滤，不含个股财务细节，避免 AI 据此做估值判断）。"""
     allowed_keys = [
         "holdings",
         "family_cash",
@@ -610,6 +640,18 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "reverse_qa",
     ]
     return {key: agent_context.get(key) for key in allowed_keys}
+
+
+def _agent_context_for_followup_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
+    """追问用的上下文：在主报告基础上，加入个股实际财务数据（PE/PB/ROE等非空字段）。
+    追问时用户明确在问具体数值，AI 可以给出更有针对性的回答。
+    注意：主报告不使用此函数，以避免 AI 据具体数值做估值判断。
+    """
+    base = _agent_context_for_prompt(agent_context)
+    stock_details = agent_context.get("stock_details") or []
+    if stock_details:
+        base["stock_details"] = stock_details
+    return base
 
 
 def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str:
@@ -653,14 +695,14 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 """.strip()
 
     system_prompt = f"""
-你是“家庭持仓风险体检 Agent”的报告生成器。你只能根据用户提供的 agent_context 写报告，不能编造任何缺失数据。
+你是"家庭持仓风险体检 Agent"的报告生成器。你只能根据用户提供的 agent_context 写报告，不能编造任何缺失数据。
 
 输出对象是爸妈或普通家庭成员，语言要自然、简单，不像券商研报。
 
 必须遵守：
 1. 不输出个股方向判断，不判断短期涨跌，不承诺收益。
 2. 不给具体交易动作或仓位动作。
-3. 不使用“您家”“贵家庭”“您的家庭资产”。
+3. 不使用"您家""贵家庭""您的家庭资产"。
 4. 必须结合现金比例、股票/基金持仓比例、最大单只持仓占比、主要风险和数据缺失情况。
 5. {valuation_rule}
 6. {disagreement_rule}
@@ -673,8 +715,8 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
    【给爸妈重点看的地方】
    【免责声明】
 10. 【免责声明】必须一字不改：{DISCLAIMER}
-11. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。系统会把这段合并进爸妈版报告，不在页面单独展示。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在”要不要我们一起再看看/商量一下”这种开放式表达。
-12. 如果 history_analysis.records_count >= 2，可在【给爸妈重点看的地方】末尾用一句话提及与上次相比的变化，例如”和上次相比，综合评分基本持平”；如果 records_count < 2，只写”目前历史记录还不多，暂时只能先看本次体检结果”。不要展开历史，最多一句话。
+11. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，写一段 80 字以内、子女可以今晚直接对父母说出口的话。系统会把这段合并进爸妈版报告，不在页面单独展示。只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，结尾落在"要不要我们一起再看看/商量一下"这种开放式表达。
+12. 如果 history_analysis.records_count >= 2，可在【给爸妈重点看的地方】末尾用一句话提及与上次相比的变化，例如"和上次相比，综合评分基本持平"；如果 records_count < 2，只写"目前历史记录还不多，暂时只能先看本次体检结果"。不要展开历史，最多一句话。
 """.strip()
 
     user_prompt = (
@@ -808,9 +850,10 @@ def _safe_followup_error(exc: Exception) -> str:
 
 
 def _call_deepseek_followup(agent_context: dict[str, Any], question: str) -> str:
-    context = _agent_context_for_prompt(agent_context)
+    # 追问使用更丰富的上下文（含个股实际 PE/PB/ROE 等非空字段）
+    context = _agent_context_for_followup_prompt(agent_context)
     system_prompt = f"""
-你是“家庭持仓风险体检 Agent”的追问助手。你只能回答和本次投资体检相关的问题。
+你是"家庭持仓风险体检 Agent"的追问助手。你只能回答和本次投资体检相关的问题。
 
 必须遵守：
 1. 必须围绕用户 question 回答，不能只输出通用总结。
@@ -820,6 +863,8 @@ def _call_deepseek_followup(agent_context: dict[str, Any], question: str) -> str
 5. 如果用户问题与本次投资体检无关，只回复：{UNRELATED_FOLLOWUP_TEXT}
 6. 回答控制在 150-350 个中文字符。
 7. 结尾必须保留免责声明：{DISCLAIMER}
+8. 如果 stock_details 中有非空的 PE/PB/ROE 等数据，回答估值/财务相关问题时可以引用具体数值，
+   但只能描述这个数字意味着什么，不能据此说应该买卖持有。
 """.strip()
     user_prompt = (
         "用户追问：\n"
