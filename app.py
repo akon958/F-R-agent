@@ -1190,6 +1190,71 @@ def inject_css() -> None:
             color: var(--text-2);
             font-size: 0.82rem;
         }}
+        .agent-flow-card {{
+            margin: 0.75rem 0 1.05rem;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: color-mix(in srgb, var(--surface) 92%, var(--accent-soft));
+            padding: 0.85rem 0.95rem;
+            box-shadow: 0 10px 24px rgba(42, 37, 32, 0.035);
+        }}
+        .agent-flow-head {{
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            align-items: center;
+            margin-bottom: 0.65rem;
+        }}
+        .agent-flow-head p {{
+            margin: 0;
+            color: var(--text-2);
+            font-size: 0.88rem;
+            line-height: 1.45;
+            text-align: right;
+        }}
+        .eyebrow.mini {{
+            padding: 0.25rem 0.58rem;
+            font-size: 0.72rem;
+            white-space: nowrap;
+        }}
+        .agent-flow-steps {{
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.35rem;
+        }}
+        .agent-flow-steps span {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.28rem;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.82rem;
+            font-weight: 700;
+            padding: 0.34rem 0.42rem;
+            min-width: 0;
+        }}
+        .agent-flow-steps b {{
+            width: 1.15rem;
+            height: 1.15rem;
+            display: inline-grid;
+            place-items: center;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-family: var(--font-num);
+            font-size: 0.72rem;
+        }}
+        .agent-flow-note {{
+            margin-top: 0.6rem;
+            color: var(--text-3);
+            font-size: 0.76rem;
+            line-height: 1.45;
+            border-top: 1px dashed var(--border);
+            padding-top: 0.55rem;
+        }}
 
         .breadcrumb {{
             display: flex;
@@ -1525,6 +1590,16 @@ def inject_css() -> None:
             .risk-hint-grid {{
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }}
+            .agent-flow-head {{
+                display: block;
+            }}
+            .agent-flow-head p {{
+                text-align: left;
+                margin-top: 0.35rem;
+            }}
+            .agent-flow-steps {{
+                grid-template-columns: repeat(2, 1fr);
+            }}
             .hero-title, .stock-title {{
                 font-size: 1.25rem;
             }}
@@ -1650,28 +1725,8 @@ def display_settings() -> None:
 
 
 def top_toolbar() -> None:
-    """统一顶部导航入口：主页 / 历史 / 显示设置。"""
-    has_analysis = "analysis" in st.session_state
-    render_html('<div id="fi-top-nav"></div>')
-    left, spacer, hist_col, display_col = st.columns([1.25, 4.2, 0.8, 0.8])
-    with left:
-        if has_analysis:
-            if st.button("← 首页", key="toolbar_home"):
-                st.session_state.pop("analysis", None)
-                st.session_state.pop("stocks", None)
-                st.session_state.pop("fetch_warnings", None)
-                st.session_state.pop("agent_result", None)
-                st.session_state["active_view"] = "analysis"
-                st.rerun()
-    with hist_col:
-        if has_analysis:
-            if st.button("历史", key="toolbar_history", help="历史体检记录"):
-                st.session_state["active_view"] = "history"
-                st.rerun()
-    with display_col:
-        with st.popover("Aa", use_container_width=True, help="显示设置"):
-            st.caption("显示设置")
-            display_settings()
+    """全局顶部操作先收起，避免手机端把小入口挤成主按钮。"""
+    return
 
 
 
@@ -2110,28 +2165,18 @@ def recent_block() -> None:
 def guide_block() -> None:
     render_html(
         f"""
-        <section class="block guide-block compact-guide">
-            <div class="block-head">
-                <div>
-                    <h2 class="block-title">Agent 怎么体检</h2>
-                    <p class="block-subtitle">填持仓，看风险，再追问。</p>
-                </div>
+        <section class="agent-flow-card">
+            <div class="agent-flow-head">
+                <div class="eyebrow mini">Agent 流程</div>
+                <p>填持仓，看风险，再追问和记录家人看法。</p>
             </div>
-            <div class="guide-list">
-                <div class="guide-step">
-                    <div class="step-num">1</div>
-                    <div><div class="step-title">填信息</div><div class="muted">输入代码、金额、现金和风险偏好。</div></div>
-                </div>
-                <div class="guide-step">
-                    <div class="step-num">2</div>
-                    <div><div class="step-title">看结论</div><div class="muted">先看风险灯、评分、现金和集中度。</div></div>
-                </div>
-                <div class="guide-step">
-                    <div class="step-num">3</div>
-                    <div><div class="step-title">继续问</div><div class="muted">用 AI 追问和家庭观察，把分歧聊清楚。</div></div>
-                </div>
+            <div class="agent-flow-steps">
+                <span><b>1</b> 输入</span>
+                <span><b>2</b> 体检</span>
+                <span><b>3</b> 追问</span>
+                <span><b>4</b> 记录</span>
             </div>
-            <div class="guide-foot">{HOME_DISCLAIMER}</div>
+            <div class="agent-flow-note">{HOME_DISCLAIMER}</div>
         </section>
         """
     )
@@ -2180,14 +2225,8 @@ def home_page() -> None:
     guide_block()
     st.divider()
     cache_tools()
-    with st.expander("开发中功能（暂未接入实时数据 / 云数据库，后续开放）", expanded=False):
-        st.info("以下功能正在开发中，当前展示为静态演示数据，不代表真实行情或真实账户。")
-        st.markdown("#### 今日大盘")
-        market_aside()
-        st.markdown("---")
-        watchlist_block()
-        st.markdown("---")
-        recent_block()
+    with st.expander("显示设置", expanded=False):
+        display_settings()
 
 
 def to_float(value: Any) -> float | None:
