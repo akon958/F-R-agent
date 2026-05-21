@@ -10,6 +10,7 @@ from analyzer import (
     analyze_portfolio,
     build_risk_factor_breakdown,
     detect_family_disagreement,
+    detect_intent_action_gap,
 )
 from config import DEFAULT_REPORT_MODE, FIXED_DISCLAIMER
 try:
@@ -507,6 +508,7 @@ def run_family_risk_agent(
             "agent_context": {},
             "reverse_qa": reverse_qa_data,
             "family_disagreement": no_disagreement,
+            "intent_action_gap": {"has_gap": False, "gaps": [], "summary": ""},
             "saved_history": False,
             "storage_status": {
                 "backend": "local_csv",
@@ -590,12 +592,15 @@ def run_family_risk_agent(
     try:
         family_comments = load_recent_family_comments(limit=50)
         family_disagreement = detect_family_disagreement(family_comments)
+        intent_action_gap   = detect_intent_action_gap(family_comments, portfolio_summary)
     except Exception:  # noqa: BLE001
-        family_comments = []
+        family_comments     = []
         family_disagreement = {"has_conflict": False, "conflicts": [], "summary": ""}
-    agent_context["family_comments"] = family_comments[:20]
+        intent_action_gap   = {"has_gap": False, "gaps": [], "summary": ""}
+    agent_context["family_comments"]   = family_comments[:20]
     agent_context["family_disagreement"] = family_disagreement
-    agent_context["reverse_qa"] = reverse_qa_data
+    agent_context["intent_action_gap"]   = intent_action_gap
+    agent_context["reverse_qa"]          = reverse_qa_data
 
     try:
         _history_records = load_recent_analysis_history(limit=5)
@@ -656,6 +661,7 @@ def run_family_risk_agent(
         "report_mode": DEFAULT_REPORT_MODE,
         "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
+        "intent_action_gap":   intent_action_gap,
         "risk_factors": risk_factors,
         "watch_tasks": _generate_watch_tasks(
             analysis=analysis,

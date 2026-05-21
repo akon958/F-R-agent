@@ -3314,6 +3314,64 @@ def family_disagreement_block(disagreement: dict[str, Any]) -> None:
     )
 
 
+def intent_action_gap_block(gap_data: dict[str, Any]) -> None:
+    """意图-行动差距镜：把家人立场记录和当前持仓数据对比，提示明显差距。"""
+    if not isinstance(gap_data, dict) or not gap_data.get("has_gap"):
+        return
+    gaps = list(gap_data.get("gaps") or [])
+    if not gaps:
+        return
+
+    notable = [g for g in gaps if g.get("severity") == "notable"]
+    show_gaps = notable if notable else gaps[:2]   # 最多显示 2 条
+
+    rows_html = ""
+    for g in show_gaps:
+        member      = html_escape(str(g.get("member", "") or ""))
+        focus_label = html_escape(str(g.get("focus_label", "") or ""))
+        stated      = html_escape(str(g.get("stated", "") or ""))
+        current     = html_escape(str(g.get("current_desc", "") or ""))
+        gap_desc    = html_escape(str(g.get("gap_desc", "") or ""))
+        rows_html += (
+            f'<li style="padding:0.35rem 0;border-bottom:1px solid rgba(122,62,46,0.1);'
+            f'display:flex;align-items:flex-start;gap:0.55rem;">'
+            f'<span style="flex-shrink:0;font-size:0.75rem;font-weight:700;color:#7a3e2e;'
+            f'background:rgba(122,62,46,0.1);border-radius:999px;padding:0.15rem 0.5rem;'
+            f'white-space:nowrap;">{member}</span>'
+            f'<span style="font-size:0.84rem;color:var(--text);line-height:1.55;">'
+            f'{gap_desc}'
+            f'<span style="font-size:0.72rem;color:var(--text-3);margin-left:0.3rem;">'
+            f'记录立场：{stated}／关注：{focus_label}／当前：{current}</span>'
+            f'</span></li>'
+        )
+    extra = len(gaps) - len(show_gaps)
+    extra_html = (
+        f'<p style="font-size:0.72rem;color:var(--text-3);margin:0.35rem 0 0;">'
+        f'另有 {extra} 处细微差距，可在追问时进一步了解。</p>'
+        if extra > 0 else ""
+    )
+    render_html(
+        f"""
+        <section style="margin:0.5rem 0 0.7rem;border-radius:12px;
+                        border:1.5px solid rgba(122,62,46,0.35);
+                        background:rgba(122,62,46,0.05);overflow:hidden;">
+            <div style="padding:0.5rem 0.9rem 0.35rem;display:flex;align-items:center;
+                        gap:0.45rem;border-bottom:1px solid rgba(122,62,46,0.12);">
+                <span style="font-size:0.9rem;">🪞</span>
+                <span style="font-size:0.9rem;font-weight:700;color:#7a3e2e;">意图与持仓差距</span>
+                <span style="font-size:0.72rem;color:var(--text-3);margin-left:auto;">
+                    家人立场 vs 当前持仓
+                </span>
+            </div>
+            <ul style="margin:0;padding:0.2rem 0.9rem 0.5rem;list-style:none;">
+                {rows_html}
+            </ul>
+            {extra_html}
+        </section>
+        """
+    )
+
+
 def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str, Any] | None = None) -> None:
     """把现有评分拆成父母能看懂的风险因子，不改变分析逻辑。"""
     factor_data = factor_data or build_risk_factor_breakdown(analysis or {})
@@ -3490,6 +3548,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     )
 
     family_disagreement_block(agent_result.get("family_disagreement", {}))
+    intent_action_gap_block(agent_result.get("intent_action_gap", {}))
 
     # ── 2. 综合体检结论：评分 + 三项指标 ──────────────────────
     conclusion = (

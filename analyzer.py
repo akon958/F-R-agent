@@ -230,6 +230,107 @@ def detect_family_disagreement(comments: list[dict]) -> dict:
     }
 
 
+def detect_intent_action_gap(
+    comments: list[dict],
+    portfolio_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    检测家人记录的立场与当前持仓数据之间的差距（意图-行动差距镜）。
+
+    如果某家人说"偏谨慎"但当前持仓数据显示风险偏高，则记录为差距。
+    只处理最近 10 条非中性记录，避免历史噪声。
+    不修改评分，不给交易建议，只做客观对比提示。
+    """
+    cash_ratio   = float(portfolio_summary.get("cash_ratio",       0) or 0)
+    max_single   = float(portfolio_summary.get("max_single_ratio", 0) or 0)
+    stock_ratio  = float(portfolio_summary.get("stock_ratio",      0) or 0)
+
+    # 阈值：只在差距明显时才提示，避免过度敏感
+    _CASH_LOW    = 0.10   # 现金低于 10% → 与"偏谨慎/现金"立场明显矛盾
+    _CASH_HIGH   = 0.45   # 现金高于 45% → 与"偏进取/现金"立场明显矛盾
+    _CONC_HIGH   = 0.35   # 单只超 35%   → 与"偏谨慎/集中"立场明显矛盾
+    _STOCK_HIGH  = 0.80   # 仓位超 80%   → 与"偏谨慎/风险承受"立场明显矛盾
+    _STOCK_LOW   = 0.20   # 仓位低于 20% → 与"偏进取/风险承受"立场明显矛盾
+
+    # 只取最近 10 条非中性记录
+    recent: list[dict[str, Any]] = [
+        r for r in (comments or [])
+        if isinstance(r, dict)
+        and str(r.get("stance") or "neutral") in ("conservative", "aggressive")
+    ][:10]
+
+    gaps: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for row in recent:
+        member  = str(row.get("member") or "").strip()
+        focus   = str(row.get("focus")  or "other").strip() or "other"
+        stance  = str(row.get("stance") or "neutral").strip()
+        if not member:
+            continue
+        key = (member, focus, stance)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        focus_label  = FAMILY_FOCUS_LABELS.get(focus,  focus)
+        stance_label = FAMILY_STANCE_LABELS.get(stance, stance)
+        gap_desc     = ""
+        current_desc = ""
+        severity     = "minor"
+
+        if stance == "conservative":
+            if focus == "cash" and cash_ratio < _CASH_LOW:
+                pct = f"{cash_ratio * 100:.0f}%"
+                gap_desc     = f"{member}希望保留更多现金，但当前现金比例只有 {pct}。"
+                current_desc = f"现金 {pct}"
+                severity     = "notable"
+            elif focus == "concentration" and max_single > _CONC_HIGH:
+                pct = f"{max_single * 100:.0f}%"
+                gap_desc     = f"{member}对集中度偏谨慎，但最大单只持仓仍占 {pct}。"
+                current_desc = f"最大单只 {pct}"
+                severity     = "notable"
+            elif focus == "risk_tolerance" and stock_ratio > _STOCK_HIGH:
+                pct = f"{stock_ratio * 100:.0f}%"
+                gap_desc     = f"{member}风险承受偏保守，但股票/基金仓位高达 {pct}。"
+                current_desc = f"仓位 {pct}"
+                severity     = "notable"
+
+        elif stance == "aggressive":
+            if focus == "cash" and cash_ratio > _CASH_HIGH:
+                pct = f"{cash_ratio * 100:.0f}%"
+                gap_desc     = f"{member}倾向充分利用资金，但现金比例高达 {pct}。"
+                current_desc = f"现金 {pct}"
+                severity     = "minor"
+            elif focus == "risk_tolerance" and stock_ratio < _STOCK_LOW:
+                pct = f"{stock_ratio * 100:.0f}%"
+                gap_desc     = f"{member}风险承受偏积极，但股票/基金仓位只有 {pct}。"
+                current_desc = f"仓位 {pct}"
+                severity     = "minor"
+
+        if gap_desc:
+            gaps.append({
+                "member":       member,
+                "focus":        focus,
+                "focus_label":  focus_label,
+                "stated":       stance_label,
+                "current_desc": current_desc,
+                "gap_desc":     gap_desc,
+                "severity":     severity,
+            })
+
+    if not gaps:
+        return {"has_gap": False, "gaps": [], "summary": ""}
+
+    notable_n = sum(1 for g in gaps if g["severity"] == "notable")
+    summary = (
+        f"发现 {notable_n} 处持仓与家人立场的明显差距。"
+        if notable_n
+        else f"发现 {len(gaps)} 处意图与持仓的细微差距。"
+    )
+    return {"has_gap": True, "gaps": gaps, "summary": summary}
+
+
 def analyze_history_changes(history_records: list[dict[str, Any]]) -> dict[str, Any]:
     """Compare the two most recent check-up records and summarise changes.
 
