@@ -1572,6 +1572,11 @@ def html_escape(value: Any) -> str:
     return escape(str(value if value is not None else ""))
 
 
+def _hesc(d: dict, key: str, default: str = "") -> str:
+    """html_escape a single key from a dict, with a safe default."""
+    return html_escape(str(d.get(key, default) or default))
+
+
 def site_header() -> None:
     render_html(
         f"""
@@ -3327,11 +3332,11 @@ def intent_action_gap_block(gap_data: dict[str, Any]) -> None:
 
     rows_html = ""
     for g in show_gaps:
-        member      = html_escape(str(g.get("member", "") or ""))
-        focus_label = html_escape(str(g.get("focus_label", "") or ""))
-        stated      = html_escape(str(g.get("stated", "") or ""))
-        current     = html_escape(str(g.get("current_desc", "") or ""))
-        gap_desc    = html_escape(str(g.get("gap_desc", "") or ""))
+        member      = _hesc(g, "member")
+        focus_label = _hesc(g, "focus_label")
+        stated      = _hesc(g, "stated")
+        current     = _hesc(g, "current_desc")
+        gap_desc    = _hesc(g, "gap_desc")
         rows_html += (
             f'<li style="padding:0.35rem 0;border-bottom:1px solid rgba(122,62,46,0.1);'
             f'display:flex;align-items:flex-start;gap:0.55rem;">'
@@ -4045,7 +4050,6 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
     """第 2 步：AI 风险说明页（从体检结论点进来，报告 + 模式切换 + 进入追问）。"""
     agent_context = agent_result.get("agent_context", {}) if agent_result else {}
 
-    # ── 返回按钮 + 面包屑 ─────────────────────────────────────
     if st.button("← 体检结论", key="back_from_ai_report"):
         st.session_state["active_view"] = "analysis"
         st.rerun()
@@ -4054,7 +4058,10 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
         '体检结论 &rsaquo; AI 风险说明</p>'
     )
 
-    # ── 页面标题 ──────────────────────────────────────────────
+    if not agent_result:
+        st.info("请先完成一次一键智能体检，再查看 AI 风险说明。")
+        return
+
     render_html("""
     <div style="padding:0.1rem 0 0.8rem;">
         <h2 style="font-size:1.2rem;font-weight:700;color:var(--text);margin:0 0 0.12rem;">
@@ -4066,11 +4073,6 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
     </div>
     """)
 
-    if not agent_result:
-        st.info("请先完成一次一键智能体检，再查看 AI 风险说明。")
-        return
-
-    # ── 报告模式选择 ─────────────────────────────────────────
     mode = st.radio(
         "报告模式",
         options=REPORT_MODES,
@@ -4098,13 +4100,11 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
         st.session_state["agent_result"] = agent_result
     st.caption(f"报告来源：{_report_source_label(report_source)}")
 
-    # ── CTA 前置：看过报告后点进追问，不需要滚动到底部 ──────────
     if st.button("看完了，开始 AI 追问 →", use_container_width=True,
                  key="goto_followup_from_report", type="primary"):
         st.session_state["active_view"] = "followup"
         st.rerun()
 
-    # ── 报告正文（可上下滑动查看完整内容）────────────────────────
     render_html('<div class="card" style="padding:1.4rem;margin-top:0.6rem;">')
     st.markdown(display_report)
     render_html("</div>")
@@ -4123,10 +4123,10 @@ def followup_page(agent_result: dict[str, Any]) -> None:
         st.info("请先完成一次一键智能体检，再继续追问。")
         return
 
-    # ── CTA 前置：有回答即可点，无需滚到底部找按钮 ──────────────
-    _has_followup = bool(st.session_state.get("followup_answers", []))
+    _fup_answers = list(st.session_state.get("followup_answers", []))
+    _has_followup = bool(_fup_answers)
+    _fup_ans_n = len(_fup_answers)
     _fup_run_id = str(agent_result.get("run_id", "") if agent_result else "")
-    _fup_ans_n = len(st.session_state.get("followup_answers", []))
     _cta_label = (
         f"追问完成（{_fup_ans_n} 条），记录家人看法 →"
         if _has_followup
@@ -4147,7 +4147,6 @@ def followup_page(agent_result: dict[str, Any]) -> None:
         st.session_state["active_view"] = "guided_comment"
         st.rerun()
 
-    # ── 补充家庭情况 + 追问区（在 CTA 下方） ────────────────────
     _fup_mode = agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE
     reverse_qa_block(agent_result, agent_context, _fup_mode)
     followup_block(agent_context)
