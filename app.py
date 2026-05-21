@@ -1619,18 +1619,41 @@ def site_header() -> None:
 
 
 def display_settings() -> None:
-    with st.expander("显示设置", expanded=False):
-        c1, c2, c3 = st.columns(3)
-        if c1.button("A-", use_container_width=True, help="字号减小"):
-            st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
-            st.rerun()
-        if c2.button("A+", use_container_width=True, help="字号增大"):
-            st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
-            st.rerun()
-        label = "浅色模式" if st.session_state.dark_mode else "暗色模式"
-        if c3.button(label, use_container_width=True, help="切换深色/浅色"):
-            st.session_state.dark_mode = not st.session_state.dark_mode
-            st.rerun()
+    c1, c2, c3 = st.columns(3)
+    if c1.button("A-", use_container_width=True, help="字号减小", key="toolbar_font_minus"):
+        st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
+        st.rerun()
+    if c2.button("A+", use_container_width=True, help="字号增大", key="toolbar_font_plus"):
+        st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
+        st.rerun()
+    label = "浅色" if st.session_state.dark_mode else "暗色"
+    if c3.button(label, use_container_width=True, help="切换深色/浅色", key="toolbar_theme_toggle"):
+        st.session_state.dark_mode = not st.session_state.dark_mode
+        st.rerun()
+
+
+def top_toolbar() -> None:
+    """统一顶部导航入口：主页 / 历史 / 显示设置。"""
+    has_analysis = "analysis" in st.session_state
+    left, spacer, hist_col, display_col = st.columns([1.25, 4.2, 0.8, 0.8])
+    with left:
+        if has_analysis:
+            if st.button("← 首页", key="toolbar_home", use_container_width=True):
+                st.session_state.pop("analysis", None)
+                st.session_state.pop("stocks", None)
+                st.session_state.pop("fetch_warnings", None)
+                st.session_state.pop("agent_result", None)
+                st.session_state["active_view"] = "analysis"
+                st.rerun()
+    with hist_col:
+        if has_analysis:
+            if st.button("▤", key="toolbar_history", use_container_width=True, help="历史体检"):
+                st.session_state["active_view"] = "history"
+                st.rerun()
+    with display_col:
+        with st.popover("Aa", use_container_width=True, help="显示设置"):
+            st.caption("显示设置")
+            display_settings()
 
 
 
@@ -3207,7 +3230,7 @@ def followup_entry_block(agent_result: dict[str, Any], agent_context: dict[str, 
         </section>
         """
     )
-    if st.button("进入 AI 追问", use_container_width=True, key="open_followup_view"):
+    if st.button("继续追问这次体检 →", use_container_width=True, key="open_followup_view"):
         st.session_state["active_view"] = "followup"
         st.rerun()
     if followup_answers:
@@ -3817,8 +3840,8 @@ def discussion_entry_block(run_id: str = "") -> None:
 
 def comments_page(agent_result: dict[str, Any]) -> None:
     """家庭观察记录专属子页。"""
-    if st.button("← 返回", use_container_width=True, key="back_from_comments_view"):
-        st.session_state["active_view"] = "records"
+    if st.button("← 继续深入", use_container_width=True, key="back_from_comments_view"):
+        st.session_state["active_view"] = "followup"
         st.rerun()
     run_id = str(st.session_state.get("_comments_run_id", "") or
                  (agent_result.get("run_id", "") if agent_result else ""))
@@ -3827,12 +3850,12 @@ def comments_page(agent_result: dict[str, Any]) -> None:
 
 def followup_page(agent_result: dict[str, Any]) -> None:
     agent_context = agent_result.get("agent_context", {}) if agent_result else {}
-    if st.button("← 返回继续深入", key="back_to_analysis_view"):
-        st.session_state["active_view"] = "records"
+    if st.button("← 体检结论", key="back_to_analysis_view"):
+        st.session_state["active_view"] = "analysis"
         st.rerun()
     render_html(
         '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.6rem;">'
-        '体检结论 &rsaquo; 继续深入 &rsaquo; AI 追问</p>'
+        '体检结论 &rsaquo; AI 追问</p>'
     )
     if not agent_context:
         st.info("请先完成一次一键智能体检，再继续追问。")
@@ -3851,7 +3874,7 @@ def followup_page(agent_result: dict[str, Any]) -> None:
     if st.button("记录家人看法 →", use_container_width=True, key="fup_to_guided_comment"):
         st.session_state["_guided_run_id"] = _fup_run_id
         for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
-                   "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
+            "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
             st.session_state.pop(_k, None)
         st.session_state["guided_step"] = 1
         st.session_state["active_view"] = "guided_comment"
@@ -3872,9 +3895,32 @@ def followup_page(agent_result: dict[str, Any]) -> None:
         st.write(f"- 最近读取到的追问记录数量：{len(recent)}")
         if recent:
             st.caption("最近保存的追问：")
-            for row in recent[:3]:
-                created_at = format_datetime_for_display(row.get("created_at"))
-                st.write(f"- {created_at}｜{row.get('question', '')}")
+        for row in recent[:3]:
+            created_at = format_datetime_for_display(row.get("created_at"))
+            st.write(f"- {created_at}｜{row.get('question', '')}")
+
+
+def history_page(agent_result: dict[str, Any]) -> None:
+    if st.button("← 体检结论", key="back_from_history_view"):
+        st.session_state["active_view"] = "analysis"
+        st.rerun()
+    render_html(
+        """
+        <div style="padding:0.25rem 0 0.85rem;">
+            <p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.25rem;">
+                体检结论 &rsaquo; 历史
+            </p>
+            <h2 style="font-size:1.2rem;font-weight:700;color:var(--text);margin:0 0 0.12rem;">
+                历史体检
+            </h2>
+            <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
+                回看最近记录、评分变化和仍需关注的风险点。
+            </p>
+        </div>
+        """
+    )
+    history_replay_block(agent_result)
+    history_records_block()
 
 
 def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
@@ -3902,7 +3948,7 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
             Agent · 下一步
         </p>
         <p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.65rem;">
-            体检结论已生成。还想继续深入吗？
+            体检结论已生成。可以直接继续问 AI。
         </p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0;">
             <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
@@ -3913,15 +3959,11 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
                          background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
                 👨‍👩‍👧&nbsp;{html_escape(comment_chip)}
             </span>
-            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
-                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
-                📋&nbsp;历史对比
-            </span>
         </div>
     </div>
     """)
-    if st.button("继续深入这次体检 →", use_container_width=True, key="open_records_hub"):
-        st.session_state["active_view"] = "records"
+    if st.button("继续追问这次体检 →", use_container_width=True, key="open_followup_direct"):
+        st.session_state["active_view"] = "followup"
         st.rerun()
 
 
@@ -3945,7 +3987,7 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
     if step < 4:
         if st.button("← 返回继续深入", key="guided_back_btn"):
             _clear_wizard()
-            st.session_state["active_view"] = "records"
+            st.session_state["active_view"] = "followup"
             st.rerun()
         render_html(
             '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.3rem;">'
@@ -4185,18 +4227,12 @@ def analysis_page() -> None:
     fetch_warnings = st.session_state.get("fetch_warnings", [])
     agent_result = st.session_state.get("agent_result", {})
     _active = st.session_state.get("active_view", "analysis")
-    # ── 顶部小导航：← 首页（窄列，视觉上明显小于子页的返回按钮）──
-    _hn_col, _ = st.columns([1, 5])
-    with _hn_col:
-        if st.button("← 首页", key="nav_back_home", use_container_width=True):
-            st.session_state.pop("analysis", None)
-            st.session_state.pop("stocks", None)
-            st.session_state.pop("fetch_warnings", None)
-            st.session_state.pop("agent_result", None)
-            st.session_state["active_view"] = "analysis"
-            st.rerun()
     if _active == "followup":
         followup_page(agent_result)
+        render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+        return
+    if _active == "history":
+        history_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     if _active == "comments":
@@ -4208,7 +4244,7 @@ def analysis_page() -> None:
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     if _active == "records":
-        records_hub_page(agent_result)
+        followup_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     agent_result_block(agent_result)
@@ -4232,7 +4268,7 @@ def analysis_page() -> None:
 init_state()
 inject_css()
 site_header()
-display_settings()
+top_toolbar()
 
 if "analysis" in st.session_state:
     analysis_page()
