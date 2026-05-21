@@ -1324,7 +1324,7 @@ def inject_css() -> None:
             font-size: 0.92rem;
         }}
         .score-dial {{
-            width: 104px;
+            width: 136px;
             text-align: center;
         }}
         .score-caption {{
@@ -1533,6 +1533,27 @@ def inject_css() -> None:
             .verdict-card {{
                 grid-template-columns: 1fr;
             }}
+            .score-dial {{
+                margin: 0 auto;
+            }}
+        }}
+        /* ── 顶部导航 pill 样式 ──────────────────────────────── */
+        [data-testid="stMarkdownContainer"]:has(#fi-top-nav) ~ [data-testid="stHorizontalBlock"] .stButton button {{
+            min-height: 1.7rem !important;
+            font-size: 0.76rem !important;
+            font-weight: 500 !important;
+            padding: 0.12rem 0.65rem !important;
+            background: transparent !important;
+            border: 1px solid rgba(122,62,46,0.22) !important;
+            color: var(--text-3) !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }}
+        [data-testid="stMarkdownContainer"]:has(#fi-top-nav) ~ [data-testid="stHorizontalBlock"] .stButton button:hover {{
+            border-color: var(--accent) !important;
+            color: var(--accent) !important;
+            box-shadow: none !important;
+            transform: none !important;
         }}
         /* ── 体检进度：步骤转圈动画 ──────────────────────────── */
         @keyframes fi-spin {{
@@ -1620,10 +1641,11 @@ def display_settings() -> None:
 def top_toolbar() -> None:
     """统一顶部导航入口：主页 / 历史 / 显示设置。"""
     has_analysis = "analysis" in st.session_state
+    render_html('<div id="fi-top-nav"></div>')
     left, spacer, hist_col, display_col = st.columns([1.25, 4.2, 0.8, 0.8])
     with left:
         if has_analysis:
-            if st.button("← 首页", key="toolbar_home", use_container_width=True):
+            if st.button("← 首页", key="toolbar_home"):
                 st.session_state.pop("analysis", None)
                 st.session_state.pop("stocks", None)
                 st.session_state.pop("fetch_warnings", None)
@@ -1632,7 +1654,7 @@ def top_toolbar() -> None:
                 st.rerun()
     with hist_col:
         if has_analysis:
-            if st.button("历史", key="toolbar_history", use_container_width=True, help="历史体检记录"):
+            if st.button("历史", key="toolbar_history", help="历史体检记录"):
                 st.session_state["active_view"] = "history"
                 st.rerun()
     with display_col:
@@ -2269,19 +2291,19 @@ def spark_svg(change: float | None, score: int) -> str:
     """
 
 
-def score_dial(score: int) -> str:
-    radius = 42
+def score_dial(score: int, ring_color: str = "var(--accent)") -> str:
+    radius = 54
     circumference = 2 * pi * radius
     offset = circumference * (1 - score / 100)
     return f"""
     <div class="score-dial">
-        <svg width="104" height="104" viewBox="0 0 104 104" aria-label="综合评分 {score}/100">
-            <circle cx="52" cy="52" r="{radius}" stroke="var(--border)" stroke-width="9" fill="none"></circle>
-            <circle cx="52" cy="52" r="{radius}" stroke="var(--accent)" stroke-width="9" fill="none"
-                    stroke-linecap="round" transform="rotate(-90 52 52)"
+        <svg width="136" height="136" viewBox="0 0 136 136" aria-label="综合评分 {score}/100">
+            <circle cx="68" cy="68" r="{radius}" stroke="var(--border)" stroke-width="10" fill="none"></circle>
+            <circle cx="68" cy="68" r="{radius}" stroke="{ring_color}" stroke-width="10" fill="none"
+                    stroke-linecap="round" transform="rotate(-90 68 68)"
                     stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"></circle>
-            <text x="52" y="50" text-anchor="middle" font-size="25" font-weight="700" fill="var(--text)" font-family="var(--font-num)">{score}</text>
-            <text x="52" y="71" text-anchor="middle" font-size="13" fill="var(--text-3)" font-family="var(--font-num)">/100</text>
+            <text x="68" y="62" text-anchor="middle" font-size="42" font-weight="800" fill="var(--text)" font-family="var(--font-num)">{score}</text>
+            <text x="68" y="83" text-anchor="middle" font-size="14" fill="var(--text-3)" font-family="var(--font-num)">/100</text>
         </svg>
         <div class="score-caption">综合评分</div>
     </div>
@@ -2295,23 +2317,27 @@ def risk_signal_info(score: int, raw_level: str = "") -> dict[str, str]:
             "class": "risk-neutral",
             "status": "暂无法判断",
             "caption": "请先确认持仓和缓存数据",
+            "color": "#9b9288",
         }
     if "红" in text or score < 60:
         return {
             "class": "risk-red",
             "status": "风险偏高",
             "caption": "先看现金、单只占比和家庭承受能力",
+            "color": "#c85a4a",
         }
     if "黄" in text or score < 80:
         return {
             "class": "risk-yellow",
             "status": "需要注意",
             "caption": "有风险点需要持续观察",
+            "color": "#dfb844",
         }
     return {
         "class": "risk-green",
         "status": "风险较低",
         "caption": "结构相对可控，但仍需定期复盘",
+        "color": "#4e9f68",
     }
 
 
@@ -3232,11 +3258,11 @@ def followup_block(agent_context: dict[str, Any]) -> None:
         st.session_state["followup_questions"] = cached
     questions: list[str] = cached
 
-    st.caption("你可以这样问：")
+    st.caption("点击直接问 AI：")
     col_a, col_b = st.columns(2)
     for qi, question in enumerate(questions):
         col = col_a if qi % 2 == 0 else col_b
-        if col.button(f"AI 建议｜{question}", use_container_width=True, key=f"fq_{qi}"):
+        if col.button(question, use_container_width=True, key=f"fq_{qi}"):
             save_followup_answer(agent_context, question)
             st.rerun()
 
@@ -3485,47 +3511,38 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
     }
 
     cards = []
+    detail_rows: list[tuple[str, str, str, str]] = []
     for item in factors:
         name = str(item.get("name", ""))
         score = float(item.get("score", 0) or 0)
         weight = float(item.get("weight", 0) or 0)
-        contribution = float(item.get("contribution", 0) or 0)
         tone_label = str(item.get("tone_label", "看") or "看")
         color = color_by_tone.get(str(item.get("tone", "")), "#b97a1a")
         status = str(item.get("status", "") or "需要继续观察")
         plain = str(item.get("plain", "") or name)
         watch = str(item.get("watch", "") or "结合本次体检结果继续观察")
+        detail_rows.append((name, color, plain, watch))
         cards.append(
             f"""
             <article style="border:1px solid var(--border);border-radius:12px;background:var(--surface);
-                            padding:0.85rem 0.9rem;min-width:0;">
-                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.35rem;">
-                    <span style="width:1.65rem;height:1.65rem;border-radius:999px;background:{color};
+                            padding:0.72rem 0.82rem;min-width:0;">
+                <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.28rem;">
+                    <span style="width:1.45rem;height:1.45rem;border-radius:999px;background:{color};
                                  color:#fff;display:inline-flex;align-items:center;justify-content:center;
-                                 font-size:0.78rem;font-weight:800;flex-shrink:0;">{html_escape(tone_label)}</span>
-                    <div style="min-width:0;">
-                        <div style="font-size:0.9rem;font-weight:800;color:var(--text);line-height:1.25;">
-                            {html_escape(name)}
-                        </div>
-                        <div style="font-size:0.72rem;color:var(--text-3);line-height:1.35;">
-                            权重 {weight:.0f}% · 贡献约 {contribution:.1f} 分
-                        </div>
+                                 font-size:0.7rem;font-weight:800;flex-shrink:0;">{html_escape(tone_label)}</span>
+                    <div style="font-size:0.88rem;font-weight:800;color:var(--text);line-height:1.2;flex:1;min-width:0;">
+                        {html_escape(name)}
+                    </div>
+                    <div style="font-size:0.82rem;font-weight:800;color:{color};white-space:nowrap;flex-shrink:0;">
+                        {score:.0f}<span style="font-size:0.62rem;color:var(--text-3);font-weight:400;">/100</span>
                     </div>
                 </div>
-                <div style="height:0.42rem;border-radius:999px;background:var(--bg-2);overflow:hidden;
-                            border:1px solid var(--border);margin:0.55rem 0 0.45rem;">
-                    <div style="width:{max(0, min(100, score)):.1f}%;height:100%;background:{color};
-                                border-radius:999px;"></div>
+                <div style="height:0.38rem;border-radius:999px;background:var(--bg-2);overflow:hidden;margin:0 0 0.28rem;">
+                    <div style="width:{max(0, min(100, score)):.1f}%;height:100%;background:{color};border-radius:999px;"></div>
                 </div>
-                <div style="font-size:0.78rem;font-weight:700;color:{color};margin-bottom:0.25rem;">
-                    {score:.0f}/100 · {html_escape(status)}
+                <div style="font-size:0.72rem;color:{color};font-weight:600;">
+                    {html_escape(status)} · 权重 {weight:.0f}%
                 </div>
-                <p style="font-size:0.78rem;color:var(--text-2);line-height:1.5;margin:0 0 0.25rem;">
-                    {html_escape(plain)}
-                </p>
-                <p style="font-size:0.72rem;color:var(--text-3);line-height:1.45;margin:0;">
-                    看：{html_escape(watch)}
-                </p>
             </article>
             """
         )
@@ -3551,12 +3568,26 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
                     简单说，就是{html_escape(focus_plain)}。
                 </p>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.6rem;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
                 {''.join(cards)}
             </div>
         </section>
         """
     )
+    if detail_rows:
+        with st.expander("各因子详细说明", expanded=False):
+            for d_name, d_color, d_plain, d_watch in detail_rows:
+                render_html(
+                    f'<div style="border-left:3px solid {d_color};'
+                    f'padding:0.35rem 0.75rem;margin-bottom:0.55rem;">'
+                    f'<div style="font-size:0.86rem;font-weight:700;color:var(--text);'
+                    f'margin-bottom:0.18rem;">{html_escape(d_name)}</div>'
+                    f'<p style="font-size:0.8rem;color:var(--text-2);line-height:1.5;margin:0 0 0.15rem;">'
+                    f'{html_escape(d_plain)}</p>'
+                    f'<p style="font-size:0.74rem;color:var(--text-3);line-height:1.45;margin:0;">'
+                    f'关注：{html_escape(d_watch)}</p>'
+                    f'</div>'
+                )
 
 
 def _confidence_badge_html(level: str, level_code: str, summary: str) -> str:
@@ -3719,7 +3750,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                         <p class="muted">{html_escape(data_status)}</p>
                     </div>
                 </div>
-                {score_dial(risk_score)}
+                {score_dial(risk_score, risk_info.get("color", "var(--accent)"))}
             </div>
         </section>
         """
