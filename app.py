@@ -3306,15 +3306,20 @@ def family_disagreement_block(disagreement: dict[str, Any]) -> None:
         line = html_escape(disagreement.get("summary") or "家庭成员在同一个风险关注点上存在不同看法。")
     render_html(
         f"""
-        <section class="block" style="border-color:#d08a2d;background:#fff7ed;">
-            <div class="block-head" style="margin-bottom:.35rem;">
-                <div>
-                    <h2 class="block-title" style="font-size:1.2rem;">⚠️ 本次最值得先处理的：家庭风险看法不一致</h2>
-                    <p class="block-subtitle">{line}</p>
-                    <p class="muted">组合最大的风险有时不是某只股票，而是家人对风险理解不一致。建议这次体检先围绕这一点聊清楚。</p>
-                </div>
+        <div style="display:flex;align-items:flex-start;gap:0.5rem;
+                    padding:0.45rem 0.85rem;margin:0.3rem 0 0.35rem;
+                    background:#fff7ed;border-radius:10px;border:1.5px solid #d08a2d;">
+            <span style="font-size:0.9rem;flex-shrink:0;line-height:1.6;">⚠️</span>
+            <div style="min-width:0;">
+                <span style="font-size:0.86rem;font-weight:700;color:#7a3e2e;">
+                    家庭风险看法不一致
+                </span>
+                <span style="font-size:0.8rem;color:#7a3e2e;margin-left:0.3rem;">{line}</span>
+                <p style="font-size:0.72rem;color:#9a6a2a;margin:0.1rem 0 0;">
+                    建议这次体检先围绕这一点聊清楚。
+                </p>
             </div>
-        </section>
+        </div>
         """
     )
 
@@ -3338,15 +3343,15 @@ def intent_action_gap_block(gap_data: dict[str, Any]) -> None:
         current     = _hesc(g, "current_desc")
         gap_desc    = _hesc(g, "gap_desc")
         rows_html += (
-            f'<li style="padding:0.35rem 0;border-bottom:1px solid rgba(122,62,46,0.1);'
-            f'display:flex;align-items:flex-start;gap:0.55rem;">'
-            f'<span style="flex-shrink:0;font-size:0.75rem;font-weight:700;color:#7a3e2e;'
-            f'background:rgba(122,62,46,0.1);border-radius:999px;padding:0.15rem 0.5rem;'
+            f'<li style="padding:0.22rem 0;border-bottom:1px solid rgba(122,62,46,0.08);'
+            f'display:flex;align-items:flex-start;gap:0.45rem;">'
+            f'<span style="flex-shrink:0;font-size:0.72rem;font-weight:700;color:#7a3e2e;'
+            f'background:rgba(122,62,46,0.1);border-radius:999px;padding:0.1rem 0.45rem;'
             f'white-space:nowrap;">{member}</span>'
-            f'<span style="font-size:0.84rem;color:var(--text);line-height:1.55;">'
+            f'<span style="font-size:0.82rem;color:var(--text);line-height:1.45;">'
             f'{gap_desc}'
-            f'<span style="font-size:0.72rem;color:var(--text-3);margin-left:0.3rem;">'
-            f'记录立场：{stated}／关注：{focus_label}／当前：{current}</span>'
+            f'<span style="font-size:0.7rem;color:var(--text-3);margin-left:0.25rem;">'
+            f'立场：{stated}／{focus_label}／{current}</span>'
             f'</span></li>'
         )
     extra = len(gaps) - len(show_gaps)
@@ -3357,18 +3362,18 @@ def intent_action_gap_block(gap_data: dict[str, Any]) -> None:
     )
     render_html(
         f"""
-        <section style="margin:0.5rem 0 0.7rem;border-radius:12px;
-                        border:1.5px solid rgba(122,62,46,0.35);
-                        background:rgba(122,62,46,0.05);overflow:hidden;">
-            <div style="padding:0.5rem 0.9rem 0.35rem;display:flex;align-items:center;
-                        gap:0.45rem;border-bottom:1px solid rgba(122,62,46,0.12);">
-                <span style="font-size:0.9rem;">🪞</span>
-                <span style="font-size:0.9rem;font-weight:700;color:#7a3e2e;">意图与持仓差距</span>
-                <span style="font-size:0.72rem;color:var(--text-3);margin-left:auto;">
+        <section style="margin:0.3rem 0 0.45rem;border-radius:10px;
+                        border:1.5px solid rgba(122,62,46,0.3);
+                        background:rgba(122,62,46,0.04);overflow:hidden;">
+            <div style="padding:0.35rem 0.85rem 0.25rem;display:flex;align-items:center;
+                        gap:0.4rem;border-bottom:1px solid rgba(122,62,46,0.1);">
+                <span style="font-size:0.85rem;">🪞</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#7a3e2e;">意图与持仓差距</span>
+                <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">
                     家人立场 vs 当前持仓
                 </span>
             </div>
-            <ul style="margin:0;padding:0.2rem 0.9rem 0.5rem;list-style:none;">
+            <ul style="margin:0;padding:0.1rem 0.85rem 0.35rem;list-style:none;">
                 {rows_html}
             </ul>
             {extra_html}
@@ -3514,25 +3519,31 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # ── 风险预警：第一眼可见，不折叠 ──────────────────────────
+    _show_risks = main_risks[:4]
+    _extra_risk_n = max(0, len(main_risks) - 4)
     _risk_rows = "".join(
-        f'<li style="padding:0.3rem 0;display:flex;align-items:baseline;gap:0.6rem;'
-        f'border-bottom:1px solid rgba(122,62,46,0.09);">'
-        f'<span style="flex-shrink:0;font-size:0.7rem;font-weight:700;color:#fff;'
-        f'background:#b94040;border-radius:50%;width:1.45em;height:1.45em;'
+        f'<li style="padding:0.18rem 0;display:flex;align-items:baseline;gap:0.55rem;'
+        f'border-bottom:1px solid rgba(122,62,46,0.07);">'
+        f'<span style="flex-shrink:0;font-size:0.65rem;font-weight:700;color:#fff;'
+        f'background:#b94040;border-radius:50%;width:1.35em;height:1.35em;'
         f'display:inline-flex;align-items:center;justify-content:center;line-height:1;">'
         f'{i + 1}</span>'
-        f'<span style="font-size:0.88rem;line-height:1.5;color:var(--text);">{html_escape(r)}</span>'
+        f'<span style="font-size:0.83rem;line-height:1.45;color:var(--text);">{html_escape(r)}</span>'
         f'</li>'
-        for i, r in enumerate(main_risks[:6])
+        for i, r in enumerate(_show_risks)
+    )
+    _more_html = (
+        f'<p style="font-size:0.7rem;color:var(--text-3);margin:0.2rem 0 0;padding-left:0.1rem;">'
+        f'另有 {_extra_risk_n} 项，可在"查看完整持仓数据"中查看。</p>'
+        if _extra_risk_n else ""
     )
     render_html(
         f"""
-        <section style="margin:0.5rem 0 0.7rem;border-radius:12px;
+        <section style="margin:0.35rem 0 0.5rem;border-radius:10px;
                         border:1.5px solid #e8c4b2;background:#fff9f6;overflow:hidden;">
-            <div style="padding:0.5rem 0.9rem 0.35rem;display:flex;align-items:center;
-                        gap:0.45rem;border-bottom:1px solid #f0ddd3;">
-                <svg width="17" height="17" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
+            <div style="padding:0.4rem 0.85rem 0.28rem;display:flex;align-items:center;
+                        gap:0.4rem;border-bottom:1px solid #f0ddd3;">
+                <svg width="15" height="15" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
                     <path d="M8.5 1.5 L15.5 14.5 L1.5 14.5 Z"
                           fill="#b94040" opacity="0.18"
                           stroke="#b94040" stroke-width="1.4" stroke-linejoin="round"/>
@@ -3540,14 +3551,15 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                           stroke="#b94040" stroke-width="1.6" stroke-linecap="round"/>
                     <circle cx="8.5" cy="12.5" r="0.85" fill="#b94040"/>
                 </svg>
-                <span style="font-size:0.9rem;font-weight:700;color:#7a3e2e;">本次风险预警</span>
-                <span style="font-size:0.72rem;color:var(--text-3);margin-left:auto;">
+                <span style="font-size:0.85rem;font-weight:700;color:#7a3e2e;">本次风险预警</span>
+                <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">
                     共 {len(main_risks)} 项待关注
                 </span>
             </div>
-            <ul style="margin:0;padding:0.15rem 0.9rem 0.45rem;list-style:none;">
+            <ul style="margin:0;padding:0.1rem 0.85rem 0.35rem;list-style:none;">
                 {_risk_rows}
             </ul>
+            {_more_html}
         </section>
         """
     )
@@ -4130,13 +4142,12 @@ def followup_page(agent_result: dict[str, Any]) -> None:
     _cta_label = (
         f"追问完成（{_fup_ans_n} 条），记录家人看法 →"
         if _has_followup
-        else "完成追问后，点这里记录家人看法 →"
+        else "跳过追问，直接记录家人看法 →"
     )
     if st.button(
         _cta_label,
         use_container_width=True,
         key="fup_to_guided_comment",
-        disabled=not _has_followup,
         type="primary",
     ):
         st.session_state["_guided_run_id"] = _fup_run_id
@@ -4442,9 +4453,11 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
                 st.session_state["guided_step"] = 1
                 st.rerun()
         with _cb:
-            if st.button("返回主页面", use_container_width=True, key="gw_go_home"):
+            if st.button("返回填仓页面", use_container_width=True, key="gw_go_home"):
                 _clear_wizard()
-                st.session_state["active_view"] = "analysis"
+                st.session_state.pop("analysis", None)
+                st.session_state.pop("stocks", None)
+                st.session_state.pop("fetch_warnings", None)
                 st.rerun()
 
 
