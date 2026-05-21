@@ -13,7 +13,7 @@ def percent(value: float) -> str:
 
 def generate_txt_report(analysis: dict[str, Any]) -> str:
     lines = [
-        "家庭投资雷达 Agent 体检报告",
+        "FamilyReader 家庭持仓读懂器体检报告",
         "",
         f"分析时间：{analysis['analysis_time']}",
         f"数据状态：{analysis['data_status']}",
@@ -69,7 +69,7 @@ def generate_ai_txt_report(ai_text: str, analysis: dict[str, Any]) -> str:
         f"{item['code']} {item['name']}" for item in analysis.get("stock_results", [])
     )
     lines = [
-        "家庭投资助手 · AI 通俗说明",
+        "FamilyReader · AI 通俗说明",
         "=" * 44,
         f"体检时间：{analysis.get('analysis_time', '')}",
         f"持仓标的：{stocks_summary or '未知'}",

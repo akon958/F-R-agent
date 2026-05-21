@@ -1647,7 +1647,7 @@ def top_toolbar() -> None:
                 st.rerun()
     with hist_col:
         if has_analysis:
-            if st.button("▤", key="toolbar_history", use_container_width=True, help="历史体检"):
+            if st.button("历史", key="toolbar_history", use_container_width=True, help="历史体检记录"):
                 st.session_state["active_view"] = "history"
                 st.rerun()
     with display_col:
@@ -4059,9 +4059,15 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
         </div>
     </div>
     """)
-    if st.button("继续追问这次体检 →", use_container_width=True, key="open_followup_direct"):
-        st.session_state["active_view"] = "followup"
-        st.rerun()
+    btn_follow, btn_history = st.columns(2)
+    with btn_follow:
+        if st.button("继续追问 →", use_container_width=True, key="open_followup_direct"):
+            st.session_state["active_view"] = "followup"
+            st.rerun()
+    with btn_history:
+        if st.button("查看历史体检 →", use_container_width=True, key="open_history_from_result"):
+            st.session_state["active_view"] = "history"
+            st.rerun()
 
 
 def guided_comment_page(agent_result: dict[str, Any]) -> None:
