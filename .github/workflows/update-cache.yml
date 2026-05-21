@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -79,8 +81,31 @@ jobs:
 
       - name: Commit updated cache
         run: |
+          BRANCH="${GITHUB_REF_NAME:-main}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # The cache update can take several minutes. During that time the
+          # remote branch may receive new commits, so sync first and then push
+          # our cache commit on top of the latest branch tip.
+          git pull --rebase --autostash origin "$BRANCH"
+
           git add stock_metrics.csv
-          git diff --cached --quiet || git commit -m "Update stock metrics cache"
-          git push
+          if git diff --cached --quiet; then
+            echo "stock_metrics.csv has no changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update stock metrics cache"
+
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$BRANCH"; then
+              echo "Pushed updated stock_metrics.csv to $BRANCH."
+              exit 0
+            fi
+            echo "Push rejected, rebasing on latest $BRANCH and retrying ($attempt/3)..."
+            git pull --rebase --autostash origin "$BRANCH"
+          done
+
+          echo "Failed to push after 3 attempts."
+          exit 1
