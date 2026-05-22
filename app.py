@@ -1430,9 +1430,9 @@ def home_hero() -> None:
     render_html(
         """
         <div class="hero-card" style="padding: 1.3rem 1.3rem 0.6rem; margin-bottom: 0.5rem;">
-            <div class="eyebrow">家庭持仓风险读懂工具</div>
+            <div class="eyebrow">家庭投资风险体检</div>
             <h1 class="hero-title">输入持仓，看清风险。</h1>
-            <p class="hero-subtitle">帮助家人看清这只标的的风险、数据是否完整，以及是否需要继续观察。不预测涨跌，不构成买卖建议。</p>
+            <p class="hero-subtitle">帮家人看清持仓风险和资金结构。不预测涨跌，不构成买卖建议。</p>
         </div>
         """
     )
@@ -1904,7 +1904,11 @@ def cache_tools() -> None:
 
 def home_page() -> None:
     home_hero()
-    guide_block()
+    with st.expander("这个工具会做什么", expanded=False):
+        guide_block()
+    with st.expander("可用斜杠命令", expanded=False):
+        from question_router import COMMAND_HELP as _SLASH_HELP
+        st.markdown(_SLASH_HELP)
     st.divider()
     cache_tools()
     with st.expander("显示设置", expanded=False):
@@ -3482,153 +3486,35 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     _cross_val    = agent_result.get("cross_validation") or {}
     _history_analysis = agent_result.get("history_analysis") or {}
     _behavior_note = str(_history_analysis.get("behavior_note") or "")
+    _analysis = st.session_state.get("analysis") or agent_result.get("analysis") or {}
 
-    # ── 1. 简洁状态卡（4 行以内，不含技术词）──────────────────
-    data_source_label = (
-        "实时行情"
-        if not agent_result.get("debug_info", {}).get("使用本地缓存", True)
-        else "本地缓存"
-    )
-    storage_status = agent_result.get("storage_status") or get_storage_status()
-    storage_backend = storage_status.get("backend", "local_csv")
-    storage_label = "Supabase 云数据库" if storage_backend == "supabase" else "本地 CSV 兜底"
-    saved_label = "已保存" if agent_result.get("saved_history") else "未保存"
-    storage_note = (
-        "记录已保存到云端，重新打开页面后仍可读取。"
-        if storage_backend == "supabase" and agent_result.get("saved_history")
-        else "本地 CSV 仅适合开发测试，Streamlit Cloud 重启或重新部署后可能丢失。"
-        if agent_result.get("saved_history")
-        else "本次历史记录暂未保存，不影响体检结果。"
-    )
+    # ── 完成提示（轻量横条）──────────────────────────────────
     render_html(
-        f"""
-        <div style="display:flex;align-items:center;gap:0.55rem;
-                    padding:0.5rem 0.85rem;margin-bottom:0.25rem;
+        """
+        <div style="display:flex;align-items:center;gap:0.5rem;
+                    padding:0.45rem 0.85rem;margin-bottom:0.6rem;
                     background:var(--accent-soft);border-radius:10px;">
-            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" style="flex-shrink:0;">
+            <svg width="18" height="18" viewBox="0 0 22 22" fill="none" style="flex-shrink:0;">
                 <circle cx="11" cy="11" r="11" fill="#7a3e2e" opacity="0.14"/>
                 <path d="M6.5 11.5 L9.5 14.5 L15.5 8" stroke="#7a3e2e"
                       stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            <div style="min-width:0;">
-                <span style="font-size:0.92rem;font-weight:700;color:var(--text);">智能体检已完成</span>
-                <span style="font-size:0.75rem;color:var(--text-3);margin-left:0.45rem;">·&nbsp;已检查持仓结构、现金比例与集中风险</span>
-            </div>
+            <span style="font-size:0.85rem;font-weight:700;color:var(--text);">体检完成</span>
+            <span style="font-size:0.72rem;color:var(--text-3);margin-left:0.15rem;">
+                ·&nbsp;已检查持仓结构、现金比例与集中风险
+            </span>
         </div>
-        <p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.4rem;padding-left:0.2rem;">
-            数据来源：{html_escape(data_source_label)}&ensp;·&ensp;存储方式：{html_escape(storage_label)}&ensp;·&ensp;历史记录：{html_escape(saved_label)}&ensp;·&ensp;{html_escape(storage_note)}
-        </p>
-        {_confidence_badge_html(_conf_level, _conf_code, _conf_summary)}
-        {_cross_validation_html(_cross_val)}
         """
     )
 
-    if _behavior_note:
-        render_html(
-            f'<p style="font-size:0.78rem;color:var(--text-3);'
-            f'margin:0 0 0.4rem;padding:0.35rem 0.75rem;'
-            f'background:var(--accent-soft);border-radius:8px;">'
-            f'📌&nbsp;{html_escape(_behavior_note)}</p>'
-        )
+    # ── Part 1：核心结果卡片 ─────────────────────────────────
 
-    # ── 主动预警：与上次体检相比的关键变化 ──────────────────────
-    _delta = agent_result.get("delta_alert") or {}
-    if _delta.get("has_alert"):
-        _dlevel  = str(_delta.get("level") or "caution")
-        _dsum    = str(_delta.get("summary") or "")
-        _dbg, _dfg = {
-            "warning":  ("#fef2f2", "#b91c1c"),
-            "caution":  ("#fffbeb", "#92400e"),
-            "improved": ("#f0fdf4", "#15803d"),
-        }.get(_dlevel, ("#f8fafc", "#475569"))
-        _dicon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(_dlevel, "△")
-        _changes_html = "".join(
-            f'<span style="display:block;font-size:0.78rem;color:{_dfg};'
-            f'padding:0.1rem 0;">{html_escape(c)}</span>'
-            for c in (_delta.get("changes") or [])
-        )
-        render_html(
-            f"""
-            <div style="margin:0.3rem 0 0.45rem;padding:0.55rem 0.85rem;
-                        background:{_dbg};border-radius:10px;
-                        border:1.5px solid color-mix(in srgb,{_dfg} 30%,transparent);">
-                <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.18rem;">
-                    <span style="font-size:0.82rem;">{_dicon}</span>
-                    <span style="font-size:0.85rem;font-weight:700;color:{_dfg};">与上次体检相比</span>
-                </div>
-                {_changes_html}
-            </div>
-            """
-        )
-
-    agent_memory_block(agent_result.get("agent_memory", {}))
-
-    _show_risks = main_risks[:4]
-    _extra_risk_n = max(0, len(main_risks) - 4)
-    _risk_rows = "".join(
-        f'<li style="padding:0.18rem 0;display:flex;align-items:baseline;gap:0.55rem;'
-        f'border-bottom:1px solid rgba(122,62,46,0.07);">'
-        f'<span style="flex-shrink:0;font-size:0.65rem;font-weight:700;color:#fff;'
-        f'background:#b94040;border-radius:50%;width:1.35em;height:1.35em;'
-        f'display:inline-flex;align-items:center;justify-content:center;line-height:1;">'
-        f'{i + 1}</span>'
-        f'<span style="font-size:0.83rem;line-height:1.45;color:var(--text);">{html_escape(r)}</span>'
-        f'</li>'
-        for i, r in enumerate(_show_risks)
-    )
-    _more_html = (
-        f'<p style="font-size:0.7rem;color:var(--text-3);margin:0.2rem 0 0;padding-left:0.1rem;">'
-        f'另有 {_extra_risk_n} 项，可在"查看完整持仓数据"中查看。</p>'
-        if _extra_risk_n else ""
-    )
-    render_html(
-        f"""
-        <section style="margin:0.35rem 0 0.5rem;border-radius:10px;
-                        border:1.5px solid #e8c4b2;background:#fff9f6;overflow:hidden;">
-            <div style="padding:0.4rem 0.85rem 0.28rem;display:flex;align-items:center;
-                        gap:0.4rem;border-bottom:1px solid #f0ddd3;">
-                <svg width="15" height="15" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
-                    <path d="M8.5 1.5 L15.5 14.5 L1.5 14.5 Z"
-                          fill="#b94040" opacity="0.18"
-                          stroke="#b94040" stroke-width="1.4" stroke-linejoin="round"/>
-                    <line x1="8.5" y1="6.5" x2="8.5" y2="10.5"
-                          stroke="#b94040" stroke-width="1.6" stroke-linecap="round"/>
-                    <circle cx="8.5" cy="12.5" r="0.85" fill="#b94040"/>
-                </svg>
-                <span style="font-size:0.85rem;font-weight:700;color:#7a3e2e;">本次风险预警</span>
-                <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">
-                    共 {len(main_risks)} 项待关注
-                </span>
-            </div>
-            <ul style="margin:0;padding:0.1rem 0.85rem 0.35rem;list-style:none;">
-                {_risk_rows}
-            </ul>
-            {_more_html}
-        </section>
-        """
-    )
-
-    family_disagreement_block(agent_result.get("family_disagreement", {}))
-    intent_action_gap_block(agent_result.get("intent_action_gap", {}))
-
-    # ── 2. 综合体检结论：评分 + 三项指标 ──────────────────────
-    conclusion = (
-        f"现金比例 {percent(float(summary.get('cash_ratio', 0) or 0))}，"
-        f"股票/基金持仓 {percent(float(summary.get('stock_ratio', 0) or 0))}，"
-        f"最大单只占比 {percent(float(summary.get('max_single_ratio', 0) or 0))}。"
-        f"主要关注点：{main_risks[0]}"
-    )
+    # 1a. 综合评分 + 风险等级（verdict-card 保留原样式）
     risk_score = int(agent_result.get("risk_score", 0) or 0)
     risk_info = risk_signal_info(risk_score, str(agent_result.get("risk_level", "") or ""))
     render_html(
         f"""
-        <section class="block ai-report">
-            <div class="block-head">
-                <div>
-                    <h2 class="block-title">本次智能体检结论</h2>
-                    <p class="block-subtitle">{html_escape(conclusion)}</p>
-                </div>
-            </div>
+        <section class="block ai-report" style="margin-bottom:0.45rem;">
             <div class="verdict-card">
                 <div class="risk-signal {html_escape(risk_info["class"])}">
                     <div class="risk-light" aria-hidden="true"></div>
@@ -3645,11 +3531,143 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # ── 3. 详细数据折叠（不阻断主流程，按需展开）──────────────
-    _analysis = st.session_state.get("analysis") or agent_result.get("analysis") or {}
-    with st.expander("📊 查看完整持仓数据", expanded=False):
+    # 1b. 与上次体检相比（主动预警）
+    _delta = agent_result.get("delta_alert") or {}
+    if _delta.get("has_alert"):
+        _dlevel = str(_delta.get("level") or "caution")
+        _dbg, _dfg = {
+            "warning":  ("#fef2f2", "#b91c1c"),
+            "caution":  ("#fffbeb", "#92400e"),
+            "improved": ("#f0fdf4", "#15803d"),
+        }.get(_dlevel, ("#f8fafc", "#475569"))
+        _dicon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(_dlevel, "△")
+        _changes_html = "".join(
+            f'<span style="display:block;font-size:0.78rem;color:{_dfg};'
+            f'padding:0.1rem 0;">{html_escape(c)}</span>'
+            for c in (_delta.get("changes") or [])
+        )
+        render_html(
+            f"""
+            <div style="margin:0 0 0.4rem;padding:0.5rem 0.85rem;
+                        background:{_dbg};border-radius:10px;
+                        border:1.5px solid color-mix(in srgb,{_dfg} 30%,transparent);">
+                <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.15rem;">
+                    <span style="font-size:0.8rem;">{_dicon}</span>
+                    <span style="font-size:0.83rem;font-weight:700;color:{_dfg};">与上次体检相比</span>
+                </div>
+                {_changes_html}
+            </div>
+            """
+        )
+
+    # 1c. 给家人的一句话（dinner_talk，有才显示）
+    _dinner = str(agent_result.get("dinner_talk") or agent_context.get("dinner_talk") or "")
+    if _dinner:
+        render_html(
+            f"""
+            <div style="padding:0.55rem 0.85rem;margin:0 0 0.4rem;
+                        background:var(--gold-soft);border-radius:10px;
+                        border:1.5px solid color-mix(in srgb,var(--gold) 30%,transparent);">
+                <p style="font-size:0.68rem;font-weight:700;letter-spacing:.06em;
+                          color:var(--gold);text-transform:uppercase;margin:0 0 0.18rem;">
+                    给家人的一句话
+                </p>
+                <p style="font-size:0.87rem;color:var(--text);margin:0;line-height:1.55;">
+                    {html_escape(_dinner)}
+                </p>
+            </div>
+            """
+        )
+
+    # 1d. 家庭分歧（有则显示）
+    family_disagreement_block(agent_result.get("family_disagreement", {}))
+
+    # 1e. 主要风险（最多 3 条）
+    _show_risks = main_risks[:3]
+    _extra_risk_n = max(0, len(main_risks) - 3)
+    _risk_rows = "".join(
+        f'<li style="padding:0.18rem 0;display:flex;align-items:baseline;gap:0.55rem;'
+        f'border-bottom:1px solid rgba(122,62,46,0.07);">'
+        f'<span style="flex-shrink:0;font-size:0.65rem;font-weight:700;color:#fff;'
+        f'background:#b94040;border-radius:50%;width:1.35em;height:1.35em;'
+        f'display:inline-flex;align-items:center;justify-content:center;line-height:1;">'
+        f'{i + 1}</span>'
+        f'<span style="font-size:0.83rem;line-height:1.45;color:var(--text);">{html_escape(r)}</span>'
+        f'</li>'
+        for i, r in enumerate(_show_risks)
+    )
+    _more_html = (
+        f'<p style="font-size:0.7rem;color:var(--text-3);margin:0.2rem 0 0;padding-left:0.1rem;">'
+        f'另有 {_extra_risk_n} 项，展开"Agent 智能分析详情"可查看。</p>'
+        if _extra_risk_n else ""
+    )
+    render_html(
+        f"""
+        <section style="margin:0 0 0.45rem;border-radius:10px;
+                        border:1.5px solid #e8c4b2;background:#fff9f6;overflow:hidden;">
+            <div style="padding:0.4rem 0.85rem 0.28rem;display:flex;align-items:center;
+                        gap:0.4rem;border-bottom:1px solid #f0ddd3;">
+                <svg width="15" height="15" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
+                    <path d="M8.5 1.5 L15.5 14.5 L1.5 14.5 Z"
+                          fill="#b94040" opacity="0.18"
+                          stroke="#b94040" stroke-width="1.4" stroke-linejoin="round"/>
+                    <line x1="8.5" y1="6.5" x2="8.5" y2="10.5"
+                          stroke="#b94040" stroke-width="1.6" stroke-linecap="round"/>
+                    <circle cx="8.5" cy="12.5" r="0.85" fill="#b94040"/>
+                </svg>
+                <span style="font-size:0.85rem;font-weight:700;color:#7a3e2e;">主要风险提示</span>
+                <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">
+                    共 {len(main_risks)} 项待关注
+                </span>
+            </div>
+            <ul style="margin:0;padding:0.1rem 0.85rem 0.35rem;list-style:none;">
+                {_risk_rows}
+            </ul>
+            {_more_html}
+        </section>
+        """
+    )
+
+    # 1f. 下一步 CTA：查看 AI 风险说明
+    render_html("""
+    <div style="margin:0.15rem 0 0.5rem;border-radius:14px;
+                border:1.5px solid #e8c4b2;background:#fff9f6;
+                padding:0.7rem 0.95rem 0.6rem;">
+        <p style="font-size:0.68rem;font-weight:600;letter-spacing:.06em;
+                  color:#7a3e2e;text-transform:uppercase;margin:0 0 0.2rem;">第 2 步</p>
+        <p style="font-size:0.92rem;font-weight:700;color:var(--text);margin:0 0 0.12rem;">
+            查看 AI 对这次风险的完整说明
+        </p>
+        <p style="font-size:0.78rem;color:var(--text-3);margin:0;">
+            基于本次体检数据生成，不构成买卖建议。
+        </p>
+    </div>
+    """)
+    if st.button("查看 AI 风险说明 →", use_container_width=True,
+                 key="goto_ai_report_btn", type="primary"):
+        st.session_state["active_view"] = "ai_report"
+        st.rerun()
+
+    # ── Part 2：Agent 智能分析详情（默认折叠）────────────────
+    with st.expander("Agent 智能分析详情", expanded=False):
+        render_html(_confidence_badge_html(_conf_level, _conf_code, _conf_summary))
+        render_html(_cross_validation_html(_cross_val))
+        if _behavior_note:
+            render_html(
+                f'<p style="font-size:0.78rem;color:var(--text-3);'
+                f'margin:0 0 0.4rem;padding:0.35rem 0.75rem;'
+                f'background:var(--accent-soft);border-radius:8px;">'
+                f'记忆&nbsp;{html_escape(_behavior_note)}</p>'
+            )
+        agent_memory_block(agent_result.get("agent_memory", {}))
+        intent_action_gap_block(agent_result.get("intent_action_gap", {}))
+        watch_tasks_block(agent_result)
         if _analysis:
             risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
+
+    # ── Part 3：完整持仓数据与缺失说明（默认折叠）────────────────
+    with st.expander("完整持仓数据与缺失说明", expanded=False):
+        if _analysis:
             portfolio_metrics_block(summary, _analysis)
             with st.expander("持仓明细与数据来源", expanded=False):
                 holdings_detail(_analysis)
@@ -3662,30 +3680,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                         st.caption("· 估值数据暂缺，本次不评价估值高低。")
                     else:
                         st.caption(f"· {title}：{len(items)} 只数据缺失")
-        watch_tasks_block(agent_result)
-
-    # ── 4. 下一步 CTA：进入 AI 风险说明页 ──────────────────────
-    st.markdown("---")
-    render_html("""
-    <div style="margin:0.2rem 0 0.65rem;border-radius:14px;
-                border:1.5px solid #e8c4b2;background:#fff9f6;
-                padding:0.9rem 1.1rem 0.75rem;">
-        <p style="font-size:0.73rem;font-weight:600;letter-spacing:.06em;
-                  color:#7a3e2e;text-transform:uppercase;margin:0 0 0.35rem;">
-            第 2 步
-        </p>
-        <p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.2rem;">
-            查看 AI 对这次风险的完整说明
-        </p>
-        <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
-            基于本次体检数据生成，不构成买卖建议。
-        </p>
-    </div>
-    """)
-    if st.button("查看 AI 风险说明 →", use_container_width=True,
-                 key="goto_ai_report_btn", type="primary"):
-        st.session_state["active_view"] = "ai_report"
-        st.rerun()
 
 
 def developer_debug_block(agent_result: dict[str, Any]) -> None:
@@ -4603,8 +4597,8 @@ def analysis_page() -> None:
         return
     agent_result_block(agent_result)
 
-    # ── 体检过程 / 调试（折叠，不占主流程空间）──────────────────
-    with st.expander("⚙️ 体检过程详情", expanded=False):
+    # ── 补充家庭情况 / 数据警告（折叠）─────────────────────────
+    with st.expander("补充家庭情况", expanded=False):
         inspection_process_block(agent_result)
         for warning in fetch_warnings:
             if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
