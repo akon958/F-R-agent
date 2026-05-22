@@ -48,7 +48,7 @@ jobs:
 
       - name: Update market cache
         run: |
-          python -u update_cache.py --skip-finance | tee update_cache.log
+          python -u update_cache.py --skip-finance --fast-spot | tee update_cache.log
 
       - name: Validate cache file
         run: |
