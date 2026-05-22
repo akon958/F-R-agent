@@ -169,10 +169,23 @@ def _has_any_value(stock: dict[str, Any], fields: list[str]) -> bool:
     return any(stock.get(field) is not None for field in fields)
 
 
+def _has_valid_positive_value(stock: dict[str, Any], fields: list[str]) -> bool:
+    for field in fields:
+        value = stock.get(field)
+        if value in (None, ""):
+            continue
+        try:
+            if float(value) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _collect_missing_data(stocks: list[dict[str, Any]]) -> dict[str, list[str]]:
     missing = {"行情数据缺失": [], "估值数据缺失": [], "财务数据缺失": []}
     market_fields = ["price", "pct_change", "turnover", "最新收盘价", "涨跌幅", "成交额"]
-    valuation_fields = ["pe", "pb", "market_cap", "turnover_rate", "市盈率-动态", "市净率", "总市值", "换手率"]
+    valuation_fields = ["pe", "pb", "市盈率-动态", "市净率"]
     finance_fields = ["roe", "net_margin", "gross_margin", "debt_ratio", "ROE", "净利率", "毛利率", "资产负债率"]
 
     for stock in stocks:
@@ -186,7 +199,7 @@ def _collect_missing_data(stocks: list[dict[str, Any]]) -> dict[str, list[str]]:
             continue
         if not _has_any_value(stock, market_fields):
             missing["行情数据缺失"].append(label)
-        if not _has_any_value(stock, valuation_fields):
+        if not _has_valid_positive_value(stock, valuation_fields):
             missing["估值数据缺失"].append(label)
         if not _has_any_value(stock, finance_fields):
             missing["财务数据缺失"].append(label)

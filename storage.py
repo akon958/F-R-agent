@@ -273,6 +273,13 @@ def create_family_account(account_name: str, password: str) -> dict[str, Any]:
             if "duplicate" in exc_str.lower() or "unique" in exc_str.lower() or "23505" in exc_str:
                 return _account_result(False, clean_name, "supabase", "这个家庭账号已经存在")
             cloud_error = f"{type(exc).__name__}: {exc_str[:160]}"
+            return _account_result(
+                False,
+                clean_name,
+                "supabase",
+                "云端账号表暂时不可用，请先在 Supabase SQL Editor 执行 supabase_schema.sql。",
+                cloud_error,
+            )
     else:
         cloud_error = "未配置 Supabase，使用本地账号文件"
 
@@ -315,6 +322,13 @@ def verify_family_account(account_name: str, password: str) -> dict[str, Any]:
             return _account_result(False, clean_name, "supabase", "密码不正确")
         except Exception as exc:  # noqa: BLE001
             cloud_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            return _account_result(
+                False,
+                clean_name,
+                "supabase",
+                "云端账号表暂时不可用，请先在 Supabase SQL Editor 执行 supabase_schema.sql。",
+                cloud_error,
+            )
     else:
         cloud_error = "未配置 Supabase，使用本地账号文件"
 
@@ -449,7 +463,7 @@ def save_analysis_history(record: dict[str, Any]) -> bool:
 
     local_row = dict(payload)
     local_row["created_at"] = _now_iso()
-    for key in ("main_risks", "missing_data", "data_status", "full_agent_result"):
+    for key in ("main_risks", "missing_data", "data_status", "full_agent_result", "watch_tasks"):
         local_row[key] = _json_text(local_row.get(key))
     saved = _append_csv_row(ANALYSIS_HISTORY_FILE, local_row)
     _LAST_ANALYSIS_SAVE_STATUS = {
@@ -478,6 +492,7 @@ def _normalize_analysis_row(row: dict[str, Any]) -> dict[str, Any]:
     normalized["missing_data"] = _json_load(row.get("missing_data"), {})
     normalized["data_status"] = _json_load(row.get("data_status") or row.get("数据状态"), {})
     normalized["full_agent_result"] = _json_load(row.get("full_agent_result"), {})
+    normalized["watch_tasks"] = _json_load(row.get("watch_tasks"), [])
     normalized["created_at"] = row.get("created_at") or row.get("分析时间") or ""
     return normalized
 

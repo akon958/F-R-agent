@@ -152,6 +152,15 @@ def _make_factor(
     }
 
 
+def _is_valid_positive_metric(value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def build_risk_factor_breakdown(
     analysis: dict[str, Any],
     missing_data: dict[str, list[str]] | None = None,
@@ -211,7 +220,7 @@ def build_risk_factor_breakdown(
         for stock in stock_results:
             pe = stock.get("pe") if stock.get("pe") is not None else stock.get("市盈率-动态")
             pb = stock.get("pb") if stock.get("pb") is not None else stock.get("市净率")
-            if pe in (None, "") or pb in (None, ""):
+            if not _is_valid_positive_metric(pe) or not _is_valid_positive_metric(pb):
                 valuation_missing_n += 1
     valuation_score = max(25.0, 100.0 - valuation_missing_n / holding_count * 70.0)
     valuation_status = "估值数据完整" if valuation_missing_n == 0 else f"{valuation_missing_n} 只估值数据暂缺"
