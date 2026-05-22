@@ -57,7 +57,9 @@ from report_generator import generate_ai_txt_report, generate_txt_report, money,
 from nl_parser import parse_holdings_nl
 from report_exporter import export_text_report
 from storage import (
+    create_family_account,
     format_datetime_for_display,
+    get_family_id,
     get_last_family_comment_read_status,
     get_last_family_comment_save_status,
     get_last_followup_save_status,
@@ -69,6 +71,7 @@ from storage import (
     make_note,
     save_family_comment,
     save_followup_history,
+    verify_family_account,
 )
 
 
@@ -106,6 +109,10 @@ def init_state() -> None:
         "risk_profile": "平衡",
         "nl_input_mode": False,
         "nl_parsed_result": {},
+        "family_logged_in": False,
+        "family_id": "",
+        "family_account_name": "",
+        "family_account_backend": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -124,6 +131,107 @@ def init_state() -> None:
         except Exception:  # noqa: BLE001
             st.session_state.notes = []
         st.session_state.notes_loaded = True
+
+
+def _clear_user_runtime_state() -> None:
+    """Clear per-family page state when switching accounts."""
+    for key in (
+        "analysis",
+        "agent_result",
+        "stocks",
+        "fetch_warnings",
+        "followup_answers",
+        "followup_questions",
+        "family_comments_cache",
+        "family_comments",
+        "family_comments_last_count",
+        "family_comment_last_save",
+        "last_followup_save",
+        "notes",
+        "notes_loaded",
+        "guided_step",
+        "guided_member",
+        "guided_focus",
+        "guided_focus_label",
+        "guided_stance",
+        "guided_stance_label",
+        "guided_text",
+        "guided_save_result",
+    ):
+        st.session_state.pop(key, None)
+    st.session_state["active_view"] = "analysis"
+    st.session_state["notes_loaded"] = False
+    st.session_state["followup_answers"] = []
+    st.session_state["followup_questions"] = []
+    st.session_state["followup_version"] = FOLLOWUP_VERSION
+
+
+def _apply_family_login(result: dict[str, Any]) -> None:
+    _clear_user_runtime_state()
+    st.session_state["family_logged_in"] = True
+    st.session_state["family_id"] = str(result.get("family_id") or "")
+    st.session_state["family_account_name"] = str(result.get("account_name") or "")
+    st.session_state["family_account_backend"] = str(result.get("backend") or "")
+
+
+def _logout_family() -> None:
+    for key in ("family_logged_in", "family_id", "family_account_name", "family_account_backend"):
+        st.session_state.pop(key, None)
+    _clear_user_runtime_state()
+
+
+def auth_gate() -> bool:
+    """Small account gate so each family reads and writes its own records."""
+    if st.session_state.get("family_logged_in") and st.session_state.get("family_id"):
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            st.caption(
+                f"当前家庭账号：{st.session_state.get('family_account_name') or get_family_id()}"
+            )
+        with c2:
+            if st.button("退出", key="family_logout_btn", use_container_width=True):
+                _logout_family()
+                st.rerun()
+        return True
+
+    render_html(
+        """
+        <div class="fr-card" style="margin-top:1rem;">
+            <div class="fr-eyebrow">Family Account</div>
+            <h2 style="margin:0.15rem 0 0.35rem;">进入 FamilyReader</h2>
+            <p style="margin:0;color:var(--text-2);">
+                创建一个家庭账号后，体检记录、AI 追问和家人看法会按账号分开保存。
+            </p>
+        </div>
+        """
+    )
+    tab_login, tab_create = st.tabs(["登录", "创建账号"])
+    with tab_login:
+        login_name = st.text_input("家庭账号", key="login_family_name", placeholder="例如：张家")
+        login_password = st.text_input("密码", key="login_family_password", type="password")
+        if st.button("登录 FamilyReader", key="family_login_btn", use_container_width=True, type="primary"):
+            result = verify_family_account(login_name, login_password)
+            if result.get("success"):
+                _apply_family_login(result)
+                st.rerun()
+            else:
+                st.warning(result.get("message") or "登录失败，请检查账号或密码。")
+    with tab_create:
+        create_name = st.text_input("新家庭账号", key="create_family_name", placeholder="例如：张家")
+        create_password = st.text_input("设置密码", key="create_family_password", type="password")
+        create_password2 = st.text_input("再输入一次密码", key="create_family_password2", type="password")
+        if st.button("创建并进入", key="family_create_btn", use_container_width=True):
+            if create_password != create_password2:
+                st.warning("两次输入的密码不一致。")
+            else:
+                result = create_family_account(create_name, create_password)
+                if result.get("success"):
+                    _apply_family_login(result)
+                    st.rerun()
+                else:
+                    st.warning(result.get("message") or "账号创建失败，请稍后再试。")
+    st.caption("密码只用于区分家庭数据；不要使用银行卡、支付软件等重要密码。")
+    return False
 
 
 def css_vars(dark_mode: bool | None = None) -> dict[str, str]:
@@ -5106,6 +5214,11 @@ def analysis_page() -> None:
 init_state()
 inject_css()
 site_header()
+
+if not auth_gate():
+    render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+    st.stop()
+
 top_toolbar()
 
 if "analysis" in st.session_state:

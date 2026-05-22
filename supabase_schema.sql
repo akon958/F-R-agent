@@ -51,6 +51,25 @@ create table if not exists family_profile (
     updated_at timestamp with time zone default now()
 );
 
+create table if not exists family_accounts (
+    id bigserial primary key,
+    family_id text unique not null,
+    account_name text not null,
+    account_key text unique not null,
+    password_salt text not null,
+    password_hash text not null,
+    created_at timestamp with time zone default now(),
+    updated_at timestamp with time zone default now()
+);
+
+alter table family_accounts add column if not exists family_id text;
+alter table family_accounts add column if not exists account_name text;
+alter table family_accounts add column if not exists account_key text;
+alter table family_accounts add column if not exists password_salt text;
+alter table family_accounts add column if not exists password_hash text;
+alter table family_accounts add column if not exists created_at timestamp with time zone default now();
+alter table family_accounts add column if not exists updated_at timestamp with time zone default now();
+
 create index if not exists idx_analysis_history_family_created
     on analysis_history (family_id, created_at desc);
 
@@ -59,6 +78,9 @@ create index if not exists idx_followup_history_family_created
 
 create index if not exists idx_feedback_history_family_created
     on feedback_history (family_id, created_at desc);
+
+create unique index if not exists idx_family_accounts_account_key
+    on family_accounts (account_key);
 
 
 -- ─────────────────────────────────────────────────────────────────
@@ -126,15 +148,18 @@ alter table if exists followup_history  disable row level security;
 alter table if exists feedback_history  disable row level security;
 alter table if exists family_profile    disable row level security;
 alter table if exists family_comments   disable row level security;
+alter table if exists family_accounts   disable row level security;
 
 grant all on table analysis_history  to anon, authenticated;
 grant all on table followup_history  to anon, authenticated;
 grant all on table feedback_history  to anon, authenticated;
 grant all on table family_profile    to anon, authenticated;
 grant all on table family_comments   to anon, authenticated;
+grant all on table family_accounts   to anon, authenticated;
 
 grant usage, select on sequence analysis_history_id_seq  to anon, authenticated;
 grant usage, select on sequence followup_history_id_seq  to anon, authenticated;
 grant usage, select on sequence feedback_history_id_seq  to anon, authenticated;
 grant usage, select on sequence family_profile_id_seq    to anon, authenticated;
 grant usage, select on sequence family_comments_id_seq   to anon, authenticated;
+grant usage, select on sequence family_accounts_id_seq   to anon, authenticated;

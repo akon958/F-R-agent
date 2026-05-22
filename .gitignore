@@ -12,15 +12,21 @@ env/
 
 *.log
 C*Temp*streamlit_log.txt
+*streamlit_log.txt
+streamlit_*.txt
+*_out.txt
 
 *.zip
 stock_metrics_backup.csv
 stock_metrics.csv.ckpt
 stock_metrics.csv.tmp
 failed_codes.csv
-analysis_history.csv
-family_comments.csv
 family_notes.json
+analysis_history.csv
+followup_history.csv
+feedback_history.csv
+family_profile.csv
+family_accounts.csv
 
 .DS_Store
 Thumbs.db

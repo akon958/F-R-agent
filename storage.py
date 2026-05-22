@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import re
+import secrets as py_secrets
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +22,7 @@ FOLLOWUP_HISTORY_FILE = BASE_DIR / "followup_history.csv"
 FEEDBACK_HISTORY_FILE = BASE_DIR / "feedback_history.csv"
 FAMILY_PROFILE_FILE = BASE_DIR / "family_profile.csv"
 FAMILY_COMMENTS_FILE = BASE_DIR / "family_comments.csv"
+FAMILY_ACCOUNTS_FILE = BASE_DIR / "family_accounts.csv"
 NOTES_FILE = BASE_DIR / "family_notes.json"
 MAX_NOTES = 200
 COMMENT_FOCUS_MAP = {
@@ -69,6 +72,14 @@ _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS
 
 
 def get_family_id() -> str:
+    try:
+        import streamlit as st
+
+        family_id = str(st.session_state.get("family_id", "") or "").strip()
+        if family_id:
+            return family_id
+    except Exception:  # noqa: BLE001
+        pass
     return "default_family"
 
 
@@ -166,6 +177,165 @@ def _append_csv_row(path: Path, row: dict[str, Any]) -> bool:
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def _same_family(row: dict[str, Any], family_id: str | None = None) -> bool:
+    expected = family_id or get_family_id()
+    row_family = str(row.get("family_id") or "default_family").strip()
+    return row_family == expected
+
+
+def _normalise_account_name(account_name: str) -> str:
+    return re.sub(r"\s+", "", str(account_name or "")).strip()
+
+
+def _account_key(account_name: str) -> str:
+    return _normalise_account_name(account_name).lower()
+
+
+def _family_id_from_account(account_name: str) -> str:
+    digest = hashlib.sha256(_account_key(account_name).encode("utf-8")).hexdigest()[:16]
+    return f"family_{digest}"
+
+
+def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
+    password = str(password or "")
+    salt = salt or py_secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        120_000,
+    ).hex()
+    return salt, digest
+
+
+def _verify_password(password: str, salt: str, expected_hash: str) -> bool:
+    if not salt or not expected_hash:
+        return False
+    _, candidate = _hash_password(password, salt=salt)
+    return py_secrets.compare_digest(candidate, str(expected_hash))
+
+
+def _account_result(
+    success: bool,
+    account_name: str = "",
+    backend: str = "local_csv",
+    message: str = "",
+    error: str = "",
+) -> dict[str, Any]:
+    return {
+        "success": success,
+        "family_id": _family_id_from_account(account_name) if account_name else "",
+        "account_name": _normalise_account_name(account_name),
+        "backend": backend,
+        "message": message,
+        "error": error,
+    }
+
+
+def _save_local_account(row: dict[str, Any]) -> bool:
+    return _append_csv_row(FAMILY_ACCOUNTS_FILE, row)
+
+
+def create_family_account(account_name: str, password: str) -> dict[str, Any]:
+    """Create a lightweight family account for data separation."""
+    clean_name = _normalise_account_name(account_name)
+    key = _account_key(clean_name)
+    if len(clean_name) < 2:
+        return _account_result(False, clean_name, message="账号名至少 2 个字符")
+    if len(str(password or "")) < 6:
+        return _account_result(False, clean_name, message="密码至少 6 位")
+
+    family_id = _family_id_from_account(clean_name)
+    salt, password_hash = _hash_password(password)
+    payload = {
+        "family_id": family_id,
+        "account_name": clean_name,
+        "account_key": key,
+        "password_salt": salt,
+        "password_hash": password_hash,
+    }
+    client = get_supabase_client()
+    if client is not None:
+        try:
+            existing = (
+                client.table("family_accounts")
+                .select("family_id")
+                .eq("account_key", key)
+                .limit(1)
+                .execute()
+            )
+            if isinstance(existing.data, list) and existing.data:
+                return _account_result(False, clean_name, "supabase", "这个家庭账号已经存在")
+            client.table("family_accounts").insert(payload).execute()
+            return _account_result(True, clean_name, "supabase", "家庭账号已创建")
+        except Exception as exc:  # noqa: BLE001
+            cloud_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+    else:
+        cloud_error = "未配置 Supabase，使用本地账号文件"
+
+    rows = _read_csv_rows(FAMILY_ACCOUNTS_FILE)
+    if any(str(row.get("account_key", "")).lower() == key for row in rows):
+        return _account_result(False, clean_name, "local_csv", "这个家庭账号已经存在", cloud_error)
+    local_row = dict(payload)
+    local_row["created_at"] = _now_iso()
+    if _save_local_account(local_row):
+        return _account_result(True, clean_name, "local_csv", "家庭账号已创建，本地保存", cloud_error)
+    return _account_result(False, clean_name, "local_csv", "家庭账号创建失败", cloud_error)
+
+
+def verify_family_account(account_name: str, password: str) -> dict[str, Any]:
+    """Verify a family account without exposing password details."""
+    clean_name = _normalise_account_name(account_name)
+    key = _account_key(clean_name)
+    if not clean_name or not password:
+        return _account_result(False, clean_name, message="请输入账号和密码")
+
+    client = get_supabase_client()
+    if client is not None:
+        try:
+            result = (
+                client.table("family_accounts")
+                .select("family_id, account_name, password_salt, password_hash")
+                .eq("account_key", key)
+                .limit(1)
+                .execute()
+            )
+            rows = result.data if isinstance(result.data, list) else []
+            if not rows:
+                return _account_result(False, clean_name, "supabase", "未找到这个家庭账号")
+            row = rows[0]
+            if _verify_password(password, str(row.get("password_salt", "")), str(row.get("password_hash", ""))):
+                return {
+                    "success": True,
+                    "family_id": str(row.get("family_id") or _family_id_from_account(clean_name)),
+                    "account_name": str(row.get("account_name") or clean_name),
+                    "backend": "supabase",
+                    "message": "登录成功",
+                    "error": "",
+                }
+            return _account_result(False, clean_name, "supabase", "密码不正确")
+        except Exception as exc:  # noqa: BLE001
+            cloud_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+    else:
+        cloud_error = "未配置 Supabase，使用本地账号文件"
+
+    rows = _read_csv_rows(FAMILY_ACCOUNTS_FILE)
+    for row in rows:
+        if str(row.get("account_key", "")).lower() != key:
+            continue
+        if _verify_password(password, str(row.get("password_salt", "")), str(row.get("password_hash", ""))):
+            return {
+                "success": True,
+                "family_id": str(row.get("family_id") or _family_id_from_account(clean_name)),
+                "account_name": str(row.get("account_name") or clean_name),
+                "backend": "local_csv",
+                "message": "登录成功，本地账号文件",
+                "error": cloud_error,
+            }
+        return _account_result(False, clean_name, "local_csv", "密码不正确", cloud_error)
+    return _account_result(False, clean_name, "local_csv", "未找到这个家庭账号", cloud_error)
 
 
 def _get_secret(name: str) -> str:
@@ -322,7 +492,12 @@ def load_recent_analysis_history(limit: int = 5) -> list[dict[str, Any]]:
         except Exception:  # noqa: BLE001
             pass
 
-    rows = [_normalize_analysis_row(row) for row in _read_csv_rows(ANALYSIS_HISTORY_FILE)]
+    family_id = get_family_id()
+    rows = [
+        _normalize_analysis_row(row)
+        for row in _read_csv_rows(ANALYSIS_HISTORY_FILE)
+        if _same_family(row, family_id)
+    ]
     rows = list(reversed(rows))
     return rows[:limit]
 
@@ -393,7 +568,9 @@ def load_recent_followup_history(limit: int = 10) -> list[dict[str, Any]]:
             return result.data if isinstance(result.data, list) else []
         except Exception:  # noqa: BLE001
             pass
-    return list(reversed(_read_csv_rows(FOLLOWUP_HISTORY_FILE)))[:limit]
+    family_id = get_family_id()
+    rows = [row for row in _read_csv_rows(FOLLOWUP_HISTORY_FILE) if _same_family(row, family_id)]
+    return list(reversed(rows))[:limit]
 
 
 def save_feedback_history(
@@ -579,7 +756,10 @@ def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
                     "error": "",
                 }
                 return normalized
-            local_rows = list(reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)))
+            family_id = get_family_id()
+            local_rows = [
+                row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, family_id)
+            ]
             if local_rows:
                 fallback = [_normalize_comment_row(r) for r in local_rows[:limit]]
                 _LAST_FAMILY_COMMENT_READ_STATUS = {
@@ -602,7 +782,8 @@ def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
             read_error = f"{type(exc).__name__}: {str(exc)[:220]}"
     else:
         read_error = "未配置 Supabase，读取本地 CSV"
-    rows = list(reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)))
+    family_id = get_family_id()
+    rows = [row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, family_id)]
     normalized = [_normalize_comment_row(r) for r in rows[:limit]]
     _LAST_FAMILY_COMMENT_READ_STATUS = {
         "backend": "local_csv",
@@ -652,8 +833,9 @@ def load_comments_by_run_id(run_id: str) -> list[dict[str, Any]]:
             return [_normalize_comment_row(r) for r in rows]
         except Exception:  # noqa: BLE001
             pass
+    family_id = get_family_id()
     all_rows = _read_csv_rows(FAMILY_COMMENTS_FILE)
-    return [_normalize_comment_row(r) for r in all_rows if r.get("run_id") == run_id]
+    return [_normalize_comment_row(r) for r in all_rows if _same_family(r, family_id) and r.get("run_id") == run_id]
 
 
 def load_comments_by_analysis(analysis_id: Any) -> list[dict[str, Any]]:
@@ -676,11 +858,12 @@ def load_comments_by_analysis(analysis_id: Any) -> list[dict[str, Any]]:
             return [_normalize_comment_row(r) for r in rows]
         except Exception:  # noqa: BLE001
             pass
+    family_id = get_family_id()
     all_rows = _read_csv_rows(FAMILY_COMMENTS_FILE)
     return [
         _normalize_comment_row(r)
         for r in all_rows
-        if str(r.get("related_analysis_id", "")) == aid
+        if _same_family(r, family_id) and str(r.get("related_analysis_id", "")) == aid
     ]
 
 
@@ -725,7 +908,8 @@ def load_family_profile() -> dict[str, Any] | None:
             return _normalise_profile(data[0]) if data else None
         except Exception:  # noqa: BLE001
             pass
-    rows = _read_csv_rows(FAMILY_PROFILE_FILE)
+    family_id = get_family_id()
+    rows = [row for row in _read_csv_rows(FAMILY_PROFILE_FILE) if _same_family(row, family_id)]
     return _normalise_profile(rows[-1]) if rows else None
 
 
