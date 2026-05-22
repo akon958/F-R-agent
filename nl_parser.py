@@ -10,6 +10,7 @@
   {
     "holdings": [{"code": str, "name": str, "amount": float}],
     "cash":     float,
+    "risk_preference": "保守/稳健/平衡/进取/积极/空字符串",
     "source":   "deepseek" | "regex",
     "confidence": "high" | "medium" | "low",
     "parse_note": str,
@@ -57,6 +58,15 @@ _NAME_TO_CODE: dict[str, str] = {
 }
 
 _CASH_KEYWORDS = ("现金", "存款", "余额", "货币", "活期", "定期", "备用金", "存折")
+_RISK_PREFERENCES = ("保守", "稳健", "平衡", "进取", "积极")
+
+
+def _detect_risk_preference(text: str) -> str:
+    """从口语输入里识别风险承受能力；识别不到时返回空字符串。"""
+    for name in _RISK_PREFERENCES:
+        if name in text:
+            return name
+    return ""
 
 
 def _get_deepseek_key() -> str:
@@ -132,8 +142,9 @@ def _regex_parse(text: str) -> dict[str, Any]:
         # 跳过已通过代码或名称匹配到的（双重去重：code 和 name 均检查）
         if any(h["code"] == code or h["name"] == name for h in holdings):
             continue
-        # CJK 边界断言：防止短名称匹配长名称的子串（如"平安"不应匹配"中国平安"）
-        pattern = r"(?<![^\W\d_])" + re.escape(name) + r"(?![^\W\d_])\s*([\d.]+)\s*([亿千万]?)(?:元|块)?"
+        # 允许"我有茅台 2 万"这类口语前缀，同时避免"平安"误匹配"中国平安"。
+        prefix = r"(?:^|[\s,，。；、:：]|有|持有|拿着|买了|买|持仓)"
+        pattern = prefix + r"\s*" + re.escape(name) + r"(?![^\W\d_])\s*([\d.]+)\s*([亿千万]?)(?:元|块)?"
         m = re.search(pattern, clean)
         if m:
             try:
@@ -154,6 +165,7 @@ def _regex_parse(text: str) -> dict[str, Any]:
     return {
         "holdings": holdings,
         "cash": cash,
+        "risk_preference": _detect_risk_preference(clean),
         "source": "regex",
         "confidence": confidence,
         "parse_note": note,
@@ -168,6 +180,7 @@ _SYSTEM_PROMPT = """你是持仓数据解析助手。将用户的自然语言输
     {"code": "6位股票代码字符串，不确定时填空字符串", "name": "名称", "amount": 金额数字(单位:元)}
   ],
   "cash": 现金金额(数字,单位元,没有填0),
+  "risk_preference": "保守/稳健/平衡/进取/积极；没有识别到就填空字符串",
   "parse_note": "一句话说明哪些识别成功、哪些未识别"
 }
 
@@ -210,6 +223,7 @@ def _deepseek_parse(text: str) -> dict[str, Any] | None:
         return {
             "holdings": holdings,
             "cash": cash,
+            "risk_preference": str(parsed.get("risk_preference") or "").strip(),
             "source": "deepseek",
             "confidence": "high" if holdings else "low",
             "parse_note": note,
@@ -227,6 +241,7 @@ def parse_holdings_nl(text: str) -> dict[str, Any]:
     if not text:
         return {
             "holdings": [], "cash": 0.0,
+            "risk_preference": "",
             "source": "regex", "confidence": "low",
             "parse_note": "输入为空，请填写持仓描述。",
         }

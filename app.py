@@ -110,6 +110,11 @@ def init_state() -> None:
         "risk_profile": "平衡",
         "nl_input_mode": False,
         "nl_parsed_result": {},
+        "agent_intake_result": {},
+        "agent_intake_text": "",
+        "agent_intake_money_need_label": "不确定",
+        "agent_intake_risk_profile": "平衡",
+        "agent_intake_cash_override": 0.0,
         "family_logged_in": False,
         "family_id": "",
         "family_account_name": "",
@@ -158,6 +163,11 @@ def _clear_user_runtime_state() -> None:
         # Keys omitted in original — would leak prior user's risk profile and Q&A state
         "nl_input_mode",
         "nl_parsed_result",
+        "agent_intake_result",
+        "agent_intake_text",
+        "agent_intake_money_need_label",
+        "agent_intake_risk_profile",
+        "agent_intake_cash_override",
         "reverse_qa",
         "risk_profile",
         "risk_profile_segment",  # segmented_control widget state for risk_profile
@@ -2228,6 +2238,154 @@ def risk_profile_hint_grid(selected: str) -> str:
     return f'<div class="risk-hint-grid">{"".join(items)}</div>'
 
 
+def _compact_amount(value: Any) -> str:
+    amount = to_float(value)
+    if amount is None or amount <= 0:
+        return "未识别"
+    if amount >= 10000:
+        return f"{amount / 10000:.1f} 万"
+    return f"{amount:,.0f} 元"
+
+
+def _agent_intake_rows(parsed: dict[str, Any]) -> list[dict[str, float | str]]:
+    rows: list[dict[str, float | str]] = []
+    for item in parsed.get("holdings") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("code") or item.get("name") or "").strip()
+        amount = float(item.get("amount") or 0)
+        if label and amount > 0:
+            rows.append({"code": label, "amount": amount})
+    return rows
+
+
+def _agent_intake_summary_html(parsed: dict[str, Any]) -> str:
+    holdings = _agent_intake_rows(parsed)
+    if holdings:
+        holding_items = "".join(
+            f"<li>{html_escape(row['code'])}：{html_escape(_compact_amount(row['amount']))}</li>"
+            for row in holdings[:5]
+        )
+        if len(holdings) > 5:
+            holding_items += f"<li>另有 {len(holdings) - 5} 条持仓</li>"
+    else:
+        holding_items = "<li>还没有识别到持仓</li>"
+    cash = float(parsed.get("cash") or 0)
+    risk = str(parsed.get("risk_preference") or "").strip() or "未说明，暂按平衡"
+    source = "DeepSeek 解析" if parsed.get("source") == "deepseek" else "本地规则解析"
+    confidence = str(parsed.get("confidence") or "medium")
+    confidence_label = {"high": "较高", "medium": "中等", "low": "较低"}.get(confidence, "中等")
+    note = _safe_ai_text(parsed.get("parse_note", ""), 120)
+    note_html = f"<p class='muted' style='margin:0.35rem 0 0;'>解析说明：{html_escape(note)}</p>" if note else ""
+    return f"""
+    <div class="card" style="padding:1rem;margin:0.75rem 0;background:var(--surface);">
+        <div class="kicker">Agent 已识别</div>
+        <ul style="margin:0.45rem 0 0.2rem;padding-left:1.15rem;color:var(--text);">{holding_items}</ul>
+        <p style="margin:0.35rem 0;color:var(--text);">现金：<b>{html_escape(_compact_amount(cash))}</b></p>
+        <p style="margin:0.2rem 0;color:var(--text-2);">风险偏好：{html_escape(risk)}</p>
+        <p class="muted" style="margin:0.2rem 0 0;">来源：{html_escape(source)}，识别把握：{html_escape(confidence_label)}</p>
+        {note_html}
+    </div>
+    """
+
+
+def agent_intake_block() -> None:
+    """Natural-language first intake: ask only the one missing family question."""
+    render_html(
+        """
+        <div class="card" style="padding:1rem;margin:1rem 0 0.75rem;">
+            <div class="kicker">Agent 入口</div>
+            <h3 style="margin:0.25rem 0 0.35rem;font-size:1.05rem;">直接说一句，Agent 先帮你读</h3>
+            <p class="muted" style="margin:0;">
+                例如：我家有茅台 2 万，现金 5 万，风险稳健，帮我看看。
+            </p>
+        </div>
+        """
+    )
+    text = st.text_area(
+        "一句话描述家庭持仓",
+        placeholder="我家有茅台 2 万，现金 5 万，风险稳健，帮我看看。",
+        height=96,
+        key="agent_intake_text",
+        label_visibility="collapsed",
+    )
+    parse_col, reset_col = st.columns([1.6, 1])
+    with parse_col:
+        if st.button("让 Agent 识别持仓", type="primary", use_container_width=True, key="agent_intake_parse"):
+            if not str(text or "").strip():
+                st.warning("先写一句持仓和现金情况，Agent 才能识别。")
+            else:
+                with st.spinner("Agent 正在识别股票、金额和现金..."):
+                    parsed = parse_holdings_nl(str(text).strip())
+                st.session_state["agent_intake_result"] = parsed
+                risk = str(parsed.get("risk_preference") or "").strip()
+                if risk in RISK_PROFILE_OPTIONS:
+                    st.session_state["agent_intake_risk_profile"] = risk
+                    st.session_state["risk_profile"] = risk
+                cash = float(parsed.get("cash") or 0)
+                if cash > 0:
+                    st.session_state["agent_intake_cash_override"] = cash
+                st.rerun()
+    with reset_col:
+        if st.button("清空重写", use_container_width=True, key="agent_intake_reset"):
+            for key in ("agent_intake_result", "agent_intake_text", "agent_intake_cash_override"):
+                st.session_state.pop(key, None)
+            st.session_state["agent_intake_money_need_label"] = "不确定"
+            st.rerun()
+
+    parsed = st.session_state.get("agent_intake_result") or {}
+    if not parsed:
+        return
+
+    render_html(_agent_intake_summary_html(parsed))
+    rows = _agent_intake_rows(parsed)
+    cash_value = float(parsed.get("cash") or 0)
+    if cash_value <= 0:
+        cash_value = float(st.session_state.get("agent_intake_cash_override") or 0)
+        cash_value = st.number_input(
+            "没有识别到现金，请补充家庭可用于投资的现金金额（元）",
+            min_value=0.0,
+            step=1000.0,
+            key="agent_intake_cash_override",
+        )
+
+    risk_default = str(parsed.get("risk_preference") or st.session_state.get("risk_profile") or "平衡")
+    if risk_default not in RISK_PROFILE_OPTIONS:
+        risk_default = "平衡"
+    if st.session_state.get("agent_intake_risk_profile") not in RISK_PROFILE_OPTIONS:
+        st.session_state["agent_intake_risk_profile"] = risk_default
+    risk_profile = st.selectbox(
+        "风险偏好识别结果（可以改）",
+        RISK_PROFILE_OPTIONS,
+        index=RISK_PROFILE_OPTIONS.index(st.session_state.get("agent_intake_risk_profile", risk_default)),
+        key="agent_intake_risk_profile",
+    )
+    st.caption(RISK_PROFILE_HINTS.get(risk_profile, ""))
+
+    st.markdown("**关键追问**")
+    st.caption("Agent 只补问一个问题：这笔钱半年内是否可能要用？")
+    money_label = st.radio(
+        "这笔钱半年内有没有可能要用？",
+        _MONEY_NEED_LABELS,
+        horizontal=True,
+        key="agent_intake_money_need_label",
+        label_visibility="collapsed",
+    )
+
+    if st.button("生成本次智能体检报告", type="primary", use_container_width=True, key="agent_intake_run"):
+        if not rows:
+            st.error("还没有识别到有效持仓。可以改写一句话，或展开下方手动填写。")
+            return
+        if float(cash_value or 0) <= 0:
+            st.error("请补充家庭可用于投资的现金金额。")
+            return
+        reverse_qa = _normalize_reverse_qa(st.session_state.get("reverse_qa"))
+        reverse_qa["money_need_6m"] = _MONEY_NEED_MAP.get(money_label, "uncertain")
+        st.session_state["reverse_qa"] = reverse_qa
+        st.session_state["risk_profile"] = risk_profile
+        run_analysis(float(cash_value), risk_profile, rows)
+
+
 def home_hero() -> None:
     render_html(
         f"""
@@ -2244,7 +2402,9 @@ def home_hero() -> None:
         </div>
         """
     )
-    portfolio_form()
+    agent_intake_block()
+    with st.expander("手动填写 / 调整持仓", expanded=False):
+        portfolio_form(show_nl=False)
 
 
 def _apply_nl_parsed_to_form(parsed: dict) -> None:
@@ -2309,15 +2469,16 @@ def nl_input_block() -> None:
             )
 
 
-def portfolio_form() -> None:
+def portfolio_form(show_nl: bool = True) -> None:
     pending_code = st.session_state.pop("pending_code", "")
     if pending_code:
         st.session_state["code_0"] = pending_code
         if float(st.session_state.get("amount_0", 0) or 0) <= 0:
             st.session_state["amount_0"] = 20000.0
 
-    # 自然语言输入面板
-    nl_input_block()
+    # 自然语言输入面板（首页主入口已升级为 Agent 一句话输入；这里只在需要时保留旧入口）
+    if show_nl:
+        nl_input_block()
 
     # 若 NL 解析出了现金，用临时 key 写回 number_input
     _nl_cash = st.session_state.pop("nl_parsed_cash", None)
