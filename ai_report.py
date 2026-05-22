@@ -657,6 +657,8 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "family_profile",
         "followup_memory",
         "recent_followups",
+        "watch_tasks",
+        "task_review",
     ]
     context = {key: agent_context.get(key) for key in allowed_keys}
 
@@ -676,6 +678,15 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         weakest = risk_factors.get("weakest_factor")
         context["risk_factors"] = {
             "factors": compact_factors,
+            "top_focus": [
+                {
+                    "name": item.get("name"),
+                    "priority": item.get("priority"),
+                    "status": item.get("status"),
+                }
+                for item in list(risk_factors.get("top_focus") or [])[:2]
+                if isinstance(item, dict)
+            ],
             "weakest_factor": {
                 "name": weakest.get("name"),
                 "score": weakest.get("score"),
@@ -733,6 +744,34 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
     recent_followups = context.get("recent_followups")
     if isinstance(recent_followups, list):
         context["recent_followups"] = recent_followups[:3]
+
+    watch_tasks = context.get("watch_tasks")
+    if isinstance(watch_tasks, list):
+        context["watch_tasks"] = [
+            {
+                "title": item.get("title"),
+                "priority": item.get("priority"),
+                "status": item.get("status"),
+            }
+            for item in watch_tasks[:4]
+            if isinstance(item, dict)
+        ]
+
+    task_review = context.get("task_review")
+    if isinstance(task_review, dict):
+        context["task_review"] = {
+            "has_review": task_review.get("has_review", False),
+            "summary": task_review.get("summary", ""),
+            "items": [
+                {
+                    "title": item.get("title"),
+                    "status": item.get("status"),
+                    "note": item.get("note"),
+                }
+                for item in list(task_review.get("items") or [])[:3]
+                if isinstance(item, dict)
+            ],
+        }
 
     return context
 
@@ -859,7 +898,10 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 7. {disagreement_rule}
 8. 如果 agent_context 里有 agent_memory 且 has_memory=true，可以用一句话呼应家庭反复关注的问题；不要展开太长，不要编造历史。
 9. 如果 agent_context 里有 family_profile 或 followup_memory，可以轻微调整解释重点：反复追问/记录较多的主题优先解释；但不能把历史记忆当成新的事实或交易依据。
-10. {reverse_rule}
+10. 如果 risk_factors.top_focus 有内容，请围绕其中 1-2 个重点解释，不要把所有风险平铺成清单。
+11. 如果 task_review.has_review=true，请用一句话说明上次观察任务这次有没有改善；如果没有，不要硬造历史。
+12. 如果 watch_tasks 有内容，可以把它们理解为"后续观察重点"，但不能写成交易动作。
+13. {reverse_rule}
 {_mode_rules}
 """.strip()
 

@@ -106,65 +106,211 @@ RISK_FACTOR_META = {
 }
 
 
-def build_risk_factor_breakdown(analysis: dict[str, Any]) -> dict[str, Any]:
-    """Build a structured risk-factor breakdown from existing module scores.
+def _factor_tone(score: float) -> tuple[str, str, str]:
+    if score >= 80:
+        return "steady", "稳", "目前压力较小"
+    if score >= 60:
+        return "watch", "看", "需要继续观察"
+    return "tight", "紧", "需要优先看"
 
-    This does not change scoring. It only makes the existing module_scores and
-    scoring_weights easier for the UI and AI report to reuse.
+
+def _factor_priority(score: float, weight: float = 10, boost: float = 0) -> tuple[float, str]:
+    priority_score = max(0.0, min(100.0, (100 - score) * 0.75 + weight * 0.55 + boost))
+    if priority_score >= 55:
+        return round(priority_score, 1), "high"
+    if priority_score >= 35:
+        return round(priority_score, 1), "medium"
+    return round(priority_score, 1), "low"
+
+
+def _make_factor(
+    name: str,
+    score: float,
+    weight: float,
+    plain: str,
+    watch: str,
+    current_status: str = "",
+    why: str = "",
+    boost: float = 0,
+) -> dict[str, Any]:
+    score = max(0.0, min(100.0, float(score or 0)))
+    tone, tone_label, status = _factor_tone(score)
+    priority_score, priority = _factor_priority(score, weight, boost)
+    return {
+        "name": name,
+        "score": round(score, 1),
+        "weight": round(float(weight or 0), 1),
+        "contribution": round(score * float(weight or 0) / 100, 1) if weight else round(score, 1),
+        "tone": tone,
+        "tone_label": tone_label,
+        "status": current_status or status,
+        "plain": plain,
+        "watch": watch,
+        "why": why or plain,
+        "priority_score": priority_score,
+        "priority": priority,
+    }
+
+
+def build_risk_factor_breakdown(
+    analysis: dict[str, Any],
+    missing_data: dict[str, list[str]] | None = None,
+    family_disagreement: dict[str, Any] | None = None,
+    data_confidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an agent-style risk-factor workstation.
+
+    The function does not change the original score. It turns the score into
+    eight readable factors and lets the Agent choose the 1-2 things worth
+    looking at first.
     """
     module_scores = analysis.get("module_scores") or {}
-    weights = analysis.get("scoring_weights") or {}
     if not isinstance(module_scores, dict):
         module_scores = {}
-    if not isinstance(weights, dict):
-        weights = {}
+    missing_data = missing_data or {}
+    family_disagreement = family_disagreement or {}
+    data_confidence = data_confidence or {}
+    stock_results = list(analysis.get("stock_results") or [])
+    holding_count = max(1, len(stock_results))
 
-    def _tone(score: float) -> tuple[str, str, str]:
-        if score >= 80:
-            return "steady", "稳", "目前压力较小"
-        if score >= 60:
-            return "watch", "看", "需要继续观察"
-        return "tight", "紧", "这项拉低评分"
+    cash_ratio = float(analysis.get("cash_ratio", 0) or 0)
+    stock_ratio = float(analysis.get("stock_ratio", 0) or 0)
+    max_single = float(analysis.get("max_single_ratio", 0) or 0)
+    industry_conc = float(analysis.get("industry_concentration", 0) or 0)
+    top_industry = str(analysis.get("top_industry") or "")
 
-    factors: list[dict[str, Any]] = []
-    for name, raw_score in module_scores.items():
-        try:
-            score = float(raw_score or 0)
-        except (TypeError, ValueError):
-            continue
-        try:
-            weight = float(weights.get(name, 0) or 0)
-        except (TypeError, ValueError):
-            weight = 0.0
-        tone, tone_label, status = _tone(score)
-        meta = RISK_FACTOR_META.get(str(name), {})
-        factors.append(
-            {
-                "name": str(name),
-                "score": round(score, 1),
-                "weight": round(weight, 1),
-                "contribution": round(score * weight / 100, 1) if weight else round(score, 1),
-                "tone": tone,
-                "tone_label": tone_label,
-                "status": status,
-                "plain": meta.get("plain", str(name)),
-                "watch": meta.get("watch", "结合本次体检结果继续观察"),
-            }
-        )
+    if cash_ratio < 0.05:
+        cash_score, cash_status = 25, "现金垫很薄"
+    elif cash_ratio < 0.10:
+        cash_score, cash_status = 45, "备用金偏少"
+    elif cash_ratio < 0.20:
+        cash_score, cash_status = 68, "现金需要继续观察"
+    else:
+        cash_score, cash_status = 88, "现金缓冲较充足"
 
-    factors.sort(key=lambda item: item.get("weight", 0), reverse=True)
-    if not factors:
-        return {"factors": [], "weakest_factor": None, "summary": ""}
+    if max_single >= 0.40:
+        single_score, single_status = 25, "单只占比偏高"
+    elif max_single >= 0.30:
+        single_score, single_status = 52, "单只占比需要关注"
+    elif max_single >= 0.20:
+        single_score, single_status = 70, "单只占比略集中"
+    else:
+        single_score, single_status = 90, "单只集中压力较小"
 
-    weakest = min(factors, key=lambda item: item.get("score", 0))
-    summary = (
-        f"本次最需要先看的因子是{weakest['name']}，"
-        f"简单说就是{weakest['plain']}。"
-    )
+    if industry_conc >= 0.80:
+        industry_score, industry_status = 40, f"股票部分集中在{top_industry or '同一行业'}"
+    elif industry_conc >= 0.60:
+        industry_score, industry_status = 58, "行业集中度偏高"
+    elif industry_conc >= 0.40:
+        industry_score, industry_status = 72, "行业分布需要观察"
+    else:
+        industry_score, industry_status = 88, "行业集中压力较小"
+
+    valuation_missing_n = len(missing_data.get("估值数据缺失") or [])
+    if not valuation_missing_n:
+        for stock in stock_results:
+            pe = stock.get("pe") if stock.get("pe") is not None else stock.get("市盈率-动态")
+            pb = stock.get("pb") if stock.get("pb") is not None else stock.get("市净率")
+            if pe in (None, "") or pb in (None, ""):
+                valuation_missing_n += 1
+    valuation_score = max(25.0, 100.0 - valuation_missing_n / holding_count * 70.0)
+    valuation_status = "估值数据完整" if valuation_missing_n == 0 else f"{valuation_missing_n} 只估值数据暂缺"
+
+    finance_missing_n = len(missing_data.get("财务数据缺失") or [])
+    finance_score = float(module_scores.get("公司财务质量", 75) or 75)
+    if finance_missing_n:
+        finance_score = min(finance_score, max(35.0, 100.0 - finance_missing_n / holding_count * 60.0))
+
+    heat_score = float(module_scores.get("交易热度风险", 75) or 75)
+    match_score = float(module_scores.get("风险承受匹配", 75) or 75)
+    if stock_ratio >= 0.8:
+        match_status = "整体仓位偏高，需要看是否匹配家里承受能力"
+    else:
+        match_status = "仓位和风险偏好大体匹配" if match_score >= 70 else "仓位和风险偏好需要再确认"
+
+    if family_disagreement.get("has_conflict"):
+        family_score, family_status, family_boost = 48, "家人看法不一致，需要先沟通", 18
+    else:
+        family_score, family_status, family_boost = 88, "暂未发现明显家庭分歧", 0
+
+    conf_code = str(data_confidence.get("level_code") or "")
+    if conf_code == "low":
+        data_score, data_status, data_boost = 35, "数据可信度偏低", 20
+    elif conf_code == "medium":
+        data_score, data_status, data_boost = 65, "数据可信度中等", 10
+    else:
+        data_score, data_status, data_boost = 88, "数据可信度较高", 0
+
+    factors = [
+        _make_factor(
+            "现金缓冲", cash_score, 18, "家里短期用钱是否有余地",
+            "现金比例、半年内资金用途、家庭备用金是否够用",
+            cash_status, f"现金比例约 {cash_ratio:.1%}。", boost=8 if cash_ratio < 0.15 else 0,
+        ),
+        _make_factor(
+            "单只集中", single_score, 22, "钱是否过多集中在一只标的上",
+            "最大单只占比是否继续升高，波动时家里是否能接受",
+            single_status, f"最大单只占比约 {max_single:.1%}。", boost=12 if max_single >= 0.30 else 0,
+        ),
+        _make_factor(
+            "行业集中", industry_score, 12, "股票部分是否集中在同一行业",
+            "行业政策、经营环境和家庭是否理解该行业波动",
+            industry_status, f"行业集中度约 {industry_conc:.1%}。", boost=8 if industry_conc >= 0.60 else 0,
+        ),
+        _make_factor(
+            "估值完整性", valuation_score, 10, "PE/PB 等估值数据是否足够完整",
+            "估值数据缺失时，不评价便宜或贵，只提示数据不完整",
+            valuation_status, "估值完整性决定这次能不能讨论估值高低。",
+            boost=12 if valuation_missing_n else 0,
+        ),
+        _make_factor(
+            "财务质量", finance_score, 14, "持仓公司的经营底子是否稳",
+            "ROE、利润率、负债压力、现金流质量",
+            "财务数据需要关注" if finance_score < 70 else "财务质量压力较小",
+            "财务质量只说明公司经营底子，不代表未来涨跌。",
+            boost=8 if finance_score < 70 else 0,
+        ),
+        _make_factor(
+            "交易热度", heat_score, 10, "短期交易是否太热、波动是否偏大",
+            "换手率、量比、振幅、涨跌幅和成交活跃度",
+            "短期交易热度需要关注" if heat_score < 70 else "短期交易热度不算突出",
+            "交易热度只反映短期活跃程度，不能作为买卖依据。",
+            boost=8 if heat_score < 70 else 0,
+        ),
+        _make_factor(
+            "家庭分歧", family_score, 18, "家人对同一风险点是否看法不一致",
+            "先沟通现金安排、风险承受和观察重点，不评判谁对谁错",
+            family_status, "家庭风险有时不只来自市场，也来自理解不一致。",
+            boost=family_boost,
+        ),
+        _make_factor(
+            "数据可信度", data_score, 16, "这次结论的数据基础是否扎实",
+            "行情、估值、财务数据是否完整，缓存是否足够新",
+            data_status, data_confidence.get("summary") or "数据越完整，结论越有参考价值。",
+            boost=data_boost,
+        ),
+        _make_factor(
+            "风险承受匹配", match_score, 12, "当前仓位是否匹配家庭能承受的波动",
+            "选择的风险承受能力、股票仓位和单只集中度",
+            match_status, "风险偏好不是口号，要和仓位、现金、集中度一起看。",
+            boost=6 if match_score < 65 else 0,
+        ),
+    ]
+
+    factors.sort(key=lambda item: item.get("priority_score", 0), reverse=True)
+    top_focus = [item for item in factors if item.get("priority") in ("high", "medium")][:2]
+    if not top_focus:
+        top_focus = factors[:1]
+    weakest = min(factors, key=lambda item: item.get("score", 0)) if factors else None
+    names = "、".join(item["name"] for item in top_focus)
+    summary = f"这次最该先看：{names}。" if names else ""
+    if data_confidence.get("summary"):
+        summary += f" {data_confidence.get('summary')}"
     return {
         "factors": factors,
+        "top_focus": top_focus,
         "weakest_factor": weakest,
-        "summary": summary,
+        "summary": summary.strip(),
     }
 
 
@@ -347,22 +493,48 @@ def assess_data_confidence(
     """
     cap_reasons       = list(analysis.get("cap_reasons") or [])
     missing_market_n  = len(missing_data.get("行情数据缺失")  or [])
+    missing_value_n   = len(missing_data.get("估值数据缺失")  or [])
     missing_finance_n = len(missing_data.get("财务数据缺失") or [])
+    stale_count = 0
+    newest_date = ""
+    now = datetime.now()
+
+    for stock in analysis.get("stock_results") or []:
+        raw_time = str(stock.get("updated_at") or stock.get("更新时间") or "").strip()
+        if not raw_time:
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw_time.replace("Z", "+00:00")[:19])
+            if not newest_date or raw_time > newest_date:
+                newest_date = raw_time
+            if (now - parsed.replace(tzinfo=None)).days >= 7:
+                stale_count += 1
+        except Exception:  # noqa: BLE001
+            continue
 
     issues: list[str] = []
     if missing_market_n:
         issues.append(f"{missing_market_n} 只行情数据缺失")
+    if missing_value_n:
+        issues.append(f"{missing_value_n} 只估值数据不完整")
     if missing_finance_n:
         issues.append(f"{missing_finance_n} 只财务数据不完整")
+    if stale_count:
+        issues.append(f"{stale_count} 只缓存更新时间超过 7 天")
     if cap_reasons:
         issues.append(f"评分因 {len(cap_reasons)} 项原因被保守限制")
 
     if missing_market_n > 0:
         level, level_code = "低", "low"
         summary = "关键行情数据缺失，结论仅供参考"
-    elif missing_finance_n > 0 or cap_reasons:
+    elif missing_finance_n > 0 or missing_value_n > 0 or stale_count > 0 or cap_reasons:
         level, level_code = "中等", "medium"
-        summary = "部分数据不完整，已保守处理"
+        if missing_value_n and not missing_finance_n:
+            summary = "估值数据不完整，本次不评价估值高低"
+        elif stale_count:
+            summary = "部分缓存时间偏旧，已保守处理"
+        else:
+            summary = "部分数据不完整，已保守处理"
     else:
         level, level_code = "高", "high"
         summary = "数据完整，结论可信度较高"
@@ -372,6 +544,7 @@ def assess_data_confidence(
         "level_code": level_code,
         "summary": summary,
         "issues": issues,
+        "latest_cache_time": newest_date,
     }
 
 

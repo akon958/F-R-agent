@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
@@ -217,12 +218,116 @@ def _fallback_ai_report(analysis: dict[str, Any], missing_data: dict[str, list[s
     )
 
 
+def _task_status(priority: str, category: str = "") -> str:
+    if category in ("data", "history"):
+        return "下次复盘"
+    if priority == "high":
+        return "待观察"
+    return "下次复盘"
+
+
+def _extract_watch_tasks_from_record(record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(record, dict):
+        return []
+    raw = record.get("watch_tasks")
+    if not raw:
+        full = record.get("full_agent_result")
+        if isinstance(full, str):
+            try:
+                full = json.loads(full)
+            except Exception:  # noqa: BLE001
+                full = {}
+        if isinstance(full, dict):
+            raw = full.get("watch_tasks")
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            try:
+                parsed = json.loads(raw.replace("'", '"'))
+            except Exception:  # noqa: BLE001
+                parsed = []
+        raw = parsed
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _review_previous_watch_tasks(
+    history_records: list[dict[str, Any]],
+    portfolio_summary: dict[str, Any],
+    missing_data: dict[str, list[str]],
+    analysis: dict[str, Any],
+) -> dict[str, Any]:
+    """Review prior watch tasks against this run. No external calls."""
+    if not history_records:
+        return {"has_review": False, "items": [], "summary": ""}
+
+    previous_tasks = _extract_watch_tasks_from_record(history_records[0])
+    if not previous_tasks:
+        return {"has_review": False, "items": [], "summary": ""}
+
+    cash_ratio = float(portfolio_summary.get("cash_ratio", 0) or 0)
+    max_single = float(portfolio_summary.get("max_single_ratio", 0) or 0)
+    industry_conc = float(analysis.get("industry_concentration", 0) or 0)
+    has_missing = any(bool(v) for v in (missing_data or {}).values())
+    items: list[dict[str, Any]] = []
+
+    for task in previous_tasks[:5]:
+        category = str(task.get("category") or "general")
+        title = str(task.get("title") or "上次观察任务")
+        status = "下次复盘"
+        note = "这项仍适合下次继续对照。"
+        if category == "cash":
+            if cash_ratio >= 0.15:
+                status, note = "已解决", f"现金比例约 {cash_ratio:.0%}，备用金压力比警戒线更低。"
+            else:
+                status, note = "待观察", f"现金比例约 {cash_ratio:.0%}，仍需继续留意。"
+        elif category == "concentration":
+            if max_single <= 0.30:
+                status, note = "已解决", f"最大单只占比约 {max_single:.0%}，集中压力有所缓和。"
+            else:
+                status, note = "待观察", f"最大单只占比约 {max_single:.0%}，仍需关注集中度。"
+        elif category == "industry":
+            if industry_conc <= 0.60:
+                status, note = "已解决", f"行业集中度约 {industry_conc:.0%}，比上次提醒更分散。"
+            else:
+                status, note = "下次复盘", f"行业集中度约 {industry_conc:.0%}，仍适合定期看。"
+        elif category == "data":
+            if not has_missing:
+                status, note = "已解决", "本次数据缺口已经明显减少。"
+            else:
+                status, note = "下次复盘", "本次仍存在部分数据缺口，结论继续保守看。"
+        elif category == "history":
+            status, note = "下次复盘", "这是连续风险点，适合多看几次趋势。"
+
+        items.append({
+            "title": title,
+            "category": category,
+            "previous_status": str(task.get("status") or "待观察"),
+            "status": status,
+            "note": note,
+        })
+
+    open_n = sum(1 for item in items if item["status"] != "已解决")
+    solved_n = sum(1 for item in items if item["status"] == "已解决")
+    if open_n and solved_n:
+        summary = f"上次任务中 {solved_n} 项已改善，{open_n} 项仍适合继续观察。"
+    elif open_n:
+        summary = f"上次提醒的 {open_n} 项仍适合继续观察。"
+    else:
+        summary = "上次观察任务本次基本已改善。"
+    return {"has_review": True, "items": items, "summary": summary}
+
+
 def _generate_watch_tasks(
     analysis: dict[str, Any],
     portfolio_summary: dict[str, Any],
     missing_data: dict[str, list[str]],
     reverse_qa: dict[str, Any],
     history_analysis: dict[str, Any],
+    risk_factors: dict[str, Any] | None = None,
+    task_review: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """根据本次体检结果生成结构化待办任务，最多5条，按优先级排序。"""
     tasks: list[dict[str, Any]] = []
@@ -321,9 +426,51 @@ def _generate_watch_tasks(
             ),
         })
 
+    # ── 7. Agent 自动抓重点：由风险因子工作站补充任务 ─────────────
+    risk_factors = risk_factors or {}
+    existing_titles = {str(task.get("title") or "") for task in tasks}
+    for factor in list(risk_factors.get("top_focus") or [])[:2]:
+        factor_name = str(factor.get("name") or "")
+        if not factor_name:
+            continue
+        title = f"下次复盘先看：{factor_name}"
+        if title in existing_titles:
+            continue
+        priority = "high" if factor.get("priority") == "high" else "medium"
+        tasks.append({
+            "category": str(factor.get("category") or "factor"),
+            "priority": priority,
+            "title": title,
+            "desc": str(factor.get("watch") or factor.get("plain") or "下次体检继续对照这个风险点。"),
+        })
+        existing_titles.add(title)
+        if len(tasks) >= 5:
+            break
+
+    # ── 8. 上次任务未完成时，保留为本次待观察线索 ───────────────
+    task_review = task_review or {}
+    for item in list(task_review.get("items") or [])[:2]:
+        if item.get("status") == "已解决":
+            continue
+        title = f"继续回看：{item.get('title', '上次观察任务')}"
+        if title in existing_titles:
+            continue
+        tasks.append({
+            "category": str(item.get("category") or "history"),
+            "priority": "medium",
+            "title": title,
+            "desc": str(item.get("note") or "上次提醒的事项，本次仍适合继续观察。"),
+            "from_previous": True,
+        })
+        existing_titles.add(title)
+        if len(tasks) >= 5:
+            break
+
     # 按优先级排序，最多5条
     _order = {"high": 0, "medium": 1, "low": 2}
     tasks.sort(key=lambda t: _order.get(t.get("priority", "low"), 2))
+    for task in tasks:
+        task.setdefault("status", _task_status(str(task.get("priority") or "medium"), str(task.get("category") or "")))
     return tasks[:5]
 
 
@@ -605,8 +752,12 @@ def _run_risk_agent(
     """
     debug_steps.append("完成风险计算。")
     analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
-    risk_factors = build_risk_factor_breakdown(analysis)
     data_confidence = assess_data_confidence(analysis, missing_data)
+    risk_factors = build_risk_factor_breakdown(
+        analysis,
+        missing_data=missing_data,
+        data_confidence=data_confidence,
+    )
 
     _cv_score = int(analysis.get("score", 0) or 0)
     _cv_level = f"{analysis.get('level', '')}（{analysis.get('level_text', '')}）"
@@ -880,6 +1031,31 @@ def run_family_risk_agent(
         risk_factors, debug_steps, warnings, emit,
     )
 
+    risk_factors = build_risk_factor_breakdown(
+        analysis,
+        missing_data=missing_data,
+        family_disagreement=family_disagreement,
+        data_confidence=data_confidence,
+    )
+    task_review = _review_previous_watch_tasks(
+        history_records=history_records,
+        portfolio_summary=portfolio_summary,
+        missing_data=missing_data,
+        analysis=analysis,
+    )
+    agent_context["risk_factors"] = risk_factors
+    agent_context["task_review"] = task_review
+    watch_tasks = _generate_watch_tasks(
+        analysis=analysis,
+        portfolio_summary=portfolio_summary,
+        missing_data=missing_data,
+        reverse_qa=reverse_qa_data,
+        history_analysis=history_analysis,
+        risk_factors=risk_factors,
+        task_review=task_review,
+    )
+    agent_context["watch_tasks"] = watch_tasks
+
     # ── Report Agent ────────────────────────────────────────────
     ai_report, dinner_talk, report_source = _run_report_agent(
         agent_context, analysis, missing_data, emit, debug_steps,
@@ -917,13 +1093,8 @@ def run_family_risk_agent(
         "agent_memory": agent_memory,
         "family_profile": family_profile,
         "followup_memory": followup_memory,
-        "watch_tasks": _generate_watch_tasks(
-            analysis=analysis,
-            portfolio_summary=portfolio_summary,
-            missing_data=missing_data,
-            reverse_qa=reverse_qa_data,
-            history_analysis=history_analysis,
-        ),
+        "task_review": task_review,
+        "watch_tasks": watch_tasks,
         "industry_conc": analysis.get("industry_concentration"),
         "data_credit": round(
             (len(clean_holdings) - len(missing_data.get("行情数据缺失", [])))

@@ -3017,6 +3017,7 @@ def watch_tasks_block(agent_result: dict[str, Any]) -> None:
         icon = _CATEGORY_ICON.get(task.get("category", "general"), "⚠️")
         title = html_escape(str(task.get("title", "")))
         desc  = html_escape(str(task.get("desc", "")))
+        status = html_escape(str(task.get("status", "待观察") or "待观察"))
         rows_html += f"""
         <li style="display:flex;gap:0.65rem;padding:0.55rem 0.9rem;
                    border-bottom:1px solid var(--border);align-items:flex-start;">
@@ -3027,6 +3028,7 @@ def watch_tasks_block(agent_result: dict[str, Any]) -> None:
                     <span style="font-size:0.65rem;font-weight:700;color:{color};
                                  background:{bg};padding:0.1rem 0.45rem;border-radius:10px;
                                  white-space:nowrap;">{label}</span>
+                    <span style="font-size:0.65rem;color:var(--text-3);white-space:nowrap;">{status}</span>
                 </div>
                 <p style="font-size:0.78rem;color:var(--text-2);margin:0;line-height:1.5;">{desc}</p>
             </div>
@@ -3043,6 +3045,96 @@ def watch_tasks_block(agent_result: dict[str, Any]) -> None:
         <ul style="margin:0;padding:0;list-style:none;">{rows_html}</ul>
     </section>
     """)
+
+
+def agent_focus_block(agent_result: dict[str, Any]) -> None:
+    """Agent 主动选择本次最值得先看的 1-2 个重点。"""
+    risk_factors = agent_result.get("risk_factors") or {}
+    top_focus = [item for item in list(risk_factors.get("top_focus") or []) if isinstance(item, dict)]
+    confidence = agent_result.get("data_confidence") or {}
+    task_review = agent_result.get("task_review") or {}
+    if not top_focus and not confidence:
+        return
+
+    chips = "".join(
+        f"""
+        <div style="border:1px solid var(--border);border-radius:12px;background:var(--surface);
+                    padding:0.65rem 0.75rem;">
+            <div style="display:flex;justify-content:space-between;gap:0.5rem;align-items:center;">
+                <strong style="font-size:0.88rem;color:var(--text);">{html_escape(str(item.get("name") or ""))}</strong>
+                <span style="font-size:0.68rem;color:#7a3e2e;background:rgba(122,62,46,0.08);
+                             border-radius:999px;padding:0.12rem 0.42rem;white-space:nowrap;">
+                    {html_escape(str(item.get("status") or "继续观察"))}
+                </span>
+            </div>
+            <p style="font-size:0.76rem;color:var(--text-2);line-height:1.45;margin:0.32rem 0 0;">
+                {html_escape(str(item.get("why") or item.get("plain") or ""))}
+            </p>
+        </div>
+        """
+        for item in top_focus[:2]
+    )
+    conf_text = str(confidence.get("summary") or "")
+    review_text = str(task_review.get("summary") or "")
+    review_html = (
+        f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.35rem 0 0;">'
+        f'上次任务回看：{html_escape(review_text)}</p>'
+        if review_text else ""
+    )
+    render_html(
+        f"""
+        <section style="margin:0 0 0.55rem;border:1.5px solid var(--border);
+                        background:var(--surface);border-radius:14px;padding:0.8rem 0.9rem;">
+            <p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.18rem;">Agent 主动判断</p>
+            <h3 style="font-size:1rem;color:var(--text);margin:0 0 0.55rem;">这次最该先看什么</h3>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
+                {chips}
+            </div>
+            <p style="font-size:0.74rem;color:var(--text-3);margin:0.5rem 0 0;">
+                数据可信度：{html_escape(str(confidence.get("level") or "未知"))}
+                {(" · " + html_escape(conf_text)) if conf_text else ""}
+            </p>
+            {review_html}
+        </section>
+        """
+    )
+
+
+def task_review_block(agent_result: dict[str, Any]) -> None:
+    review = agent_result.get("task_review") or {}
+    if not review.get("has_review"):
+        return
+    items = [item for item in list(review.get("items") or []) if isinstance(item, dict)]
+    if not items:
+        return
+    rows = "".join(
+        f"""
+        <li style="padding:0.45rem 0;border-bottom:1px solid var(--border);">
+            <div style="display:flex;gap:0.5rem;align-items:center;">
+                <strong style="font-size:0.82rem;color:var(--text);">{html_escape(str(item.get("title") or ""))}</strong>
+                <span style="font-size:0.68rem;color:var(--text-3);margin-left:auto;white-space:nowrap;">
+                    {html_escape(str(item.get("status") or ""))}
+                </span>
+            </div>
+            <p style="font-size:0.76rem;color:var(--text-2);line-height:1.45;margin:0.22rem 0 0;">
+                {html_escape(str(item.get("note") or ""))}
+            </p>
+        </li>
+        """
+        for item in items[:4]
+    )
+    render_html(
+        f"""
+        <section style="margin:0.6rem 0;border:1px solid var(--border);
+                        background:var(--surface);border-radius:12px;padding:0.7rem 0.9rem;">
+            <div style="font-size:0.9rem;font-weight:800;color:var(--text);">上次观察任务回看</div>
+            <p style="font-size:0.74rem;color:var(--text-3);margin:0.18rem 0 0.35rem;">
+                {html_escape(str(review.get("summary") or ""))}
+            </p>
+            <ul style="list-style:none;margin:0;padding:0;">{rows}</ul>
+        </section>
+        """
+    )
 
 
 def portfolio_metrics_block(summary: dict[str, Any], analysis: dict[str, Any]) -> None:
@@ -4164,9 +4256,14 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
             """
         )
 
-    focus_name = str(weakest.get("name", factors[0].get("name", "")) or "")
-    focus_score = float(weakest.get("score", factors[0].get("score", 0)) or 0)
-    focus_plain = str(weakest.get("plain", focus_name) or focus_name)
+    top_focus = [item for item in list((factor_data or {}).get("top_focus") or []) if isinstance(item, dict)]
+    focus_item = top_focus[0] if top_focus else weakest
+    focus_name = str(focus_item.get("name", factors[0].get("name", "")) or "")
+    focus_score = float(focus_item.get("score", factors[0].get("score", 0)) or 0)
+    focus_plain = str(focus_item.get("plain", focus_name) or focus_name)
+    focus_extra = ""
+    if len(top_focus) > 1:
+        focus_extra = "；另一个重点是：" + "、".join(html_escape(str(item.get("name") or "")) for item in top_focus[1:2])
 
     render_html(
         f"""
@@ -4182,7 +4279,7 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
                 <p style="font-size:0.82rem;color:var(--text);line-height:1.55;margin:0;">
                     本次最需要先看的因子是：
                     <strong>{html_escape(focus_name)}</strong>（{focus_score:.0f}/100）。
-                    简单说，就是{html_escape(focus_plain)}。
+                    简单说，就是{html_escape(focus_plain)}{focus_extra}。
                 </p>
             </div>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
@@ -4379,7 +4476,10 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     # 1d. 家庭分歧（有则显示）
     family_disagreement_block(agent_result.get("family_disagreement", {}))
 
-    # 1e. 主要风险（最多 3 条）
+    # 1e. Agent 主动抓重点
+    agent_focus_block(agent_result)
+
+    # 1f. 主要风险（最多 3 条）
     _show_risks = main_risks[:3]
     _extra_risk_n = max(0, len(main_risks) - 3)
     _risk_rows = "".join(
@@ -4425,7 +4525,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # 1f. 下一步 CTA：查看 AI 风险说明
+    # 1g. 下一步 CTA：查看 AI 风险说明
     render_html("""
     <div class="fr-step-card">
         <p class="fr-step-kicker">Next</p>
@@ -4455,6 +4555,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             agent_result.get("followup_memory", {}),
         )
         intent_action_gap_block(agent_result.get("intent_action_gap", {}))
+        task_review_block(agent_result)
         watch_tasks_block(agent_result)
         if _analysis:
             risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
