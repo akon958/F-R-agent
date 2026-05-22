@@ -52,6 +52,7 @@ from data_fetcher import (
     normalize_code,
     refresh_current_holdings_cache,
     refresh_market_cache,
+    resolve_code_or_name,
 )
 from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
 from nl_parser import parse_holdings_nl
@@ -2409,7 +2410,8 @@ def portfolio_form() -> None:
 def clean_holdings(raw_rows: list[dict[str, float | str]]) -> list[dict[str, float | str]]:
     holdings: list[dict[str, float | str]] = []
     for row in raw_rows:
-        code = normalize_code(str(row.get("code", "")))
+        # resolve_code_or_name handles both numeric codes and Chinese stock names
+        code = resolve_code_or_name(str(row.get("code", "")))
         amount = float(row.get("amount", 0) or 0)
         if code and amount > 0:
             holdings.append({"code": code, "amount": amount})

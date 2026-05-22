@@ -167,6 +167,65 @@ def normalize_code(code: str) -> str:
     return text.zfill(6) if text else ""
 
 
+@functools.lru_cache(maxsize=1)
+def _build_name_lookup() -> dict[str, str]:
+    """Build a name → code dict from stock_metrics.csv (cached for process lifetime).
+
+    Keys are stripped names (e.g. "招商银行"); values are zero-padded 6-digit codes.
+    Returns an empty dict if the CSV cannot be read.
+    """
+    try:
+        path = _resolve_cache_file()
+        df = pd.read_csv(path, encoding="utf-8-sig", usecols=["代码", "名称"])
+        lookup: dict[str, str] = {}
+        for _, row in df.iterrows():
+            name = str(row.get("名称") or "").strip()
+            raw_code = str(row.get("代码") or "").strip()
+            if name and raw_code:
+                lookup[name] = normalize_code(raw_code)
+        return lookup
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def resolve_code_or_name(text: str) -> str:
+    """Return a normalised 6-digit code from either a code string or a stock name.
+
+    Lookup order:
+    1. If the input is already all digits (with optional SH/SZ/BJ prefix), normalise directly.
+    2. Exact name match against stock_metrics.csv.
+    3. Case-insensitive exact match (handles full-width / whitespace variations).
+    Falls back to the raw normalize_code result (empty string) when nothing matches.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+
+    # Step 1: looks like a numeric code already
+    stripped = raw.upper()
+    if stripped.startswith(("SH", "SZ", "BJ")):
+        stripped = stripped[3:] if stripped[3:4] == "" else stripped[2:]
+    if stripped.isdigit():
+        return normalize_code(raw)
+
+    # Step 2 & 3: try name lookup
+    lookup = _build_name_lookup()
+    if raw in lookup:
+        return lookup[raw]
+
+    # Case-insensitive / whitespace-normalised fallback
+    raw_lower = raw.lower().replace(" ", "").replace("　", "")
+    for name, code in lookup.items():
+        if name.lower().replace(" ", "").replace("　", "") == raw_lower:
+            return code
+
+    # Last resort: only accept if normalised result is purely numeric (e.g. fund
+    # codes entered without prefix).  Non-numeric strings that didn't match any
+    # name should return "" so the caller can flag it as invalid input.
+    normalised = normalize_code(raw)
+    return normalised if normalised.isdigit() else ""
+
+
 def _now_text() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

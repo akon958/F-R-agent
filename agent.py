@@ -26,7 +26,7 @@ except ImportError:
             ),
             "report_source": "local_fallback",
         }
-from data_fetcher import get_stock_metrics, normalize_code
+from data_fetcher import get_stock_metrics, normalize_code, resolve_code_or_name
 from delta_alert import compute_delta
 from memory_agent import (
     build_agent_memory_summary,
@@ -114,7 +114,7 @@ def _normalize_holdings(holdings: Any) -> tuple[list[dict[str, Any]], list[str]]
         raw_code = _first_value(row, ["code", "代码", "股票代码", "基金代码", "symbol"])
         name = str(_first_value(row, ["name", "名称", "股票名称", "基金名称"], "") or "").strip()
         amount = _to_float(_first_value(row, ["amount", "持仓金额", "金额", "市值", "value"], 0))
-        code = normalize_code(str(raw_code))
+        code = resolve_code_or_name(str(raw_code))
         if not code:
             warnings.append(f"第 {index} 行缺少股票/基金代码，已跳过。")
             continue
