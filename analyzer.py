@@ -645,12 +645,37 @@ def weighted_average(items: list[tuple[float, float]], default: float = 0) -> fl
     return sum(score * weight for score, weight in items if weight > 0) / total_weight
 
 
+def _score_linear(value: float, poor: float, excellent: float, max_pts: float) -> float:
+    """在 poor（0 分）到 excellent（满分）之间线性插值，严格限制在 [0, max_pts]。
+
+    解决 clamp(value/bench*max) 的溢出问题：当 value 超过 excellent 时，
+    旧写法仍会继续叠加，导致单项得分超过预期满分，破坏各维度权重。
+    """
+    if excellent == poor:
+        return float(max_pts) if value >= excellent else 0.0
+    raw = (value - poor) / (excellent - poor) * max_pts
+    return float(clamp(raw, 0.0, max_pts))
+
+
 def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     name = stock_value(stock, "name") or stock_value(stock, "code")
     source = stock.get("财务数据来源") or stock_value(stock, "data_source")
     industry = str(stock_value(stock, "industry") or "").strip()
-    # 银行/金融/保险/证券：高负债是业务模式，不按普通企业标准惩罚债务率
-    _is_finance_sector = any(kw in industry for kw in ("银行", "金融", "保险", "证券", "信托", "期货"))
+
+    # ── 行业分类：不同行业财务结构不同，避免用统一标准误判 ──────────────
+    # 金融业：负债是存款/资本，毛利率概念不适用
+    _is_finance_sector = any(kw in industry for kw in (
+        "银行", "金融", "保险", "证券", "信托", "期货",
+    ))
+    # 基础设施/公用事业：高负债来自资本性投入，由监管机构管理定价，风险结构不同
+    _is_infra_sector = any(kw in industry for kw in (
+        "公用事业", "电力", "水务", "燃气", "交通运输", "航空", "航运", "港口", "高速公路",
+    ))
+    # 低毛利行业：毛利率/净利率本身天然偏低，不能和消费/科技行业用同一标准
+    _is_low_margin_sector = any(kw in industry for kw in (
+        "建筑", "钢铁", "有色金属", "化工", "商贸零售", "纺织", "农林牧渔", "煤炭", "采矿",
+    ))
+
     values = {
         standard: to_float(stock_value(stock, standard) if stock_value(stock, standard) is not None else stock.get(legacy))
         for standard, legacy in FINANCIAL_FIELD_ALIASES.items()
@@ -674,24 +699,64 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     debt_ratio = values["debt_ratio"] if values["debt_ratio"] is not None else 0.7
     cash_profit = values["cashflow_profit_ratio"] if values["cashflow_profit_ratio"] is not None else 0.5
 
+    # ── 财务评分（总满分 100 分）──────────────────────────────────────
+    # 每项用 _score_linear 严格限制在 [0, max_pts]，防止高值溢出破坏权重。
+    # 基准校准为 A 股实际分位数：超过"优秀"线即得满分，低于"差"线得 0 分。
     score = 0.0
-    score += clamp(roe / 0.20 * 18)
-    score += clamp(net_margin / 0.20 * 10)
-    score += clamp(gross_margin / 0.40 * 7)
-    score += clamp((revenue_growth + 0.10) / 0.30 * 14)
-    score += clamp((profit_growth + 0.10) / 0.35 * 14)
-    if _is_finance_sector:
-        # 银行/金融业高负债是正常业务模式，给固定分，不按普通企业标准扣分
-        score += 9
+
+    # ROE（18 分）：0% → 0 分，≥15% → 满分
+    # A 股优质公司中位数约 10-12%，15% 以上属于头部，无需设更高门槛
+    score += _score_linear(roe, poor=0.0, excellent=0.15, max_pts=18)
+
+    # 净利率（10 分）：按行业基准差异化
+    # 低毛利行业：≥8% 满分；其他行业：≥15% 满分
+    if _is_low_margin_sector:
+        score += _score_linear(net_margin, poor=0.0, excellent=0.08, max_pts=10)
     else:
-        score += clamp((0.85 - debt_ratio) / 0.85 * 18)
-    score += clamp(cash_profit / 1.00 * 19)
+        score += _score_linear(net_margin, poor=0.0, excellent=0.15, max_pts=10)
+
+    # 营收增长率（14 分）：-10% → 0 分，≥15% → 满分
+    # 负增长扣分；0% 增长约得 4.7 分（停滞但非崩溃）
+    score += _score_linear(revenue_growth, poor=-0.10, excellent=0.15, max_pts=14)
+
+    # 净利润增长率（14 分）：-10% → 0 分，≥20% → 满分
+    score += _score_linear(profit_growth, poor=-0.10, excellent=0.20, max_pts=14)
+
+    if _is_finance_sector:
+        # 银行/金融业：高负债是正常业务模式，毛利率概念不适用，给固定中性分
+        score += 9   # 资产负债率固定分（不惩罚高杠杆）
+        score += 4   # 毛利率固定分（概念不适用）
+    elif _is_infra_sector:
+        # 公用事业/交通运输：高资本投入导致高负债，设最低 8 分底线
+        # 资产负债率（18 分）：≤40% 满分，≥80% 得 0 分，底线 8 分
+        score += max(8.0, _score_linear(-debt_ratio, poor=-0.80, excellent=-0.40, max_pts=18))
+        # 毛利率（7 分）：0% → 0 分，≥35% → 满分
+        score += _score_linear(gross_margin, poor=0.0, excellent=0.35, max_pts=7)
+    elif _is_low_margin_sector:
+        # 建筑/钢铁/化工/零售：负债标准不变，毛利率基准降为 20%
+        score += _score_linear(-debt_ratio, poor=-0.80, excellent=-0.40, max_pts=18)
+        score += _score_linear(gross_margin, poor=0.0, excellent=0.20, max_pts=7)
+    else:
+        # 一般行业：资产负债率 ≤40% 满分，≥80% 得 0 分；毛利率 ≥35% 满分
+        score += _score_linear(-debt_ratio, poor=-0.80, excellent=-0.40, max_pts=18)
+        score += _score_linear(gross_margin, poor=0.0, excellent=0.35, max_pts=7)
+
+    # 经营现金流/净利润（19 分）：0 → 0 分，≥1.0 → 满分
+    # 现金流质量是利润真实性的最重要验证，给最高权重
+    score += _score_linear(cash_profit, poor=0.0, excellent=1.0, max_pts=19)
+
     score -= missing_count * 4
     score = clamp(score)
 
     notes: list[str] = []
+    # 行业特征说明（优先输出，让家人知道为何评分有特殊处理）
     if _is_finance_sector:
-        notes.append(f"{name} 属于银行/金融行业，高资产负债率是正常业务特征，不按普通企业标准判断。")
+        notes.append(f"{name} 属于银行/金融行业，高资产负债率是正常业务特征，毛利率概念也不适用，不按普通企业标准判断。")
+    elif _is_infra_sector:
+        notes.append(f"{name} 属于公用事业/基础设施行业，高负债来自基础设施资本投入，评分时已适当放宽负债标准。")
+    elif _is_low_margin_sector:
+        notes.append(f"{name} 属于低毛利行业（建筑/钢铁/零售等），毛利率和净利率比较基准已按行业特点调低，不与白酒/科技行业直接比较。")
+
     if roe >= 0.15:
         notes.append(f"{name} 的 ROE（公司用自己的钱赚钱的能力）看起来较强。")
     elif roe < 0.08:
@@ -699,13 +764,16 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
 
     if net_margin >= 0.20:
         notes.append(f"{name} 净利率（每卖出100元最终留下多少利润）较高，留利能力好。")
-    elif net_margin < 0.05:
+    elif _is_low_margin_sector and net_margin < 0.02:
+        notes.append(f"{name} 净利率极低（低于同类行业一般水平），留利空间很小，经营抗压能力有限。")
+    elif not _is_low_margin_sector and net_margin < 0.05:
         notes.append(f"{name} 净利率（每卖出100元最终留下多少利润）偏低，留利空间不大。")
 
     if revenue_growth < 0 or profit_growth < 0:
         notes.append(f"{name} 营收增长率或净利润增长率（公司收入和利润有没有在增加）出现下滑，先别只看短期热闹。")
 
-    if not _is_finance_sector and debt_ratio > 0.75:
+    # 债务警告：金融业和基础设施业不触发
+    if not _is_finance_sector and not _is_infra_sector and debt_ratio > 0.75:
         notes.append(f"{name} 资产负债率（公司借了多少钱相对自己的家底）偏高，环境不好时压力可能更大。")
 
     if cash_profit < 0.8:
