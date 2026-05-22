@@ -219,7 +219,7 @@ def auth_gate() -> bool:
     )
     tab_login, tab_create = st.tabs(["登录", "创建账号"])
     with tab_login:
-        login_name = st.text_input("家庭账号", key="login_family_name", placeholder="例如：张家")
+        login_name = st.text_input("家庭账号", key="login_family_name")
         login_password = st.text_input("密码", key="login_family_password", type="password")
         if st.button("登录 FamilyReader", key="family_login_btn", use_container_width=True, type="primary"):
             result = verify_family_account(login_name, login_password)
@@ -232,7 +232,7 @@ def auth_gate() -> bool:
             else:
                 st.warning(result.get("message") or "登录失败，请检查账号或密码。")
     with tab_create:
-        create_name = st.text_input("新家庭账号", key="create_family_name", placeholder="例如：张家")
+        create_name = st.text_input("新家庭账号", key="create_family_name")
         create_password = st.text_input("设置密码", key="create_family_password", type="password")
         create_password2 = st.text_input("再输入一次密码", key="create_family_password2", type="password")
         if st.button("创建并进入", key="family_create_btn", use_container_width=True):
@@ -455,7 +455,7 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
         div[data-testid="stTextInput"] input::placeholder,
         div[data-testid="stNumberInput"] input::placeholder,
         textarea::placeholder {{
-            color: #8a8178 !important;
+            color: #c4bbb3 !important;
             opacity: 1 !important;
         }}
         div[data-testid="stTextInput"] input,
@@ -2308,9 +2308,9 @@ def portfolio_form() -> None:
     code_col, amount_col = st.columns([1.4, 1])
     with code_col:
         first_code = st.text_input(
-            "股票/基金代码",
+            "股票代码或名称",
             key="code_0",
-            placeholder="例如：600519、贵州茅台、招商银行",
+            placeholder="600519 或 贵州茅台",
         )
     with amount_col:
         first_amount = st.number_input(
@@ -2333,9 +2333,9 @@ def portfolio_form() -> None:
         for index in range(1, st.session_state.holding_rows):
             cols = st.columns([1.4, 1, 0.25])
             cols[0].text_input(
-                f"第 {index + 1} 只代码",
+                f"第 {index + 1} 只股票",
                 key=f"code_{index}",
-                placeholder="例如 000001",
+                placeholder="代码或名称",
             )
             cols[1].number_input(
                 f"第 {index + 1} 只金额（元）",
