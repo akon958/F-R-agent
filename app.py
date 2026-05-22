@@ -1836,6 +1836,11 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
             border-color: var(--accent) !important;
             box-shadow: 0 12px 22px color-mix(in srgb, var(--accent) 22%, transparent) !important;
         }}
+        .stFormSubmitButton button *,
+        .stButton button[kind="primary"] * {{
+            color: #fdf8f1 !important;
+            opacity: 1 !important;
+        }}
         .stFormSubmitButton button:hover,
         .stButton button[kind="primary"]:hover {{
             color: #fdf8f1 !important;
@@ -1873,6 +1878,27 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
             min-height: 2.35rem !important;
             border-radius: 999px !important;
             font-weight: 750 !important;
+            background: var(--surface) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--border) !important;
+            box-shadow: none !important;
+            opacity: 1 !important;
+        }}
+        [data-testid="stSegmentedControl"] button * {{
+            color: var(--text) !important;
+            opacity: 1 !important;
+        }}
+        [data-testid="stSegmentedControl"] button[aria-pressed="true"],
+        [data-testid="stSegmentedControl"] button[data-selected="true"],
+        [data-testid="stSegmentedControl"] button[aria-selected="true"] {{
+            background: var(--accent-soft) !important;
+            color: var(--accent) !important;
+            border-color: var(--accent) !important;
+        }}
+        [data-testid="stSegmentedControl"] button[aria-pressed="true"] *,
+        [data-testid="stSegmentedControl"] button[data-selected="true"] *,
+        [data-testid="stSegmentedControl"] button[aria-selected="true"] * {{
+            color: var(--accent) !important;
         }}
         [data-testid="stSegmentedControl"] {{
             margin-bottom: 0.2rem;
