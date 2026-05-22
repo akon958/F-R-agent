@@ -475,14 +475,15 @@ def _normalize_analysis_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def load_recent_analysis_history(limit: int = 5) -> list[dict[str, Any]]:
+def load_recent_analysis_history(limit: int = 5, family_id: str | None = None) -> list[dict[str, Any]]:
+    _fid = family_id or get_family_id()
     client = get_supabase_client()
     if client is not None:
         try:
             result = (
                 client.table("analysis_history")
                 .select("*")
-                .eq("family_id", get_family_id())
+                .eq("family_id", _fid)
                 .order("created_at", desc=True)
                 .limit(limit)
                 .execute()
@@ -492,11 +493,10 @@ def load_recent_analysis_history(limit: int = 5) -> list[dict[str, Any]]:
         except Exception:  # noqa: BLE001
             pass
 
-    family_id = get_family_id()
     rows = [
         _normalize_analysis_row(row)
         for row in _read_csv_rows(ANALYSIS_HISTORY_FILE)
-        if _same_family(row, family_id)
+        if _same_family(row, _fid)
     ]
     rows = list(reversed(rows))
     return rows[:limit]
@@ -553,14 +553,15 @@ def save_followup_history(
     return saved
 
 
-def load_recent_followup_history(limit: int = 10) -> list[dict[str, Any]]:
+def load_recent_followup_history(limit: int = 10, family_id: str | None = None) -> list[dict[str, Any]]:
+    _fid = family_id or get_family_id()
     client = get_supabase_client()
     if client is not None:
         try:
             result = (
                 client.table("followup_history")
                 .select("*")
-                .eq("family_id", get_family_id())
+                .eq("family_id", _fid)
                 .order("created_at", desc=True)
                 .limit(limit)
                 .execute()
@@ -568,8 +569,7 @@ def load_recent_followup_history(limit: int = 10) -> list[dict[str, Any]]:
             return result.data if isinstance(result.data, list) else []
         except Exception:  # noqa: BLE001
             pass
-    family_id = get_family_id()
-    rows = [row for row in _read_csv_rows(FOLLOWUP_HISTORY_FILE) if _same_family(row, family_id)]
+    rows = [row for row in _read_csv_rows(FOLLOWUP_HISTORY_FILE) if _same_family(row, _fid)]
     return list(reversed(rows))[:limit]
 
 
@@ -731,16 +731,17 @@ def _normalize_comment_row(row: dict[str, Any]) -> dict[str, Any]:
     return r
 
 
-def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
+def load_recent_family_comments(limit: int = 20, family_id: str | None = None) -> list[dict[str, Any]]:
     """Return recent family comments, newest first."""
     global _LAST_FAMILY_COMMENT_READ_STATUS
+    _fid = family_id or get_family_id()
     client = get_supabase_client()
     if client is not None:
         try:
             result = (
                 client.table("family_comments")
                 .select("*")
-                .eq("family_id", get_family_id())
+                .eq("family_id", _fid)
                 .order("created_at", desc=True)
                 .limit(limit)
                 .execute()
@@ -756,9 +757,8 @@ def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
                     "error": "",
                 }
                 return normalized
-            family_id = get_family_id()
             local_rows = [
-                row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, family_id)
+                row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, _fid)
             ]
             if local_rows:
                 fallback = [_normalize_comment_row(r) for r in local_rows[:limit]]
@@ -782,8 +782,7 @@ def load_recent_family_comments(limit: int = 20) -> list[dict[str, Any]]:
             read_error = f"{type(exc).__name__}: {str(exc)[:220]}"
     else:
         read_error = "未配置 Supabase，读取本地 CSV"
-    family_id = get_family_id()
-    rows = [row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, family_id)]
+    rows = [row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, _fid)]
     normalized = [_normalize_comment_row(r) for r in rows[:limit]]
     _LAST_FAMILY_COMMENT_READ_STATUS = {
         "backend": "local_csv",
@@ -888,19 +887,20 @@ def save_family_profile(profile: dict[str, Any]) -> bool:
     return _append_csv_row(FAMILY_PROFILE_FILE, local_row)
 
 
-def load_family_profile() -> dict[str, Any] | None:
+def load_family_profile(family_id: str | None = None) -> dict[str, Any] | None:
     def _normalise_profile(row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
         item["focus_topics"] = _json_load(item.get("focus_topics"), [])
         return item
 
+    _fid = family_id or get_family_id()
     client = get_supabase_client()
     if client is not None:
         try:
             result = (
                 client.table("family_profile")
                 .select("*")
-                .eq("family_id", get_family_id())
+                .eq("family_id", _fid)
                 .limit(1)
                 .execute()
             )
@@ -908,8 +908,7 @@ def load_family_profile() -> dict[str, Any] | None:
             return _normalise_profile(data[0]) if data else None
         except Exception:  # noqa: BLE001
             pass
-    family_id = get_family_id()
-    rows = [row for row in _read_csv_rows(FAMILY_PROFILE_FILE) if _same_family(row, family_id)]
+    rows = [row for row in _read_csv_rows(FAMILY_PROFILE_FILE) if _same_family(row, _fid)]
     return _normalise_profile(rows[-1]) if rows else None
 
 
