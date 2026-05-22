@@ -1729,6 +1729,75 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
             font-size: 0.72rem;
             line-height: 1.48;
         }}
+        .fr-field-label {{
+            margin: 0.62rem 0 0.34rem;
+            font-size: 0.88rem;
+            font-weight: 800;
+            color: var(--text);
+        }}
+        .fr-risk-note {{
+            margin: 0.56rem 0 0.72rem;
+            padding: 0.58rem 0.72rem;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+            color: var(--text-2);
+            font-size: 0.82rem;
+            line-height: 1.55;
+        }}
+        .fr-risk-note b {{
+            color: var(--accent);
+            margin-right: 0.35rem;
+        }}
+        .fr-step-card {{
+            margin: 0.35rem 0 0.5rem;
+            padding: 0.86rem 0.95rem;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            background:
+                linear-gradient(135deg,
+                    color-mix(in srgb, var(--surface) 92%, var(--accent-soft)),
+                    var(--surface));
+            box-shadow: 0 10px 26px rgba(48, 38, 28, 0.05);
+        }}
+        .fr-step-kicker {{
+            margin: 0 0 0.22rem;
+            color: var(--accent);
+            font-size: 0.68rem;
+            font-weight: 850;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }}
+        .fr-step-title {{
+            margin: 0 0 0.18rem;
+            color: var(--text);
+            font-size: 0.98rem;
+            font-weight: 850;
+            line-height: 1.38;
+        }}
+        .fr-step-sub {{
+            margin: 0;
+            color: var(--text-3);
+            font-size: 0.78rem;
+            line-height: 1.55;
+        }}
+        .fr-mini-nav {{
+            display: flex;
+            gap: 0.45rem;
+            flex-wrap: wrap;
+            margin: 0.2rem 0 0.72rem;
+        }}
+        .fr-mini-nav span {{
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface);
+            color: var(--text-2);
+            padding: 0.24rem 0.62rem;
+            font-size: 0.74rem;
+            font-weight: 750;
+        }}
         .hero-title {{
             font-size: 1.38rem;
         }}
@@ -1799,6 +1868,14 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
             min-height: 2.75rem;
             color: var(--text) !important;
             font-weight: 750 !important;
+        }}
+        [data-testid="stSegmentedControl"] button {{
+            min-height: 2.35rem !important;
+            border-radius: 999px !important;
+            font-weight: 750 !important;
+        }}
+        [data-testid="stSegmentedControl"] {{
+            margin-bottom: 0.2rem;
         }}
         .verdict-card {{
             padding: 1.15rem !important;
@@ -2023,8 +2100,8 @@ def _apply_nl_parsed_to_form(parsed: dict) -> None:
 
 def nl_input_block() -> None:
     """自然语言持仓输入面板（可展开）。"""
-    with st.expander("✏️ 用自然语言描述持仓（AI 帮你解析）", expanded=st.session_state.get("nl_input_mode", False)):
-        st.caption("例如：我有茅台 20 万，招行 10 万，现金 5 万")
+    with st.expander("快速粘贴持仓（可选）", expanded=st.session_state.get("nl_input_mode", False)):
+        st.caption("适合懒得逐项填写时使用；不填也可以直接手动输入。")
         nl_text = st.text_area(
             "持仓描述",
             placeholder="可以直接用说话的方式：我持有贵州茅台 200000 元，招商银行 100000 元，另外现金 50000 元",
@@ -2128,22 +2205,40 @@ def portfolio_form() -> None:
         current_risk = "平衡"
         st.session_state["risk_profile"] = current_risk
     risk_profile = current_risk
-    st.markdown('<p style="margin:.6rem 0 .3rem;font-size:.9rem;font-weight:600;">家庭风险承受能力</p>', unsafe_allow_html=True)
-    _rc1 = st.columns(3)
-    _rc2 = st.columns([1, 1, 2])
-    for _i, _n in enumerate(RISK_PROFILE_OPTIONS[:3]):
-        with _rc1[_i]:
-            if st.button(_n, key=f"risk_btn_{_n}", use_container_width=True,
-                         type="primary" if _n == current_risk else "secondary"):
-                st.session_state["risk_profile"] = _n
-                st.rerun()
-    for _i, _n in enumerate(RISK_PROFILE_OPTIONS[3:]):
-        with _rc2[_i]:
-            if st.button(_n, key=f"risk_btn_{_n}", use_container_width=True,
-                         type="primary" if _n == current_risk else "secondary"):
-                st.session_state["risk_profile"] = _n
-                st.rerun()
-    st.caption(f"{current_risk}：{RISK_PROFILE_HINTS.get(current_risk, '')}")
+    st.markdown('<div class="fr-field-label">家庭风险承受能力</div>', unsafe_allow_html=True)
+    if hasattr(st, "segmented_control"):
+        if st.session_state.get("risk_profile_segment") not in RISK_PROFILE_OPTIONS:
+            st.session_state["risk_profile_segment"] = current_risk
+        selected_risk = st.segmented_control(
+            "家庭风险承受能力",
+            options=RISK_PROFILE_OPTIONS,
+            key="risk_profile_segment",
+            label_visibility="collapsed",
+        )
+        if selected_risk and selected_risk != current_risk:
+            st.session_state["risk_profile"] = selected_risk
+            risk_profile = str(selected_risk)
+            current_risk = str(selected_risk)
+    else:
+        _rc1 = st.columns(3)
+        _rc2 = st.columns([1, 1, 2])
+        for _i, _n in enumerate(RISK_PROFILE_OPTIONS[:3]):
+            with _rc1[_i]:
+                if st.button(_n, key=f"risk_btn_{_n}", use_container_width=True,
+                             type="primary" if _n == current_risk else "secondary"):
+                    st.session_state["risk_profile"] = _n
+                    st.rerun()
+        for _i, _n in enumerate(RISK_PROFILE_OPTIONS[3:]):
+            with _rc2[_i]:
+                if st.button(_n, key=f"risk_btn_{_n}", use_container_width=True,
+                             type="primary" if _n == current_risk else "secondary"):
+                    st.session_state["risk_profile"] = _n
+                    st.rerun()
+    st.markdown(
+        f'<div class="fr-risk-note"><b>{html_escape(current_risk)}</b>'
+        f'{html_escape(RISK_PROFILE_HINTS.get(current_risk, ""))}</div>',
+        unsafe_allow_html=True,
+    )
 
     submitted = st.button("开始一键智能体检", type="primary", use_container_width=True)
 
@@ -2351,7 +2446,7 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
 
 
 def cache_tools() -> None:
-    with st.expander("数据工具", expanded=False):
+    with st.expander("数据缓存（可选）", expanded=False):
         try:
             summary = get_cache_summary()
             st.info(summary.get("message", "缓存状态未知"))
@@ -2362,7 +2457,7 @@ def cache_tools() -> None:
             f"当前本地缓存约 {summary.get('count', 0)} 只标的，其中 {summary.get('finance_count', 0)} 只有财务数据；"
             f"最近更新时间：{summary.get('latest_update', '未知')}。"
         )
-        st.caption("页面默认读取 stock_metrics.csv，本地和云端都更稳定。下面的按钮会尝试联网更新，接口可能失败。")
+        st.caption("日常使用不需要点这里。页面默认读取本地缓存，更新接口可能受网络影响。")
         cache_col1, cache_col2 = st.columns(2)
         if cache_col1.button("更新全部 A 股行情缓存", use_container_width=True):
             with st.spinner("正在拉取全部 A 股行情，可能需要几十秒..."):
@@ -2386,25 +2481,6 @@ def cache_tools() -> None:
                 f"缓存现有 {update_summary.get('count', 0)} 只标的，"
                 f"{update_summary.get('finance_count', 0)} 只有财务数据。"
             )
-
-
-def agent_capabilities() -> None:
-    with st.expander("这个 Agent 会做什么", expanded=False):
-        render_html(
-            """
-            <div class="agent-flow-card" style="margin-top:0;">
-                <div class="agent-flow-steps">
-                    <span><b>1</b> 风险体检</span>
-                    <span><b>2</b> 家庭翻译</span>
-                    <span><b>3</b> 分歧提醒</span>
-                    <span><b>4</b> 合规守门</span>
-                </div>
-                <p class="agent-flow-note">
-                    它只解释风险和沟通重点，不替家人做交易决定，也不预测短期涨跌。
-                </p>
-            </div>
-            """
-        )
 
 
 def home_page() -> None:
@@ -3490,14 +3566,13 @@ def followup_block(agent_context: dict[str, Any]) -> None:
         # 旧版本字段不全（v3 之前），全部清掉，避免诊断信息缺失
         st.session_state["followup_answers"] = []
 
-    st.markdown("---")
     render_html(
         """
-        <section class="block ai-report" style="padding:1.15rem 1.2rem;">
+        <section class="block ai-report" style="padding:0.95rem 1rem;margin-bottom:0.7rem;">
             <div class="block-head" style="margin-bottom:.35rem;">
                 <div>
-                    <h2 class="block-title" style="font-size:1.34rem;">继续追问这次体检</h2>
-                    <p class="block-subtitle">问题根据本次体检数据自动生成，点击即可继续问 AI。回答只基于本次体检结果，不荐股，不预测涨跌。</p>
+                    <h2 class="block-title" style="font-size:1.12rem;">继续追问</h2>
+                    <p class="block-subtitle">问题来自本次体检结果，回答只解释风险，不替家人做交易决定。</p>
                 </div>
             </div>
         </section>
@@ -3515,7 +3590,7 @@ def followup_block(agent_context: dict[str, Any]) -> None:
         st.session_state["followup_questions"] = cached
     questions: list[str] = cached
 
-    st.caption("点击直接问 AI：")
+    st.caption("点一个问题，或自己输入：")
     col_a, col_b = st.columns(2)
     for qi, question in enumerate(questions):
         col = col_a if qi % 2 == 0 else col_b
@@ -4132,17 +4207,10 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
 
     # 1f. 下一步 CTA：查看 AI 风险说明
     render_html("""
-    <div style="margin:0.15rem 0 0.5rem;border-radius:14px;
-                border:1.5px solid #e8c4b2;background:#fff9f6;
-                padding:0.7rem 0.95rem 0.6rem;">
-        <p style="font-size:0.68rem;font-weight:600;letter-spacing:.06em;
-                  color:#7a3e2e;text-transform:uppercase;margin:0 0 0.2rem;">第 2 步</p>
-        <p style="font-size:0.92rem;font-weight:700;color:var(--text);margin:0 0 0.12rem;">
-            查看 AI 对这次风险的完整说明
-        </p>
-        <p style="font-size:0.78rem;color:var(--text-3);margin:0;">
-            基于本次体检数据生成，不构成买卖建议。
-        </p>
+    <div class="fr-step-card">
+        <p class="fr-step-kicker">Next</p>
+        <p class="fr-step-title">让 AI 把风险讲给家人听</p>
+        <p class="fr-step-sub">基于本次体检数据生成，重点解释为什么要关注这些风险。</p>
     </div>
     """)
     if st.button("查看 AI 风险说明 →", use_container_width=True,
@@ -4651,30 +4719,15 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
     comment_chip  = f"{comment_count} 条记录" if comment_count else "记录家人看法"
 
     render_html(f"""
-    <div style="margin:1rem 0 0.5rem;border-radius:14px;
-                border:1.5px solid #e8c4b2;background:#fff9f6;
-                padding:1rem 1.1rem 0.9rem;">
-        <p style="font-size:0.73rem;font-weight:600;letter-spacing:.06em;
-                  color:#7a3e2e;text-transform:uppercase;margin:0 0 0.5rem;">
-            Agent · 下一步
-        </p>
-        <p style="font-size:0.97rem;font-weight:700;color:var(--text);margin:0 0 0.35rem;">
-            结论已生成，继续深入了解这次风险
-        </p>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0;">
-            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
-                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
-                📋&nbsp;AI 风险说明
-            </span>
-            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
-                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
-                💬&nbsp;{html_escape(followup_chip)}
-            </span>
-            <span style="font-size:0.78rem;padding:0.28rem 0.75rem;border-radius:20px;
-                         background:rgba(122,62,46,0.09);color:#7a3e2e;font-weight:600;">
-                👨‍👩‍👧&nbsp;{html_escape(comment_chip)}
-            </span>
+    <div class="fr-step-card">
+        <p class="fr-step-kicker">Agent · Next</p>
+        <p class="fr-step-title">结论已生成，继续读懂这次风险</p>
+        <div class="fr-mini-nav">
+            <span>AI 风险说明</span>
+            <span>{html_escape(followup_chip)}</span>
+            <span>{html_escape(comment_chip)}</span>
         </div>
+        <p class="fr-step-sub">建议先看 AI 说明，再追问一个问题，最后记录家人看法。</p>
     </div>
     """)
     if st.button("查看 AI 风险说明 →", use_container_width=True,
