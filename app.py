@@ -129,61 +129,59 @@ def init_state() -> None:
 def css_vars(dark_mode: bool | None = None) -> dict[str, str]:
     _dark = dark_mode if dark_mode is not None else st.session_state.dark_mode
     if _dark:
-        # ── 深色科技主题：深空海军蓝 + 电光青 ──────────────────
+        # ── 深色模式：安静夜读，不使用高饱和科技蓝 ──────────────────
         return {
-            "bg": "#080e1a",
-            "bg_2": "#0c1220",
-            "surface": "#101928",
-            "surface_2": "#162034",
-            "border": "#1c2d44",
-            "border_strong": "#26405e",
-            "text": "#ddeeff",
-            "text_2": "#6e9abf",
-            "text_3": "#344e68",
-            "accent": "#38bdf8",
-            "accent_soft": "#071c2e",
-            "accent_2": "#34d399",
-            "accent_2_soft": "#051e12",
-            "gold": "#fbbf24",
-            "gold_soft": "#1c1400",
-            "up": "#f87171",
-            "up_soft": "#2a0f0f",
-            "down": "#4ade80",
-            "down_soft": "#052212",
-            "warn": "#fb923c",
-            "warn_soft": "#200e00",
-            # 深色专用：玻璃效果 overlay
-            "glass": "rgba(16,25,40,0.82)",
-            "glow_accent": "0 0 18px rgba(56,189,248,0.35)",
-            "glow_up": "0 0 14px rgba(248,113,113,0.40)",
-            "glow_down": "0 0 14px rgba(74,222,128,0.40)",
-            "glow_warn": "0 0 14px rgba(251,146,60,0.40)",
+            "bg": "#11100e",
+            "bg_2": "#191713",
+            "surface": "#1f1c18",
+            "surface_2": "#28231e",
+            "border": "#3b332b",
+            "border_strong": "#58483b",
+            "text": "#eee7dc",
+            "text_2": "#c1b3a3",
+            "text_3": "#8e8173",
+            "accent": "#b06f4f",
+            "accent_soft": "#2d211b",
+            "accent_2": "#77a98a",
+            "accent_2_soft": "#17251d",
+            "gold": "#d7ad5f",
+            "gold_soft": "#302716",
+            "up": "#d36b5f",
+            "up_soft": "#321b18",
+            "down": "#77a98a",
+            "down_soft": "#17251d",
+            "warn": "#d69b56",
+            "warn_soft": "#302316",
+            "glass": "rgba(31,28,24,0.86)",
+            "glow_accent": "none",
+            "glow_up": "none",
+            "glow_down": "none",
+            "glow_warn": "none",
         }
-    # ── 浅色科技主题：冷白石板 + 科技蓝 ────────────────────────
+    # ── 浅色模式：温润纸面 + 克制陶土色，适合家庭阅读 ─────────────
     return {
-        "bg": "#eef2f8",
-        "bg_2": "#e4eaf4",
-        "surface": "#ffffff",
-        "surface_2": "#f5f8fd",
-        "border": "#ccd8e8",
-        "border_strong": "#b0c4d8",
-        "text": "#1a2638",
-        "text_2": "#4e6882",
-        "text_3": "#8aaac4",
-        "accent": "#0284c7",
-        "accent_soft": "#dbeeff",
-        "accent_2": "#059669",
-        "accent_2_soft": "#d1faec",
-        "gold": "#c27d0a",
-        "gold_soft": "#fef3c7",
-        "up": "#dc2626",
-        "up_soft": "#fee2e2",
-        "down": "#059669",
-        "down_soft": "#d1faec",
-        "warn": "#c2600a",
-        "warn_soft": "#fff0e0",
-        # 浅色不需要 glow，给空值保持结构一致
-        "glass": "rgba(255,255,255,0.88)",
+        "bg": "#f6f1ea",
+        "bg_2": "#eee7dd",
+        "surface": "#fbf8f3",
+        "surface_2": "#f3ece2",
+        "border": "#ddd0c0",
+        "border_strong": "#c9b6a4",
+        "text": "#282019",
+        "text_2": "#65584b",
+        "text_3": "#9a8d7f",
+        "accent": "#8d5039",
+        "accent_soft": "#f0dfd5",
+        "accent_2": "#4f8466",
+        "accent_2_soft": "#e0ece4",
+        "gold": "#a9782a",
+        "gold_soft": "#f5ead2",
+        "up": "#b64b42",
+        "up_soft": "#f5ddd8",
+        "down": "#4f8466",
+        "down_soft": "#e0ece4",
+        "warn": "#a9782a",
+        "warn_soft": "#f5ead2",
+        "glass": "rgba(251,248,243,0.9)",
         "glow_accent": "none",
         "glow_up": "none",
         "glow_down": "none",
@@ -1614,6 +1612,285 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
                 backdrop-filter: blur(12px);
             }}
         }}
+
+        /* ══════════════════════════════════════════════════════
+           FamilyReader polish pass · quiet intelligent product UI
+           ══════════════════════════════════════════════════════ */
+
+        [data-testid="stAppViewContainer"] > .main {{
+            background-image: none !important;
+        }}
+        .main .block-container,
+        [data-testid="stAppViewContainer"] .main .block-container {{
+            width: min(100% - 2rem, 760px) !important;
+            max-width: 760px !important;
+            padding-top: 1.05rem !important;
+        }}
+        .brand {{
+            justify-content: center;
+            margin: 0.55rem 0 1.1rem;
+        }}
+        .brand-mark {{
+            display: none;
+        }}
+        .brand-cn {{
+            font-family: var(--font-display);
+            font-size: 1.18rem;
+            letter-spacing: -0.01em;
+        }}
+        .brand-en {{
+            font-size: 0.78rem;
+            color: var(--text-3);
+        }}
+        .brand-badge {{
+            margin-left: 0.35rem;
+            padding: 0.08rem 0.28rem;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 0.62rem;
+            vertical-align: middle;
+        }}
+        .card, .hero-card, .market-card, .guide-block, .list-shell,
+        .stock-head, .verdict-card, .watch-card, .metric-card,
+        .metric-card-sm, .news-card, .note-card, .risk-card-new,
+        .ai-detail-note {{
+            border-radius: 16px !important;
+            border: 1px solid var(--border) !important;
+            background: var(--surface) !important;
+            box-shadow: 0 10px 28px rgba(48, 38, 28, 0.055) !important;
+            transform: none !important;
+        }}
+        .card:hover, .watch-card:hover, .metric-card:hover,
+        .risk-card-new:hover {{
+            border-color: var(--border-strong) !important;
+            box-shadow: 0 12px 30px rgba(48, 38, 28, 0.075) !important;
+            transform: none !important;
+        }}
+        .fr-hero {{
+            padding: 1.25rem 1.18rem 1.05rem;
+            margin: 0 0 0.8rem;
+            position: relative;
+            overflow: hidden;
+        }}
+        .fr-hero::before {{
+            content: "";
+            position: absolute;
+            inset: 0 0 auto;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--gold));
+            opacity: 0.72;
+        }}
+        .fr-hero-kicker {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.34rem;
+            color: var(--accent);
+            background: var(--accent-soft);
+            border-radius: 999px;
+            padding: 0.28rem 0.58rem;
+            font-size: 0.72rem;
+            font-weight: 800;
+            margin-bottom: 0.72rem;
+        }}
+        .fr-hero-title {{
+            margin: 0 0 0.34rem;
+            font-size: 1.38rem;
+            font-weight: 750;
+            line-height: 1.28;
+            color: var(--text);
+        }}
+        .fr-hero-subtitle {{
+            margin: 0;
+            color: var(--text-2);
+            font-size: 0.92rem;
+            line-height: 1.58;
+            max-width: 54ch;
+        }}
+        .fr-agent-strip {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.38rem;
+            margin-top: 0.86rem;
+        }}
+        .fr-agent-strip span {{
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface) 88%, var(--bg-2));
+            padding: 0.42rem 0.48rem;
+            color: var(--text-2);
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-align: center;
+        }}
+        .fr-disclaimer {{
+            margin: 0.7rem 0 0;
+            color: var(--text-3);
+            font-size: 0.72rem;
+            line-height: 1.48;
+        }}
+        .hero-title {{
+            font-size: 1.38rem;
+        }}
+        .hero-subtitle {{
+            font-size: 0.94rem;
+            margin-bottom: 0.8rem;
+        }}
+        .search-shell {{
+            border-radius: 16px !important;
+            background: transparent !important;
+            border: 0 !important;
+            padding: 0 !important;
+            margin: 0.55rem 0 0.9rem !important;
+        }}
+        .stButton button, .stDownloadButton button, .stFormSubmitButton button {{
+            min-height: 2.6rem;
+            border-radius: 999px !important;
+            background: var(--surface) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--border-strong) !important;
+            box-shadow: none !important;
+            font-weight: 700;
+        }}
+        .stButton button:hover, .stDownloadButton button:hover,
+        .stFormSubmitButton button:hover {{
+            color: var(--accent) !important;
+            border-color: var(--accent) !important;
+            box-shadow: 0 8px 18px rgba(48, 38, 28, 0.08) !important;
+            filter: none !important;
+        }}
+        .stFormSubmitButton button,
+        .stButton button[kind="primary"] {{
+            min-height: 3rem !important;
+            background: var(--accent) !important;
+            color: #fdf8f1 !important;
+            border-color: var(--accent) !important;
+            box-shadow: 0 12px 22px color-mix(in srgb, var(--accent) 22%, transparent) !important;
+        }}
+        .stFormSubmitButton button:hover,
+        .stButton button[kind="primary"]:hover {{
+            color: #fdf8f1 !important;
+            background: color-mix(in srgb, var(--accent) 88%, #3b271e) !important;
+            box-shadow: 0 14px 26px color-mix(in srgb, var(--accent) 26%, transparent) !important;
+        }}
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+        textarea {{
+            background: var(--surface) !important;
+            border-color: var(--border) !important;
+            border-radius: 12px !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.22) !important;
+        }}
+        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stNumberInput"] input:focus,
+        textarea:focus {{
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent) !important;
+        }}
+        [data-testid="stExpander"] {{
+            border-radius: 14px !important;
+            border-color: var(--border) !important;
+            background: color-mix(in srgb, var(--surface) 82%, var(--bg)) !important;
+            box-shadow: none !important;
+            margin: 0.55rem 0 !important;
+        }}
+        [data-testid="stExpander"] summary {{
+            min-height: 2.75rem;
+            color: var(--text) !important;
+            font-weight: 750 !important;
+        }}
+        .verdict-card {{
+            padding: 1.15rem !important;
+            margin-bottom: 0.85rem !important;
+            background: linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 72%, var(--accent-soft))) !important;
+        }}
+        .verdict-card::after,
+        .allocation-cash::after,
+        .allocation-stock::after {{
+            display: none !important;
+            animation: none !important;
+        }}
+        .risk-status {{
+            font-size: 1.45rem !important;
+        }}
+        .risk-light {{
+            width: 2.65rem !important;
+            height: 2.65rem !important;
+            border-width: 3px !important;
+            animation: none !important;
+        }}
+        .score-num {{
+            color: var(--text) !important;
+            text-shadow: none !important;
+            font-size: 2.25rem !important;
+        }}
+        .metric-card::before, .metric-card-sm::before {{
+            display: none !important;
+        }}
+        .risk-card-new {{
+            border-left-width: 1px !important;
+            box-shadow: 0 10px 28px rgba(48, 38, 28, 0.055) !important;
+        }}
+        .r-hi, .r-mid, .r-lo {{
+            border-left-color: var(--border) !important;
+        }}
+        .agent-flow-card {{
+            padding: 0.75rem !important;
+            background: var(--surface) !important;
+            border-color: var(--border) !important;
+        }}
+        .agent-flow-steps {{
+            gap: 0.32rem !important;
+        }}
+        .agent-flow-steps span {{
+            border-radius: 10px !important;
+            background: var(--bg-2) !important;
+            color: var(--text-2) !important;
+            border-color: var(--border) !important;
+            padding: 0.36rem 0.4rem !important;
+        }}
+        .agent-flow-steps b {{
+            background: var(--surface) !important;
+            color: var(--accent) !important;
+        }}
+        @media (max-width: 640px) {{
+            .main .block-container,
+            [data-testid="stAppViewContainer"] .main .block-container {{
+                padding: 0.82rem 0.78rem 86px !important;
+            }}
+            .brand {{
+                margin: 0.35rem 0 0.9rem;
+            }}
+            .fr-hero {{
+                padding: 1.08rem 1rem 0.92rem;
+            }}
+            .fr-hero-title {{
+                font-size: 1.22rem;
+            }}
+            .fr-hero-subtitle {{
+                font-size: 0.88rem;
+            }}
+            .fr-agent-strip {{
+                grid-template-columns: 1fr 1fr 1fr;
+            }}
+            .fr-agent-strip span {{
+                font-size: 0.68rem;
+                padding: 0.34rem 0.28rem;
+            }}
+            .risk-status {{
+                font-size: 1.28rem !important;
+            }}
+            .score-dial {{
+                display: none;
+            }}
+            .stButton button, .stDownloadButton button, .stFormSubmitButton button {{
+                min-height: 2.75rem;
+            }}
+            [data-testid="stExpander"] summary {{
+                min-height: 2.55rem;
+            }}
+        }}
         </style>
         """
     )
@@ -1707,17 +1984,16 @@ def risk_profile_hint_grid(selected: str) -> str:
 def home_hero() -> None:
     render_html(
         f"""
-        <div class="hero-card" style="padding: 1.3rem 1.3rem 0.6rem; margin-bottom: 0.5rem;">
-            <div class="eyebrow">家庭投资风险体检</div>
-            <h1 class="hero-title">输入持仓，看清风险。</h1>
-            <p class="hero-subtitle">帮家人看清持仓风险和资金结构。不预测涨跌，不构成买卖建议。</p>
-            <div class="agent-flow-steps" style="margin-top:0.9rem;">
-                <span><b>1</b> 输入持仓</span>
-                <span><b>2</b> 智能体检</span>
-                <span><b>3</b> 追问深挖</span>
-                <span><b>4</b> 记录观察</span>
+        <div class="hero-card fr-hero">
+            <div class="fr-hero-kicker">FamilyReader · AI</div>
+            <h1 class="fr-hero-title">读懂家庭持仓风险</h1>
+            <p class="fr-hero-subtitle">输入持仓和现金，Agent 会检查仓位、集中度、数据完整性，并生成家人能看懂的说明。</p>
+            <div class="fr-agent-strip">
+                <span>看结构</span>
+                <span>讲清楚</span>
+                <span>留记录</span>
             </div>
-            <p class="agent-flow-note">{HOME_DISCLAIMER}</p>
+            <p class="fr-disclaimer">{HOME_DISCLAIMER}</p>
         </div>
         """
     )
@@ -2075,7 +2351,7 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
 
 
 def cache_tools() -> None:
-    with st.expander("高级选项：数据缓存工具", expanded=False):
+    with st.expander("数据工具", expanded=False):
         try:
             summary = get_cache_summary()
             st.info(summary.get("message", "缓存状态未知"))
@@ -2112,12 +2388,31 @@ def cache_tools() -> None:
             )
 
 
+def agent_capabilities() -> None:
+    with st.expander("这个 Agent 会做什么", expanded=False):
+        render_html(
+            """
+            <div class="agent-flow-card" style="margin-top:0;">
+                <div class="agent-flow-steps">
+                    <span><b>1</b> 风险体检</span>
+                    <span><b>2</b> 家庭翻译</span>
+                    <span><b>3</b> 分歧提醒</span>
+                    <span><b>4</b> 合规守门</span>
+                </div>
+                <p class="agent-flow-note">
+                    它只解释风险和沟通重点，不替家人做交易决定，也不预测短期涨跌。
+                </p>
+            </div>
+            """
+        )
+
+
 def home_page() -> None:
     home_hero()
-    st.divider()
-    cache_tools()
     with st.expander("显示设置", expanded=False):
         display_settings()
+    cache_tools()
+    agent_capabilities()
 
 
 def to_float(value: Any) -> float | None:
@@ -4243,14 +4538,14 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
     except Exception:  # noqa: BLE001
         pass
 
-    if st.button("看完了，开始 AI 追问 →", use_container_width=True,
-                 key="goto_followup_from_report", type="primary"):
-        st.session_state["active_view"] = "followup"
-        st.rerun()
-
     render_html('<div class="card" style="padding:1.4rem;margin-top:0.6rem;">')
     st.markdown(display_report)
     render_html("</div>")
+
+    if st.button("读完了，继续问 AI →", use_container_width=True,
+                 key="goto_followup_from_report", type="primary"):
+        st.session_state["active_view"] = "followup"
+        st.rerun()
 
 
 def followup_page(agent_result: dict[str, Any]) -> None:
@@ -4266,14 +4561,22 @@ def followup_page(agent_result: dict[str, Any]) -> None:
         st.info("请先完成一次一键智能体检，再继续追问。")
         return
 
+    _fup_mode = agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE
+    reverse_qa_block(agent_result, agent_context, _fup_mode)
+    followup_block(agent_context)
+
     _fup_answers = list(st.session_state.get("followup_answers", []))
     _has_followup = bool(_fup_answers)
     _fup_ans_n = len(_fup_answers)
     _fup_run_id = str(agent_result.get("run_id", "") if agent_result else "")
     _cta_label = (
-        f"追问完成（{_fup_ans_n} 条），记录家人看法 →"
+        f"完成追问（{_fup_ans_n} 条），记录家人看法 →"
         if _has_followup
-        else "跳过追问，直接记录家人看法 →"
+        else "不追问了，直接记录家人看法 →"
+    )
+    render_html(
+        '<div style="margin:1rem 0 0.45rem;color:var(--text-3);font-size:0.8rem;">'
+        '下一步会用 30 秒记录家人的关注点，方便以后对比家庭看法变化。</div>'
     )
     if st.button(
         _cta_label,
@@ -4288,10 +4591,6 @@ def followup_page(agent_result: dict[str, Any]) -> None:
         st.session_state["guided_step"] = 1
         st.session_state["active_view"] = "guided_comment"
         st.rerun()
-
-    _fup_mode = agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE
-    reverse_qa_block(agent_result, agent_context, _fup_mode)
-    followup_block(agent_context)
     with st.expander("追问历史保存情况", expanded=False):
         latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
         backend = latest_status.get("backend", "local_csv")

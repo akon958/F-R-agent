@@ -35,8 +35,8 @@ def agent_flow_html(home_disclaimer: str) -> str:
     return f"""
     <section class="agent-flow-card">
         <div class="agent-flow-head">
-            <div class="eyebrow mini">Agent 流程</div>
-            <p>填持仓，看风险，再追问和记录家人看法。</p>
+            <div class="eyebrow mini">Agent Flow</div>
+            <p>输入持仓，读懂风险，和家人一起复盘。</p>
         </div>
         <div class="agent-flow-steps">
             <span><b>1</b> 输入</span>
