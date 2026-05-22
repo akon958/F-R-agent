@@ -126,8 +126,9 @@ def init_state() -> None:
         st.session_state.notes_loaded = True
 
 
-def css_vars() -> dict[str, str]:
-    if st.session_state.dark_mode:
+def css_vars(dark_mode: bool | None = None) -> dict[str, str]:
+    _dark = dark_mode if dark_mode is not None else st.session_state.dark_mode
+    if _dark:
         # ── 深色科技主题：深空海军蓝 + 电光青 ──────────────────
         return {
             "bg": "#080e1a",
@@ -190,9 +191,10 @@ def css_vars() -> dict[str, str]:
     }
 
 
-def inject_css() -> None:
-    v = css_vars()
-    render_html(
+@st.cache_data(show_spinner=False)
+def _css_block(dark_mode: bool, font_size: int) -> str:
+    v = css_vars(dark_mode)
+    return (
         f"""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap');
@@ -234,7 +236,7 @@ def inject_css() -> None:
         }}
 
         html, body, [class*="css"], [data-testid="stAppViewContainer"] {{
-            font-size: {st.session_state.font_size}px;
+            font-size: {font_size}px;
             font-family: var(--font-body);
             color: var(--text);
             background: var(--bg);
@@ -1617,6 +1619,11 @@ def inject_css() -> None:
     )
 
 
+def inject_css() -> None:
+    """Inject global CSS. String is cached per (dark_mode, font_size) pair."""
+    render_html(_css_block(st.session_state.dark_mode, st.session_state.font_size))
+
+
 def html_escape(value: Any) -> str:
     return escape(str(value if value is not None else ""))
 
@@ -1643,18 +1650,18 @@ def _safe_ai_text(text: Any, max_len: int = 200) -> str:
 def site_header() -> None:
     render_html(site_header_html(APP_TITLE, APP_SUBTITLE))
 
+@st.fragment
 def display_settings() -> None:
     c1, c2, c3 = st.columns(3)
     if c1.button("A-", use_container_width=True, help="字号减小", key="toolbar_font_minus"):
         st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
-        st.rerun()
     if c2.button("A+", use_container_width=True, help="字号增大", key="toolbar_font_plus"):
         st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
-        st.rerun()
     label = "浅色" if st.session_state.dark_mode else "暗色"
     if c3.button(label, use_container_width=True, help="切换深色/浅色", key="toolbar_theme_toggle"):
         st.session_state.dark_mode = not st.session_state.dark_mode
-        st.rerun()
+    # 在 fragment 内重新注入 CSS，主题/字号立即生效，无需全页 rerun
+    inject_css()
 
 
 def top_toolbar() -> None:

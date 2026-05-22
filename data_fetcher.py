@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import re
 import time
@@ -561,22 +562,35 @@ def _fetch_akshare_spot() -> pd.DataFrame | None:
         return _fetch_sina_spot_full()
 
 
+@functools.lru_cache(maxsize=128)
+def _get_metrics_cached(codes_tuple: tuple[str, ...]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Per-process cache of stock metrics CSV reads.
+
+    Keyed by the exact codes tuple; cache survives across Streamlit reruns within
+    the same process. Call get_stock_metrics.cache_clear() after a manual CSV
+    refresh to invalidate.
+    """
+    cache_df = _read_cache()
+    rows: list[dict[str, Any]] = []
+    for code in codes_tuple:
+        normalized = normalize_code(code)
+        if not normalized:
+            continue
+        rows.append(_cache_to_analyzer_row(_cache_row(cache_df, normalized), normalized))
+    return rows, []
+
+
 def get_stock_metrics(codes: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
     """Read requested stock data from local cache only.
 
     Streamlit Cloud should be stable and fast by default, so the main page does
     not automatically fetch AkShare data. Use manual refresh buttons or
     update_cache.py to update stock_metrics.csv.
-    """
 
-    cache_df = _read_cache()
-    rows: list[dict[str, Any]] = []
-    for code in codes:
-        normalized = normalize_code(code)
-        if not normalized:
-            continue
-        rows.append(_cache_to_analyzer_row(_cache_row(cache_df, normalized), normalized))
-    return rows, []
+    Results are memoized per codes tuple for the process lifetime.
+    Call ``_get_metrics_cached.cache_clear()`` after a manual CSV refresh.
+    """
+    return _get_metrics_cached(tuple(codes))
 
 
 def refresh_current_holdings_cache(codes: list[str]) -> tuple[dict[str, Any], list[str]]:
