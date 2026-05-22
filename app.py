@@ -2000,34 +2000,52 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
             color: var(--text) !important;
             font-weight: 750 !important;
         }}
-        [data-testid="stSegmentedControl"] button {{
-            min-height: 2.35rem !important;
-            border-radius: 999px !important;
-            font-weight: 750 !important;
+        /* ── 风险承受能力 segmented_control：覆盖 Streamlit 内部深色背景 ── */
+        [data-testid="stSegmentedControl"] {{
+            margin-bottom: 0.2rem;
             background: var(--surface) !important;
-            color: var(--text) !important;
             border: 1px solid var(--border) !important;
+            border-radius: 999px !important;
+            padding: 3px !important;
+            gap: 2px !important;
+        }}
+        [data-testid="stSegmentedControl"] > div,
+        [data-testid="stSegmentedControl"] > div > div {{
+            background: transparent !important;
+        }}
+        [data-testid="stSegmentedControl"] button {{
+            min-height: 2.2rem !important;
+            border-radius: 999px !important;
+            font-weight: 700 !important;
+            background: transparent !important;
+            color: var(--text-2) !important;
+            border: none !important;
             box-shadow: none !important;
             opacity: 1 !important;
+            font-size: 0.9rem !important;
         }}
-        [data-testid="stSegmentedControl"] button * {{
-            color: var(--text) !important;
+        [data-testid="stSegmentedControl"] button *,
+        [data-testid="stSegmentedControl"] button p,
+        [data-testid="stSegmentedControl"] button span {{
+            color: var(--text-2) !important;
             opacity: 1 !important;
+            background: transparent !important;
         }}
         [data-testid="stSegmentedControl"] button[aria-pressed="true"],
         [data-testid="stSegmentedControl"] button[data-selected="true"],
         [data-testid="stSegmentedControl"] button[aria-selected="true"] {{
-            background: var(--accent-soft) !important;
-            color: var(--accent) !important;
-            border-color: var(--accent) !important;
+            background: var(--accent) !important;
+            color: #fff !important;
+            border: none !important;
+            box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent) !important;
         }}
         [data-testid="stSegmentedControl"] button[aria-pressed="true"] *,
         [data-testid="stSegmentedControl"] button[data-selected="true"] *,
-        [data-testid="stSegmentedControl"] button[aria-selected="true"] * {{
-            color: var(--accent) !important;
-        }}
-        [data-testid="stSegmentedControl"] {{
-            margin-bottom: 0.2rem;
+        [data-testid="stSegmentedControl"] button[aria-selected="true"] *,
+        [data-testid="stSegmentedControl"] button[aria-pressed="true"] p,
+        [data-testid="stSegmentedControl"] button[aria-selected="true"] p {{
+            color: #fff !important;
+            background: transparent !important;
         }}
         .verdict-card {{
             padding: 1.15rem !important;
