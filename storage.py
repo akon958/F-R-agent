@@ -706,6 +706,11 @@ def save_family_profile(profile: dict[str, Any]) -> bool:
 
 
 def load_family_profile() -> dict[str, Any] | None:
+    def _normalise_profile(row: dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        item["focus_topics"] = _json_load(item.get("focus_topics"), [])
+        return item
+
     client = get_supabase_client()
     if client is not None:
         try:
@@ -717,11 +722,11 @@ def load_family_profile() -> dict[str, Any] | None:
                 .execute()
             )
             data = result.data if isinstance(result.data, list) else []
-            return data[0] if data else None
+            return _normalise_profile(data[0]) if data else None
         except Exception:  # noqa: BLE001
             pass
     rows = _read_csv_rows(FAMILY_PROFILE_FILE)
-    return rows[-1] if rows else None
+    return _normalise_profile(rows[-1]) if rows else None
 
 
 class StorageBackend(ABC):

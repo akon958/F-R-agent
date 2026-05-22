@@ -28,14 +28,21 @@ except ImportError:
         }
 from data_fetcher import get_stock_metrics, normalize_code
 from delta_alert import compute_delta
-from memory_agent import build_agent_memory_summary
+from memory_agent import (
+    build_agent_memory_summary,
+    build_family_profile_snapshot,
+    build_followup_memory_summary,
+)
 from validator import cross_validate
 from storage import (
     format_datetime_for_display,
     get_last_analysis_save_status,
+    load_family_profile,
     load_recent_family_comments,
     load_recent_analysis_history,
+    load_recent_followup_history,
     save_analysis_history,
+    save_family_profile,
 )
 
 
@@ -370,6 +377,7 @@ def _load_history_summary(history_records: list[dict[str, Any]] | None = None, l
 def _load_memory_inputs_parallel(
     comment_limit: int = 50,
     history_limit: int = 5,
+    followup_limit: int = 12,
 ) -> dict[str, Any]:
     """Load Supabase-backed memory inputs in parallel.
 
@@ -380,6 +388,8 @@ def _load_memory_inputs_parallel(
     result: dict[str, Any] = {
         "family_comments": [],
         "history_records": [],
+        "followup_records": [],
+        "family_profile": None,
         "errors": {},
     }
 
@@ -397,9 +407,25 @@ def _load_memory_inputs_parallel(
             result["history_records"] = []
             result["errors"]["history_records"] = f"{type(exc).__name__}: {str(exc)[:160]}"
 
+    def _load_followups() -> None:
+        try:
+            result["followup_records"] = load_recent_followup_history(limit=followup_limit)
+        except Exception as exc:  # noqa: BLE001
+            result["followup_records"] = []
+            result["errors"]["followup_records"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+
+    def _load_profile() -> None:
+        try:
+            result["family_profile"] = load_family_profile()
+        except Exception as exc:  # noqa: BLE001
+            result["family_profile"] = None
+            result["errors"]["family_profile"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+
     threads = [
         threading.Thread(target=_load_comments, name="family_comments_loader", daemon=True),
         threading.Thread(target=_load_history, name="analysis_history_loader", daemon=True),
+        threading.Thread(target=_load_followups, name="followup_history_loader", daemon=True),
+        threading.Thread(target=_load_profile, name="family_profile_loader", daemon=True),
     ]
     for thread in threads:
         thread.start()
@@ -610,18 +636,22 @@ def _run_memory_agent(
     emit: Callable[[str, int], None],
 ) -> tuple[
     dict[str, Any], dict[str, Any], dict[str, Any],
-    dict[str, Any], dict[str, Any], dict[str, str], list[dict[str, Any]],
+    dict[str, Any], dict[str, Any], dict[str, Any],
+    dict[str, Any], dict[str, str], list[dict[str, Any]],
 ]:
     """Memory Agent：并行读 Supabase，组装 agent_context，检测家庭分歧与历史变化。
 
     返回 (agent_context, family_disagreement, intent_action_gap,
-            history_analysis, agent_memory, memory_errors, history_records)
+            history_analysis, agent_memory, family_profile, followup_memory,
+            memory_errors, history_records)
     """
     emit("读取历史和家庭观察", 56)
     debug_steps.append("并行读取家庭观察记录和历史体检记录。")
-    memory_inputs = _load_memory_inputs_parallel(comment_limit=50, history_limit=5)
+    memory_inputs = _load_memory_inputs_parallel(comment_limit=50, history_limit=5, followup_limit=12)
     family_comments = list(memory_inputs.get("family_comments") or [])
     history_records = list(memory_inputs.get("history_records") or [])
+    followup_records = list(memory_inputs.get("followup_records") or [])
+    existing_profile = memory_inputs.get("family_profile") if isinstance(memory_inputs.get("family_profile"), dict) else None
     memory_errors: dict[str, str] = dict(memory_inputs.get("errors") or {})
 
     emit("组装 agent_context", 60)
@@ -664,9 +694,32 @@ def _run_memory_agent(
         portfolio_summary=portfolio_summary,
         risk_factors=risk_factors,
     )
+    followup_memory = build_followup_memory_summary(followup_records)
+    family_profile = build_family_profile_snapshot(
+        history_records=history_records,
+        family_comments=family_comments,
+        followup_records=followup_records,
+        current_risk_preference=risk_preference,
+        existing_profile=existing_profile,
+    )
+    try:
+        save_family_profile(family_profile)
+    except Exception as exc:  # noqa: BLE001
+        memory_errors["family_profile_save"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+
     agent_context["history_analysis"] = history_analysis
     agent_context["risk_factors"] = risk_factors
     agent_context["agent_memory"] = agent_memory
+    agent_context["followup_memory"] = followup_memory
+    agent_context["recent_followups"] = [
+        {
+            "question": str(item.get("question", ""))[:80],
+            "source": str(item.get("source", "")),
+        }
+        for item in followup_records[:5]
+        if isinstance(item, dict) and item.get("question")
+    ]
+    agent_context["family_profile"] = family_profile
 
     if memory_errors:
         agent_context["memory_load_warnings"] = memory_errors
@@ -677,7 +730,8 @@ def _run_memory_agent(
 
     return (
         agent_context, family_disagreement, intent_action_gap,
-        history_analysis, agent_memory, memory_errors, history_records,
+        history_analysis, agent_memory, family_profile, followup_memory,
+        memory_errors, history_records,
     )
 
 
@@ -809,7 +863,8 @@ def run_family_risk_agent(
     # ── Memory Agent ────────────────────────────────────────────
     (
         agent_context, family_disagreement, intent_action_gap,
-        history_analysis, agent_memory, memory_errors, history_records,
+        history_analysis, agent_memory, family_profile, followup_memory,
+        memory_errors, history_records,
     ) = _run_memory_agent(
         clean_holdings, cash, risk_preference, portfolio_summary,
         analysis, missing_data, main_risks, reverse_qa_data,
@@ -851,6 +906,8 @@ def run_family_risk_agent(
         "cross_validation": cross_validation,
         "risk_factors": risk_factors,
         "agent_memory": agent_memory,
+        "family_profile": family_profile,
+        "followup_memory": followup_memory,
         "watch_tasks": _generate_watch_tasks(
             analysis=analysis,
             portfolio_summary=portfolio_summary,
@@ -874,6 +931,8 @@ def run_family_risk_agent(
             "ai_report.py 调用成功": True,
             "报告来源": report_source,
             "Agent Memory": agent_memory.get("summary", ""),
+            "Family Profile": family_profile,
+            "Followup Memory": followup_memory.get("summary", ""),
             "saved_history": False,
             "data_status 原始值": data_status,
             "memory_load_warnings": memory_errors,

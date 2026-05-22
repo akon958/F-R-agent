@@ -54,6 +54,16 @@ def _loads_maybe(value: Any) -> Any:
         return value
 
 
+def _normalise_focus(value: Any) -> str:
+    focus = str(value or "other").strip() or "other"
+    return focus if focus in FOCUS_LABELS else "other"
+
+
+def _normalise_stance(value: Any) -> str:
+    stance = str(value or "neutral").strip() or "neutral"
+    return stance if stance in STANCE_LABELS else "neutral"
+
+
 def _extract_risks_from_record(record: dict[str, Any]) -> list[str]:
     raw = _loads_maybe(record.get("main_risks"))
     if not raw:
@@ -171,4 +181,139 @@ def build_agent_memory_summary(
         "trend_summary": _safe_text(history_analysis.get("summary", "")),
         "next_watch_points": watch_points,
         "summary": _safe_text(summary, 180),
+    }
+
+
+def build_followup_memory_summary(
+    followup_records: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Summarize recent AI follow-ups without calling any external service."""
+    followup_records = list(followup_records or [])
+    if not followup_records:
+        return {
+            "has_followups": False,
+            "count": 0,
+            "top_topics": [],
+            "recent_questions": [],
+            "summary": "",
+        }
+
+    topic_rules = [
+        ("cash", "现金比例", ("现金", "备用金", "短期", "半年")),
+        ("concentration", "持仓集中", ("占比", "集中", "哪只", "最大", "单只")),
+        ("valuation", "PE/PB估值", ("pe", "pb", "估值", "市盈率", "市净率")),
+        ("data_missing", "数据缺失", ("数据", "缺失", "完整")),
+        ("risk", "主要风险", ("风险", "评分", "放心", "观察")),
+        ("family", "家庭沟通", ("爸妈", "家人", "一句话", "怎么说")),
+    ]
+    topic_counter: Counter[str] = Counter()
+    label_by_topic = {key: label for key, label, _ in topic_rules}
+    recent_questions: list[str] = []
+    for row in followup_records:
+        question = _safe_text(row.get("question"), 80)
+        if question:
+            recent_questions.append(question)
+        lower_q = question.lower()
+        matched = False
+        for key, _label, keywords in topic_rules:
+            if any(keyword.lower() in lower_q for keyword in keywords):
+                topic_counter[key] += 1
+                matched = True
+        if not matched:
+            topic_counter["other"] += 1
+            label_by_topic["other"] = "其他问题"
+
+    top_topics = [
+        {"topic": topic, "label": label_by_topic.get(topic, "其他问题"), "count": count}
+        for topic, count in topic_counter.most_common(4)
+    ]
+    topic_text = "、".join(item["label"] for item in top_topics[:3])
+    summary = f"最近追问主要集中在{topic_text}。" if topic_text else "已有追问记录。"
+    return {
+        "has_followups": True,
+        "count": len(followup_records),
+        "top_topics": top_topics,
+        "recent_questions": recent_questions[:5],
+        "summary": _safe_text(summary, 140),
+    }
+
+
+def build_family_profile_snapshot(
+    history_records: list[dict[str, Any]] | None = None,
+    family_comments: list[dict[str, Any]] | None = None,
+    followup_records: list[dict[str, Any]] | None = None,
+    current_risk_preference: str = "",
+    existing_profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a lightweight, persistent family profile from existing memory.
+
+    The result fits the current family_profile table: risk_preference,
+    report_style, focus_topics, explanation_level. Extra structured detail is
+    stored inside focus_topics JSONB so no schema change is required.
+    """
+    history_records = list(history_records or [])
+    family_comments = list(family_comments or [])
+    followup_records = list(followup_records or [])
+    existing_profile = dict(existing_profile or {})
+
+    focus_counter: Counter[str] = Counter()
+    stance_counter: Counter[str] = Counter()
+    member_focus: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    for item in family_comments:
+        focus = _normalise_focus(item.get("focus") or item.get("focus_tag"))
+        stance = _normalise_stance(item.get("stance"))
+        member = str(item.get("member") or item.get("author_name") or "家人").strip() or "家人"
+        focus_counter[focus] += 1
+        stance_counter[stance] += 1
+        member_focus[member][focus] += 1
+
+    followup_memory = build_followup_memory_summary(followup_records)
+    for topic in followup_memory.get("top_topics") or []:
+        mapped = {
+            "risk": "other",
+            "family": "risk_tolerance",
+        }.get(str(topic.get("topic")), str(topic.get("topic")))
+        focus_counter[_normalise_focus(mapped)] += int(topic.get("count") or 0)
+
+    focus_topics = [
+        {
+            "focus": focus,
+            "label": FOCUS_LABELS.get(focus, "其他"),
+            "count": count,
+        }
+        for focus, count in focus_counter.most_common(5)
+    ]
+
+    top_stance = stance_counter.most_common(1)[0][0] if stance_counter else "neutral"
+    if top_stance == "conservative" or current_risk_preference in ("保守", "稳健"):
+        inferred_preference = current_risk_preference or "稳健"
+    elif top_stance == "aggressive":
+        inferred_preference = current_risk_preference or "进取"
+    else:
+        inferred_preference = current_risk_preference or str(existing_profile.get("risk_preference") or "平衡")
+
+    detail_need = len(followup_records) + len(family_comments)
+    explanation_level = "详细解释" if detail_need >= 6 else "简明解释"
+
+    member_patterns = []
+    for member, counter in list(member_focus.items())[:5]:
+        focus, _ = counter.most_common(1)[0]
+        member_patterns.append({
+            "member": member,
+            "focus": focus,
+            "focus_label": FOCUS_LABELS.get(focus, "其他"),
+        })
+
+    return {
+        "risk_preference": inferred_preference,
+        "report_style": str(existing_profile.get("report_style") or "标准版"),
+        "focus_topics": {
+            "top_focus": focus_topics,
+            "stance_pattern": STANCE_LABELS.get(top_stance, "中性"),
+            "member_patterns": member_patterns,
+            "followup_memory": followup_memory,
+            "history_count": len(history_records),
+            "comment_count": len(family_comments),
+        },
+        "explanation_level": explanation_level,
     }

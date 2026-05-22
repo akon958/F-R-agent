@@ -364,6 +364,25 @@ def _reverse_qa_note(agent_context: dict[str, Any]) -> str:
     return "".join(notes)
 
 
+def _long_term_memory_note(agent_context: dict[str, Any]) -> str:
+    """One short sentence from family profile + follow-up memory."""
+    notes: list[str] = []
+    profile = agent_context.get("family_profile") or {}
+    if isinstance(profile, dict):
+        focus_topics = profile.get("focus_topics") or {}
+        if isinstance(focus_topics, dict):
+            top_focus = focus_topics.get("top_focus") or []
+            if top_focus and isinstance(top_focus[0], dict):
+                notes.append(f"家庭记录里反复关注的是{top_focus[0].get('label') or top_focus[0].get('focus')}。")
+            stance = str(focus_topics.get("stance_pattern") or "")
+            if stance:
+                notes.append(f"整体看法偏{stance}。")
+    followup_memory = agent_context.get("followup_memory") or {}
+    if isinstance(followup_memory, dict) and followup_memory.get("summary"):
+        notes.append(str(followup_memory.get("summary"))[:80])
+    return "".join(notes[:2])
+
+
 # ─────────────────────────────────────────────────────────────────
 # 三种报告模式的内部实现
 # ─────────────────────────────────────────────────────────────────
@@ -382,6 +401,7 @@ def _generate_brief_report(agent_context: dict[str, Any]) -> str:
     valuation_note = " 估值数据暂缺，本次不评价估值高低。" if valuation_missing else ""
     disagreement_note = _family_disagreement_note(agent_context)
     reverse_note = _reverse_qa_note(agent_context)
+    memory_note = _long_term_memory_note(agent_context)
 
     if max_position_ratio >= 0.40:
         conclusion = "集中度偏高，需多留意单只占比。"
@@ -394,7 +414,7 @@ def _generate_brief_report(agent_context: dict[str, Any]) -> str:
         f"【结论】综合评分 {risk_score}/100，风险等级{risk_level}。{conclusion}\n\n"
         f"【主要风险】{primary_risk}{' ' + disagreement_note if disagreement_note else ''}\n\n"
         f"【重点关注】现金比例 {_fmt_percent(cash_ratio)}，最大单只占比 {_fmt_percent(max_position_ratio)}。"
-        f"{valuation_note}{' ' + reverse_note if reverse_note else ''}\n\n"
+        f"{valuation_note}{' ' + memory_note if memory_note else ''}{' ' + reverse_note if reverse_note else ''}\n\n"
         f"【免责声明】{DISCLAIMER}"
     )
     return _sanitize_report_text(report)
@@ -416,6 +436,7 @@ def _generate_detailed_report(agent_context: dict[str, Any]) -> str:
     family_cash = agent_context.get("family_cash", 0)
     total_position_value = agent_context.get("total_position_value", 0)
     disagreement_note = _family_disagreement_note(agent_context)
+    memory_note = _long_term_memory_note(agent_context)
 
     holding_names = "、".join(
         f"{item.get('code', '')} {item.get('name', '')}".strip()
@@ -464,7 +485,7 @@ def _generate_detailed_report(agent_context: dict[str, Any]) -> str:
 数据来源：{data_status}。{missing_text} 数据缺失的部分不作为判断依据，只对有数据支撑的部分做评估。
 
 【给爸妈重点看的地方】
-建议关注三件事：第一，家庭现金够不够应急；第二，单只标的占比有没有太高；第三，财务数据是否完整，数据越完整判断越可靠。{history_text}
+建议关注三件事：第一，家庭现金够不够应急；第二，单只标的占比有没有太高；第三，财务数据是否完整，数据越完整判断越可靠。{memory_note}{history_text}
 
 这份报告适合作为家庭讨论和定期复盘的参考，不适合作为临时操作的依据。
 
@@ -514,12 +535,13 @@ def _generate_parent_report(agent_context: dict[str, Any]) -> str:
         history_note = "目前历史记录还不多，暂时只能先看本次体检结果。"
     disagreement_note = _family_disagreement_note(agent_context)
     reverse_note = _reverse_qa_note(agent_context)
+    memory_note = _long_term_memory_note(agent_context)
 
     report = f"""【整体判断】
 爸妈，{holding_names} 这个组合体检完了。评分是 {risk_score} 分（满分 100），等级是"{risk_level}"。{overall}现金占比大约 {_fmt_percent(cash_ratio)}，股票/基金占比大约 {_fmt_percent(stock_ratio)}。
 
 【主要风险】
-最需要留心的一点是：{primary_risk} 不用马上做什么，但心里要有数。{disagreement_note}
+最需要留心的一点是：{primary_risk} 不用马上做什么，但心里要有数。{memory_note}{disagreement_note}
 
 【数据缺失说明】
 {missing_note} 没有的数据我们不猜，只把有把握的部分放进结论里。
@@ -632,6 +654,9 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "reverse_qa",
         "risk_factors",
         "agent_memory",
+        "family_profile",
+        "followup_memory",
+        "recent_followups",
     ]
     context = {key: agent_context.get(key) for key in allowed_keys}
 
@@ -681,6 +706,33 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
             "recurring_focus": list(agent_memory.get("recurring_focus") or [])[:3],
             "next_watch_points": list(agent_memory.get("next_watch_points") or [])[:3],
         }
+
+    family_profile = context.get("family_profile")
+    if isinstance(family_profile, dict):
+        focus_topics = family_profile.get("focus_topics") or {}
+        if not isinstance(focus_topics, dict):
+            focus_topics = {}
+        context["family_profile"] = {
+            "risk_preference": family_profile.get("risk_preference", ""),
+            "report_style": family_profile.get("report_style", ""),
+            "explanation_level": family_profile.get("explanation_level", ""),
+            "top_focus": list(focus_topics.get("top_focus") or [])[:4],
+            "stance_pattern": focus_topics.get("stance_pattern", ""),
+            "member_patterns": list(focus_topics.get("member_patterns") or [])[:4],
+        }
+
+    followup_memory = context.get("followup_memory")
+    if isinstance(followup_memory, dict):
+        context["followup_memory"] = {
+            "has_followups": followup_memory.get("has_followups", False),
+            "count": followup_memory.get("count", 0),
+            "top_topics": list(followup_memory.get("top_topics") or [])[:4],
+            "summary": followup_memory.get("summary", ""),
+        }
+
+    recent_followups = context.get("recent_followups")
+    if isinstance(recent_followups, list):
+        context["recent_followups"] = recent_followups[:3]
 
     return context
 
@@ -806,7 +858,8 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 6. {valuation_rule}
 7. {disagreement_rule}
 8. 如果 agent_context 里有 agent_memory 且 has_memory=true，可以用一句话呼应家庭反复关注的问题；不要展开太长，不要编造历史。
-9. {reverse_rule}
+9. 如果 agent_context 里有 family_profile 或 followup_memory，可以轻微调整解释重点：反复追问/记录较多的主题优先解释；但不能把历史记忆当成新的事实或交易依据。
+10. {reverse_rule}
 {_mode_rules}
 """.strip()
 

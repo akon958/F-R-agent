@@ -3893,6 +3893,53 @@ def agent_memory_block(memory: dict[str, Any]) -> None:
         """
     )
 
+
+def family_profile_memory_block(profile: dict[str, Any], followup_memory: dict[str, Any]) -> None:
+    """Show the persistent family profile that the Agent will reuse next time."""
+    if not isinstance(profile, dict) and not isinstance(followup_memory, dict):
+        return
+    profile = profile if isinstance(profile, dict) else {}
+    followup_memory = followup_memory if isinstance(followup_memory, dict) else {}
+    focus_topics = profile.get("focus_topics") or {}
+    if not isinstance(focus_topics, dict):
+        focus_topics = {}
+    top_focus = [
+        str(item.get("label") or item.get("focus") or "")
+        for item in (focus_topics.get("top_focus") or [])
+        if isinstance(item, dict) and (item.get("label") or item.get("focus"))
+    ]
+    followup_topics = [
+        str(item.get("label") or item.get("topic") or "")
+        for item in (followup_memory.get("top_topics") or [])
+        if isinstance(item, dict) and (item.get("label") or item.get("topic"))
+    ]
+    if not top_focus and not followup_topics and not profile.get("risk_preference"):
+        return
+    chips = "".join(
+        f'<span style="font-size:0.68rem;color:#7a3e2e;background:rgba(122,62,46,0.08);'
+        f'border-radius:999px;padding:0.14rem 0.46rem;margin-right:0.28rem;display:inline-block;">'
+        f'{html_escape(item)}</span>'
+        for item in (top_focus[:3] + followup_topics[:2])
+    )
+    render_html(
+        f"""
+        <section style="margin:0.25rem 0 0.45rem;border:1px solid var(--border);
+                        background:var(--surface);border-radius:12px;padding:0.7rem 0.85rem;">
+            <div style="font-size:0.9rem;font-weight:800;color:var(--text);line-height:1.2;">长期记忆</div>
+            <div style="font-size:0.68rem;color:var(--text-3);margin-top:0.12rem;">
+                下次体检会继续参考这些家庭关注点
+            </div>
+            <p style="font-size:0.78rem;color:var(--text-2);line-height:1.55;margin:0.45rem 0 0;">
+                风险偏好：{html_escape(profile.get("risk_preference") or "暂未形成")}；
+                解释风格：{html_escape(profile.get("explanation_level") or "简明解释")}；
+                追问记忆：{html_escape(followup_memory.get("summary") or "暂无明显追问主题")}。
+            </p>
+            <div style="margin-top:0.45rem;line-height:1.75;">{chips}</div>
+        </section>
+        """
+    )
+
+
 def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str, Any] | None = None) -> None:
     """把现有评分拆成父母能看懂的风险因子，不改变分析逻辑。"""
     factor_data = factor_data or build_risk_factor_breakdown(analysis or {})
@@ -4230,6 +4277,10 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 f'记忆&nbsp;{html_escape(_behavior_note)}</p>'
             )
         agent_memory_block(agent_result.get("agent_memory", {}))
+        family_profile_memory_block(
+            agent_result.get("family_profile", {}),
+            agent_result.get("followup_memory", {}),
+        )
         intent_action_gap_block(agent_result.get("intent_action_gap", {}))
         watch_tasks_block(agent_result)
         if _analysis:
