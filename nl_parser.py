@@ -126,11 +126,14 @@ def _regex_parse(text: str) -> dict[str, Any]:
             holdings.append({"code": code, "name": name, "amount": amount})
 
     # 模式2: "茅台20万" / "招行 10万元"（仅匹配已知名称）
-    for name, code in _NAME_TO_CODE.items():
-        # 跳过已通过代码匹配到的
-        if any(h["code"] == code for h in holdings):
+    # 长名称优先排序，防止"平安"在"中国平安"之前命中导致代码错误
+    _sorted_names = sorted(_NAME_TO_CODE.items(), key=lambda x: -len(x[0]))
+    for name, code in _sorted_names:
+        # 跳过已通过代码或名称匹配到的（双重去重：code 和 name 均检查）
+        if any(h["code"] == code or h["name"] == name for h in holdings):
             continue
-        pattern = name + r"\s*([\d.]+)\s*([亿千万]?)(?:元|块)?"
+        # CJK 边界断言：防止短名称匹配长名称的子串（如"平安"不应匹配"中国平安"）
+        pattern = r"(?<![^\W\d_])" + re.escape(name) + r"(?![^\W\d_])\s*([\d.]+)\s*([亿千万]?)(?:元|块)?"
         m = re.search(pattern, clean)
         if m:
             try:

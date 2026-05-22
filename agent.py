@@ -488,6 +488,239 @@ def _build_agent_context(
     }
 
 
+# ─────────────────────────────────────────────────────────────────
+# 专职子 Agent：由 run_family_risk_agent() 统一编排调用
+# ─────────────────────────────────────────────────────────────────
+
+def _run_data_agent(
+    clean_holdings: list[dict[str, Any]],
+    cash: float,
+    user_goal: str,
+    reverse_qa_data: dict[str, Any],
+    debug_steps: list[str],
+    warnings: list[str],
+    emit: Callable[[str, int], None],
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, list[str]], bool]:
+    """Data Agent：读取行情/财务缓存，计算组合指标，收集数据缺口。
+
+    返回 (stocks, portfolio_summary, missing_data, realtime_used)
+    """
+    codes = [item["code"] for item in clean_holdings]
+    emit("读取行情和财务缓存", 20)
+    debug_steps.append("读取本地数据。")
+    stocks, fetch_warnings = get_stock_metrics(codes)
+    warnings.extend(fetch_warnings)
+
+    debug_steps.append("检查实时行情模块；不可用时使用本地数据。")
+    realtime_rows, realtime_message = _try_realtime_data(codes)
+    warnings.append(realtime_message)
+    if realtime_rows:
+        stocks = realtime_rows
+    realtime_used = bool(realtime_rows)
+
+    emit("计算持仓比例和现金比例", 35)
+    debug_steps.append("计算持仓比例、整体仓位和现金比例")
+    stock_total = sum(item["amount"] for item in clean_holdings)
+    total_assets = cash + stock_total
+    portfolio_summary = {
+        "user_goal": user_goal,
+        "family_cash": cash,
+        "stock_total": stock_total,
+        "total_assets": total_assets,
+        "cash_ratio": cash / total_assets if total_assets > 0 else 0,
+        "stock_ratio": stock_total / total_assets if total_assets > 0 else 0,
+        "holding_count": len(clean_holdings),
+        "max_single_ratio": max(
+            (item["amount"] / total_assets for item in clean_holdings), default=0
+        ) if total_assets > 0 else 0,
+    }
+
+    emit("识别集中风险和数据缺失", 48)
+    debug_steps.append("判断单只集中风险和现金压力")
+    if portfolio_summary["max_single_ratio"] > 0.40:
+        warnings.append("单只持仓超过家庭可投资资金的 40%，集中度偏高。")
+    _money_urgent = reverse_qa_data.get("money_need_6m") == "possible"
+    if _money_urgent and portfolio_summary["cash_ratio"] < 0.20:
+        warnings.append(
+            f"半年内可能有资金需求，当前现金比例仅 {portfolio_summary['cash_ratio']:.0%}，"
+            "流动性风险需要优先关注。"
+        )
+    elif portfolio_summary["cash_ratio"] < 0.10:
+        warnings.append("现金比例偏低，家庭备用金需要优先关注。")
+
+    debug_steps.append("识别行情、估值和财务数据缺失")
+    missing_data = _collect_missing_data(stocks)
+
+    return stocks, portfolio_summary, missing_data, realtime_used
+
+
+def _run_risk_agent(
+    clean_holdings: list[dict[str, Any]],
+    cash: float,
+    risk_preference: str,
+    portfolio_summary: dict[str, Any],
+    stocks: list[dict[str, Any]],
+    missing_data: dict[str, list[str]],
+    reverse_qa_data: dict[str, Any],
+    debug_steps: list[str],
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any], list[str]]:
+    """Risk Agent：四维评分、数据可信度、交叉验证、主要风险提取。
+
+    返回 (analysis, risk_factors, data_confidence, cross_validation, main_risks)
+    """
+    debug_steps.append("完成风险计算。")
+    analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
+    risk_factors = build_risk_factor_breakdown(analysis)
+    data_confidence = assess_data_confidence(analysis, missing_data)
+
+    _cv_score = int(analysis.get("score", 0) or 0)
+    _cv_level = f"{analysis.get('level', '')}（{analysis.get('level_text', '')}）"
+    cross_validation = cross_validate(_cv_score, _cv_level, portfolio_summary, risk_factors)
+
+    debug_steps.append("整理体检上下文。")
+    main_risks: list[str] = analysis.get("risk_notes", [])[:8]
+    # 若用户表示半年内可能用钱且现金不足，将流动性风险前置
+    if (
+        reverse_qa_data.get("money_need_6m") == "possible"
+        and portfolio_summary.get("cash_ratio", 1.0) < 0.20
+    ):
+        _liquidity_note = (
+            f"半年内可能有资金需求，当前现金比例仅 {portfolio_summary['cash_ratio']:.0%}，"
+            "流动性应作为首要关注。"
+        )
+        if _liquidity_note not in main_risks:
+            main_risks = [_liquidity_note] + [r for r in main_risks if r != _liquidity_note]
+            main_risks = main_risks[:8]
+
+    return analysis, risk_factors, data_confidence, cross_validation, main_risks
+
+
+def _run_memory_agent(
+    clean_holdings: list[dict[str, Any]],
+    cash: float,
+    risk_preference: str,
+    portfolio_summary: dict[str, Any],
+    analysis: dict[str, Any],
+    missing_data: dict[str, list[str]],
+    main_risks: list[str],
+    reverse_qa_data: dict[str, Any],
+    risk_factors: list[dict[str, Any]],
+    debug_steps: list[str],
+    warnings: list[str],
+    emit: Callable[[str, int], None],
+) -> tuple[
+    dict[str, Any], dict[str, Any], dict[str, Any],
+    dict[str, Any], dict[str, Any], dict[str, str], list[dict[str, Any]],
+]:
+    """Memory Agent：并行读 Supabase，组装 agent_context，检测家庭分歧与历史变化。
+
+    返回 (agent_context, family_disagreement, intent_action_gap,
+            history_analysis, agent_memory, memory_errors, history_records)
+    """
+    emit("读取历史和家庭观察", 56)
+    debug_steps.append("并行读取家庭观察记录和历史体检记录。")
+    memory_inputs = _load_memory_inputs_parallel(comment_limit=50, history_limit=5)
+    family_comments = list(memory_inputs.get("family_comments") or [])
+    history_records = list(memory_inputs.get("history_records") or [])
+    memory_errors: dict[str, str] = dict(memory_inputs.get("errors") or {})
+
+    emit("组装 agent_context", 60)
+    agent_context = _build_agent_context(
+        clean_holdings=clean_holdings,
+        cash=cash,
+        risk_preference=risk_preference,
+        portfolio_summary=portfolio_summary,
+        analysis=analysis,
+        missing_data=missing_data,
+        main_risks=main_risks,
+        history_records=history_records,
+    )
+
+    # ── Disagreement Detector ────────────────────────────────────
+    try:
+        family_disagreement = detect_family_disagreement(family_comments)
+        intent_action_gap = detect_intent_action_gap(family_comments, portfolio_summary)
+    except Exception:  # noqa: BLE001
+        family_disagreement = {"has_conflict": False, "conflicts": [], "summary": ""}
+        intent_action_gap = {"has_gap": False, "gaps": [], "summary": ""}
+    agent_context["family_comments"] = family_comments[:20]
+    agent_context["family_disagreement"] = family_disagreement
+    agent_context["intent_action_gap"] = intent_action_gap
+    agent_context["reverse_qa"] = reverse_qa_data
+
+    # ── History Analyzer ─────────────────────────────────────────
+    try:
+        history_analysis = analyze_history_changes(history_records)
+    except Exception:  # noqa: BLE001
+        history_analysis = {
+            "has_history": False, "records_count": 0, "latest_date": "", "previous_date": "",
+            "score_change": None, "risk_factor_changes": [], "family_focus_changes": [],
+            "watch_points": [], "summary": "历史记录还不够，先完成几次体检后，这里会显示风险变化。",
+        }
+    agent_memory = build_agent_memory_summary(
+        history_records=history_records,
+        family_comments=family_comments,
+        history_analysis=history_analysis,
+        portfolio_summary=portfolio_summary,
+        risk_factors=risk_factors,
+    )
+    agent_context["history_analysis"] = history_analysis
+    agent_context["risk_factors"] = risk_factors
+    agent_context["agent_memory"] = agent_memory
+
+    if memory_errors:
+        agent_context["memory_load_warnings"] = memory_errors
+        for _mem_key, _mem_msg in memory_errors.items():
+            if "超时" in _mem_msg:
+                _label = "家庭观察记录" if "comment" in _mem_key else "历史体检记录"
+                warnings.append(f"{_label}读取较慢，本次体检不含该数据，不影响风险评估。")
+
+    return (
+        agent_context, family_disagreement, intent_action_gap,
+        history_analysis, agent_memory, memory_errors, history_records,
+    )
+
+
+def _run_report_agent(
+    agent_context: dict[str, Any],
+    analysis: dict[str, Any],
+    missing_data: dict[str, list[str]],
+    emit: Callable[[str, int], None],
+    debug_steps: list[str],
+) -> tuple[str, str, str]:
+    """Report Agent：调用 DeepSeek 生成家庭风险报告，失败时本地兜底。
+
+    返回 (ai_report, dinner_talk, report_source)
+    """
+    emit("调用 DeepSeek 生成 AI 风险说明", 72)
+    debug_steps.append("生成家庭说明。")
+    try:
+        report_result = generate_agent_report(agent_context, mode=DEFAULT_REPORT_MODE)
+    except Exception:  # noqa: BLE001
+        report_result = {
+            "ai_report": _fallback_ai_report(analysis, missing_data),
+            "report_source": "local_fallback",
+        }
+    if isinstance(report_result, dict):
+        ai_report = _safe_ai_text(str(report_result.get("ai_report", "") or ""))
+        dinner_talk = _safe_dinner_talk(str(report_result.get("dinner_talk", "") or ""), agent_context)
+        report_source = str(report_result.get("report_source", "local_fallback") or "local_fallback")
+    else:
+        ai_report = _safe_ai_text(str(report_result or ""))
+        dinner_talk = _fallback_dinner_talk(agent_context)
+        report_source = "local_fallback"
+    if not ai_report:
+        ai_report = _safe_ai_text(_fallback_ai_report(analysis, missing_data))
+        report_source = "local_fallback"
+    if not dinner_talk:
+        dinner_talk = _fallback_dinner_talk(agent_context)
+    return ai_report, dinner_talk, report_source
+
+
+# ─────────────────────────────────────────────────────────────────
+# 主入口：编排四个专职子 Agent
+# ─────────────────────────────────────────────────────────────────
+
 def run_family_risk_agent(
     holdings: Any,
     family_cash: float,
@@ -496,7 +729,15 @@ def run_family_risk_agent(
     reverse_qa: dict[str, Any] | None = None,
     progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
-    run_id: str = uuid.uuid4().hex  # 本次体检唯一编号
+    """家庭风险体检主入口。
+
+    编排四个专职子 Agent：
+      _run_data_agent   → 行情 / 组合指标
+      _run_risk_agent   → 四维评分 / 交叉验证
+      _run_memory_agent → Supabase 记忆 / 家庭分歧
+      _run_report_agent → DeepSeek 家庭报告
+    """
+    run_id: str = uuid.uuid4().hex
     reverse_qa_data = _normalize_reverse_qa(reverse_qa)
 
     def emit(step: str, percent: int) -> None:
@@ -507,30 +748,15 @@ def run_family_risk_agent(
                 pass
 
     agent_steps = [
-        {
-            "title": "识别家庭持仓",
-            "description": "已读取持仓金额、家庭现金和风险承受能力。",
-            "status": "已完成",
-        },
-        {
-            "title": "检查数据完整性",
-            "description": "已检查行情、估值和财务数据是否完整。",
-            "status": "已完成",
-        },
-        {
-            "title": "评估家庭风险",
-            "description": "已计算持仓占比、现金比例、集中度风险和数据缺口。",
-            "status": "已完成",
-        },
-        {
-            "title": "生成家庭说明",
-            "description": "已生成适合家人阅读的风险说明。",
-            "status": "已完成",
-        },
+        {"title": "识别家庭持仓", "description": "已读取持仓金额、家庭现金和风险承受能力。", "status": "已完成"},
+        {"title": "检查数据完整性", "description": "已检查行情、估值和财务数据是否完整。", "status": "已完成"},
+        {"title": "评估家庭风险", "description": "已计算持仓占比、现金比例、集中度风险和数据缺口。", "status": "已完成"},
+        {"title": "生成家庭说明", "description": "已生成适合家人阅读的风险说明。", "status": "已完成"},
     ]
     debug_steps: list[str] = []
     warnings: list[str] = []
 
+    # ── Input Guard ─────────────────────────────────────────────
     emit("检查输入是否完整", 8)
     debug_steps.append("检查用户输入是否完整")
     clean_holdings, input_warnings = _normalize_holdings(holdings)
@@ -569,162 +795,40 @@ def run_family_risk_agent(
             },
         }
 
-    # ── Data Agent：读取并标准化行情 / 财务缓存 ──────────────────
-    codes = [item["code"] for item in clean_holdings]
-    emit("读取行情和财务缓存", 20)
-    debug_steps.append("读取本地数据。")
-    stocks, fetch_warnings = get_stock_metrics(codes)
-    warnings.extend(fetch_warnings)
-
-    debug_steps.append("检查实时行情模块；不可用时使用本地数据。")
-    realtime_file_exists = Path(__file__).with_name("realtime_data.py").exists()
-    realtime_rows, realtime_message = _try_realtime_data(codes)
-    warnings.append(realtime_message)
-    if realtime_rows:
-        stocks = realtime_rows
-
-    emit("计算持仓比例和现金比例", 35)
-    debug_steps.append("计算持仓比例、整体仓位和现金比例")
-    stock_total = sum(item["amount"] for item in clean_holdings)
-    total_assets = cash + stock_total
-    portfolio_summary = {
-        "user_goal": user_goal,
-        "family_cash": cash,
-        "stock_total": stock_total,
-        "total_assets": total_assets,
-        "cash_ratio": cash / total_assets if total_assets > 0 else 0,
-        "stock_ratio": stock_total / total_assets if total_assets > 0 else 0,
-        "holding_count": len(clean_holdings),
-        "max_single_ratio": max((item["amount"] / total_assets for item in clean_holdings), default=0) if total_assets > 0 else 0,
-    }
-
-    emit("识别集中风险和数据缺失", 48)
-    debug_steps.append("判断单只集中风险和现金压力")
-    if portfolio_summary["max_single_ratio"] > 0.40:
-        warnings.append("单只持仓超过家庭可投资资金的 40%，集中度偏高。")
-    # 现金预警：若用户表示半年内可能用钱，阈值提高至 20%
-    _money_urgent = reverse_qa_data.get("money_need_6m") == "possible"
-    if _money_urgent and portfolio_summary["cash_ratio"] < 0.20:
-        warnings.append(
-            f"半年内可能有资金需求，当前现金比例仅 {portfolio_summary['cash_ratio']:.0%}，"
-            "流动性风险需要优先关注。"
-        )
-    elif portfolio_summary["cash_ratio"] < 0.10:
-        warnings.append("现金比例偏低，家庭备用金需要优先关注。")
-
-    debug_steps.append("识别行情、估值和财务数据缺失")
-    missing_data = _collect_missing_data(stocks)
-
-    # ── Risk Agent：四维评分（仓位安全 / 财务质量 / 交易热度 / 风险匹配）──
-    debug_steps.append("完成风险计算。")
-    analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
-    risk_factors = build_risk_factor_breakdown(analysis)
-
-    # ── Compliance Guard：检查数据完整性，评估结论可信度 ─────────
-    data_confidence = assess_data_confidence(analysis, missing_data)
-
-    # ── 多重交叉验证：检查各模块输出的内部一致性 ─────────────────
-    _cv_score = int(analysis.get("score", 0) or 0)
-    _cv_level = f"{analysis.get('level', '')}（{analysis.get('level_text', '')}）"
-    cross_validation = cross_validate(_cv_score, _cv_level, portfolio_summary, risk_factors)
-
-    emit("组装 agent_context", 60)
-    debug_steps.append("整理体检上下文。")
-    data_status = analysis.get("data_status", "本地缓存")
-    main_risks = analysis.get("risk_notes", [])[:8]
-    # 若用户表示半年内可能用钱且现金不足，将流动性风险前置到主要风险列表
-    if _money_urgent and portfolio_summary["cash_ratio"] < 0.20:
-        _liquidity_note = (
-            f"半年内可能有资金需求，当前现金比例仅 {portfolio_summary['cash_ratio']:.0%}，"
-            "流动性应作为首要关注。"
-        )
-        if _liquidity_note not in main_risks:
-            main_risks = [_liquidity_note] + [r for r in main_risks if r != _liquidity_note]
-            main_risks = main_risks[:8]
-
-    # ── Memory Inputs：并行读取家庭观察与历史体检，减少 Supabase 往返等待 ──
-    emit("读取历史和家庭观察", 56)
-    debug_steps.append("并行读取家庭观察记录和历史体检记录。")
-    memory_inputs = _load_memory_inputs_parallel(comment_limit=50, history_limit=5)
-    family_comments = list(memory_inputs.get("family_comments") or [])
-    _history_records = list(memory_inputs.get("history_records") or [])
-    memory_errors = dict(memory_inputs.get("errors") or {})
-
-    agent_context = _build_agent_context(
-        clean_holdings=clean_holdings,
-        cash=cash,
-        risk_preference=risk_preference,
-        portfolio_summary=portfolio_summary,
-        analysis=analysis,
-        missing_data=missing_data,
-        main_risks=main_risks,
-        history_records=_history_records,
+    # ── Data Agent ──────────────────────────────────────────────
+    stocks, portfolio_summary, missing_data, realtime_used = _run_data_agent(
+        clean_holdings, cash, user_goal, reverse_qa_data, debug_steps, warnings, emit,
     )
-    # ── Disagreement Detector：检测家庭分歧与意图-行动差距 ────────
-    try:
-        family_disagreement = detect_family_disagreement(family_comments)
-        intent_action_gap   = detect_intent_action_gap(family_comments, portfolio_summary)
-    except Exception:  # noqa: BLE001
-        family_disagreement = {"has_conflict": False, "conflicts": [], "summary": ""}
-        intent_action_gap   = {"has_gap": False, "gaps": [], "summary": ""}
-    agent_context["family_comments"]   = family_comments[:20]
-    agent_context["family_disagreement"] = family_disagreement
-    agent_context["intent_action_gap"]   = intent_action_gap
-    agent_context["reverse_qa"]          = reverse_qa_data
 
-    # ── Memory Agent：读取历史，提取行为变化规律 ─────────────────
-    try:
-        history_analysis = analyze_history_changes(_history_records)
-    except Exception:  # noqa: BLE001
-        history_analysis = {
-            "has_history": False, "records_count": 0, "latest_date": "", "previous_date": "",
-            "score_change": None, "risk_factor_changes": [], "family_focus_changes": [],
-            "watch_points": [], "summary": "历史记录还不够，先完成几次体检后，这里会显示风险变化。",
-        }
-    agent_memory = build_agent_memory_summary(
-        history_records=_history_records,
-        family_comments=family_comments,
-        history_analysis=history_analysis,
-        portfolio_summary=portfolio_summary,
-        risk_factors=risk_factors,
+    # ── Risk Agent ──────────────────────────────────────────────
+    analysis, risk_factors, data_confidence, cross_validation, main_risks = _run_risk_agent(
+        clean_holdings, cash, risk_preference, portfolio_summary,
+        stocks, missing_data, reverse_qa_data, debug_steps,
     )
-    agent_context["history_analysis"] = history_analysis
-    agent_context["risk_factors"] = risk_factors
-    agent_context["agent_memory"] = agent_memory
-    if memory_errors:
-        agent_context["memory_load_warnings"] = memory_errors
 
-    # ── Family Translator：DeepSeek 将体检结论改写为适合家人阅读的版本 ──
-    emit("调用 DeepSeek 生成 AI 风险说明", 72)
-    debug_steps.append("生成家庭说明。")
-    report_source = "local_fallback"
-    try:
-        report_result = generate_agent_report(agent_context, mode=DEFAULT_REPORT_MODE)
-    except Exception:  # noqa: BLE001
-        report_result = {
-            "ai_report": _fallback_ai_report(analysis, missing_data),
-            "report_source": "local_fallback",
-        }
-    if isinstance(report_result, dict):
-        ai_report = _safe_ai_text(str(report_result.get("ai_report", "") or ""))
-        dinner_talk = _safe_dinner_talk(str(report_result.get("dinner_talk", "") or ""), agent_context)
-        report_source = str(report_result.get("report_source", "local_fallback") or "local_fallback")
-    else:
-        ai_report = _safe_ai_text(str(report_result or ""))
-        dinner_talk = _fallback_dinner_talk(agent_context)
-    if not ai_report:
-        ai_report = _safe_ai_text(_fallback_ai_report(analysis, missing_data))
-        report_source = "local_fallback"
-    if not dinner_talk:
-        dinner_talk = _fallback_dinner_talk(agent_context)
-    agent_context["ai_report"] = ai_report  # 回填，让追问函数可读取本次报告内容
+    # ── Memory Agent ────────────────────────────────────────────
+    (
+        agent_context, family_disagreement, intent_action_gap,
+        history_analysis, agent_memory, memory_errors, history_records,
+    ) = _run_memory_agent(
+        clean_holdings, cash, risk_preference, portfolio_summary,
+        analysis, missing_data, main_risks, reverse_qa_data,
+        risk_factors, debug_steps, warnings, emit,
+    )
+
+    # ── Report Agent ────────────────────────────────────────────
+    ai_report, dinner_talk, report_source = _run_report_agent(
+        agent_context, analysis, missing_data, emit, debug_steps,
+    )
+    agent_context["ai_report"] = ai_report
     agent_context["dinner_talk"] = dinner_talk
     agent_context["report_source"] = report_source
     agent_context["report_mode"] = DEFAULT_REPORT_MODE
-    agent_context["run_id"] = run_id  # 每次体检唯一编号
-    ai_report_success = True
+    agent_context["run_id"] = run_id
 
-    agent_result = {
+    # ── Result Assembly ─────────────────────────────────────────
+    data_status = analysis.get("data_status", "本地缓存")
+    agent_result: dict[str, Any] = {
         "success": True,
         "run_id": run_id,
         "agent_steps": agent_steps,
@@ -742,9 +846,9 @@ def run_family_risk_agent(
         "report_mode": DEFAULT_REPORT_MODE,
         "reverse_qa": reverse_qa_data,
         "family_disagreement": family_disagreement,
-        "intent_action_gap":   intent_action_gap,
-        "data_confidence":     data_confidence,
-        "cross_validation":    cross_validation,
+        "intent_action_gap": intent_action_gap,
+        "data_confidence": data_confidence,
+        "cross_validation": cross_validation,
         "risk_factors": risk_factors,
         "agent_memory": agent_memory,
         "watch_tasks": _generate_watch_tasks(
@@ -763,11 +867,11 @@ def run_family_risk_agent(
         "saved_history": False,
         "agent_context": agent_context,
         "debug_info": {
-            "使用本地缓存": not bool(realtime_rows),
-            "发现 realtime_data.py": realtime_file_exists,
+            "使用本地缓存": not realtime_used,
+            "发现 realtime_data.py": Path(__file__).with_name("realtime_data.py").exists(),
             "保存历史记录": False,
             "analyzer.py 调用成功": True,
-            "ai_report.py 调用成功": ai_report_success,
+            "ai_report.py 调用成功": True,
             "报告来源": report_source,
             "Agent Memory": agent_memory.get("summary", ""),
             "saved_history": False,
@@ -793,7 +897,7 @@ def run_family_risk_agent(
             "risk_score": agent_result.get("risk_score", 0),
             "portfolio_summary": portfolio_summary,
         }
-        agent_result["delta_alert"] = compute_delta(_delta_input, _history_records)
+        agent_result["delta_alert"] = compute_delta(_delta_input, history_records)
     except Exception:  # noqa: BLE001
         agent_result["delta_alert"] = {"has_alert": False, "level": "stable", "changes": [], "summary": ""}
 

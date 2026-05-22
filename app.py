@@ -146,51 +146,65 @@ def init_state() -> None:
 
 def css_vars() -> dict[str, str]:
     if st.session_state.dark_mode:
+        # ── 深色科技主题：深空海军蓝 + 电光青 ──────────────────
         return {
-            "bg": "#1a1714",
-            "bg_2": "#211d19",
-            "surface": "#25211d",
-            "surface_2": "#2c2823",
-            "border": "#3a3530",
-            "border_strong": "#514940",
-            "text": "#ede5d8",
-            "text_2": "#a89e8e",
-            "text_3": "#6f675c",
-            "accent": "#d18a73",
-            "accent_soft": "#3a2923",
-            "accent_2": "#7ea892",
-            "accent_2_soft": "#26382f",
-            "gold": "#d0b083",
-            "gold_soft": "#3a3125",
-            "up": "#e57878",
-            "up_soft": "#432525",
-            "down": "#6eb89c",
-            "down_soft": "#213a30",
-            "warn": "#d39a62",
-            "warn_soft": "#3b2f21",
+            "bg": "#080e1a",
+            "bg_2": "#0c1220",
+            "surface": "#101928",
+            "surface_2": "#162034",
+            "border": "#1c2d44",
+            "border_strong": "#26405e",
+            "text": "#ddeeff",
+            "text_2": "#6e9abf",
+            "text_3": "#344e68",
+            "accent": "#38bdf8",
+            "accent_soft": "#071c2e",
+            "accent_2": "#34d399",
+            "accent_2_soft": "#051e12",
+            "gold": "#fbbf24",
+            "gold_soft": "#1c1400",
+            "up": "#f87171",
+            "up_soft": "#2a0f0f",
+            "down": "#4ade80",
+            "down_soft": "#052212",
+            "warn": "#fb923c",
+            "warn_soft": "#200e00",
+            # 深色专用：玻璃效果 overlay
+            "glass": "rgba(16,25,40,0.82)",
+            "glow_accent": "0 0 18px rgba(56,189,248,0.35)",
+            "glow_up": "0 0 14px rgba(248,113,113,0.40)",
+            "glow_down": "0 0 14px rgba(74,222,128,0.40)",
+            "glow_warn": "0 0 14px rgba(251,146,60,0.40)",
         }
+    # ── 浅色科技主题：冷白石板 + 科技蓝 ────────────────────────
     return {
-        "bg": "#fbf7f2",
-        "bg_2": "#f5efe6",
+        "bg": "#eef2f8",
+        "bg_2": "#e4eaf4",
         "surface": "#ffffff",
-        "surface_2": "#faf6ef",
-        "border": "#e8dfd0",
-        "border_strong": "#d4c6b0",
-        "text": "#2a2520",
-        "text_2": "#6b6357",
-        "text_3": "#9a9085",
-        "accent": "#7a3e2e",
-        "accent_soft": "#f1e3db",
-        "accent_2": "#3a5a4a",
-        "accent_2_soft": "#e3ece7",
-        "gold": "#b8956a",
-        "gold_soft": "#f3e9d8",
-        "up": "#c14545",
-        "up_soft": "#f7e7e3",
-        "down": "#2d7d5e",
-        "down_soft": "#e2efe7",
-        "warn": "#a05a25",
-        "warn_soft": "#f5e6d2",
+        "surface_2": "#f5f8fd",
+        "border": "#ccd8e8",
+        "border_strong": "#b0c4d8",
+        "text": "#1a2638",
+        "text_2": "#4e6882",
+        "text_3": "#8aaac4",
+        "accent": "#0284c7",
+        "accent_soft": "#dbeeff",
+        "accent_2": "#059669",
+        "accent_2_soft": "#d1faec",
+        "gold": "#c27d0a",
+        "gold_soft": "#fef3c7",
+        "up": "#dc2626",
+        "up_soft": "#fee2e2",
+        "down": "#059669",
+        "down_soft": "#d1faec",
+        "warn": "#c2600a",
+        "warn_soft": "#fff0e0",
+        # 浅色不需要 glow，给空值保持结构一致
+        "glass": "rgba(255,255,255,0.88)",
+        "glow_accent": "none",
+        "glow_up": "none",
+        "glow_down": "none",
+        "glow_warn": "none",
     }
 
 
@@ -199,7 +213,7 @@ def inject_css() -> None:
     render_html(
         f"""
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap');
 
         :root {{
             --bg: {v["bg"]};
@@ -223,9 +237,18 @@ def inject_css() -> None:
             --down-soft: {v["down_soft"]};
             --warn: {v["warn"]};
             --warn-soft: {v["warn_soft"]};
-            --font-display: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+            --font-display: "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
             --font-body: "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
-            --font-num: "Inter", "Noto Sans SC", system-ui, sans-serif;
+            --font-num: "JetBrains Mono", "Inter", "SF Mono", monospace;
+            --font-code: "JetBrains Mono", "Fira Code", monospace;
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 20px;
+            --transition: 160ms cubic-bezier(0.4,0,0.2,1);
+            --glow-accent: {v.get("glow_accent","none")};
+            --glow-up: {v.get("glow_up","none")};
+            --glow-down: {v.get("glow_down","none")};
+            --glow-warn: {v.get("glow_warn","none")};
         }}
 
         html, body, [class*="css"], [data-testid="stAppViewContainer"] {{
@@ -1323,6 +1346,290 @@ def inject_css() -> None:
             border-radius: 6px !important;
             box-shadow: none !important;
         }}
+
+        /* ══════════════════════════════════════════════════════
+           科技感增强层  ·  Muse Design Tokens + Palette UX
+           ══════════════════════════════════════════════════════ */
+
+        /* ── 关键帧动画 ─────────────────────────────────────── */
+        @keyframes scan-line {{
+            0%   {{ transform: translateY(-100%); opacity: 0; }}
+            15%  {{ opacity: 1; }}
+            85%  {{ opacity: 1; }}
+            100% {{ transform: translateY(200%); opacity: 0; }}
+        }}
+        @keyframes shimmer {{
+            0%   {{ transform: translateX(-100%); }}
+            100% {{ transform: translateX(200%); }}
+        }}
+        @keyframes pulse-ring {{
+            0%   {{ box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }}
+            70%  {{ box-shadow: 0 0 0 8px transparent; }}
+            100% {{ box-shadow: 0 0 0 0 transparent; }}
+        }}
+        @keyframes led-blink {{
+            0%, 100% {{ opacity: 1; }}
+            50%       {{ opacity: 0.55; }}
+        }}
+        @keyframes data-in {{
+            from {{ opacity: 0; transform: translateY(6px); }}
+            to   {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        /* ── 背景：深色模式点阵纹理 ─────────────────────────── */
+        [data-testid="stAppViewContainer"] > .main {{
+            background-image:
+                radial-gradient(circle at 1px 1px,
+                    color-mix(in srgb, var(--accent) 7%, transparent) 1px,
+                    transparent 0);
+            background-size: 32px 32px;
+        }}
+
+        /* ── 数字字体全局覆盖（JetBrains Mono）─────────────── */
+        .big-number, .metric-value, .metric-value-sm,
+        .kv dd, .score-num, .risk-score-line,
+        div[data-testid="stMetricValue"] {{
+            font-family: var(--font-num) !important;
+            font-feature-settings: "tnum" on, "lnum" on, "calt" on;
+            letter-spacing: -0.02em;
+        }}
+        /* 股票代码等宽显示 */
+        .tag-code, .market-code {{
+            font-family: var(--font-code) !important;
+            font-size: 0.78rem;
+            letter-spacing: 0.04em;
+        }}
+
+        /* ── 主色调调整：从暖棕→科技蓝 ───────────────────────── */
+        .fi-spinner {{
+            border-color: color-mix(in srgb, var(--accent) 20%, transparent) !important;
+            border-top-color: var(--accent) !important;
+        }}
+        .eyebrow {{
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            font-size: 0.74rem;
+        }}
+
+        /* ── 卡片升级：边框 + 悬停光晕 ─────────────────────── */
+        .card, .hero-card, .market-card, .watch-card,
+        .metric-card, .metric-card-sm, .news-card, .note-card,
+        .risk-card-new, .ai-detail-note {{
+            border-radius: var(--radius-md);
+            transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+        }}
+        .card:hover, .watch-card:hover,
+        .metric-card:hover, .risk-card-new:hover {{
+            border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+                        0 12px 28px color-mix(in srgb, var(--accent) 8%, transparent);
+            transform: translateY(-2px);
+        }}
+
+        /* ── 判决卡：扫描线动效 ─────────────────────────────── */
+        .verdict-card {{
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg,
+                color-mix(in srgb, var(--accent-soft) 80%, var(--surface)),
+                var(--surface) 65%) !important;
+            border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important;
+        }}
+        .verdict-card::after {{
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 60px;
+            background: linear-gradient(
+                180deg,
+                transparent 0%,
+                color-mix(in srgb, var(--accent) 6%, transparent) 50%,
+                transparent 100%
+            );
+            animation: scan-line 5s ease-in-out infinite;
+            pointer-events: none;
+        }}
+
+        /* ── 风险灯升级：LED 光晕 ───────────────────────────── */
+        .risk-green .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #b6f5d4 0, #22c55e 48%, #15803d 100%);
+            box-shadow: 0 0 0 3px rgba(34,197,94,0.18), 0 0 18px rgba(34,197,94,0.35) !important;
+        }}
+        .risk-yellow .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #fef9c3 0, #eab308 52%, #a16207 100%);
+            box-shadow: 0 0 0 3px rgba(234,179,8,0.18), 0 0 18px rgba(234,179,8,0.35) !important;
+        }}
+        .risk-red .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #ffe4e4 0, #ef4444 52%, #b91c1c 100%);
+            box-shadow: 0 0 0 3px rgba(239,68,68,0.18), 0 0 18px rgba(239,68,68,0.35) !important;
+            animation: pulse-ring 2.2s ease-in-out infinite;
+        }}
+        .risk-neutral .risk-light {{
+            background: radial-gradient(circle at 35% 30%, #e2e8f0 0, #64748b 54%, #334155 100%);
+            box-shadow: 0 0 0 3px rgba(100,116,139,0.15), 0 0 10px rgba(100,116,139,0.22) !important;
+        }}
+
+        /* ── 评分数字：重点高亮 ─────────────────────────────── */
+        .score-num {{
+            font-size: 2.8rem;
+            font-weight: 700;
+            color: var(--accent);
+            line-height: 1;
+            text-shadow: var(--glow-accent);
+        }}
+
+        /* ── 风险因子左边线升级：发光条 ─────────────────────── */
+        .risk-card-new {{
+            border-left-width: 3px;
+        }}
+        .r-hi {{
+            border-left-color: var(--up);
+            box-shadow: -3px 0 12px color-mix(in srgb, var(--up) 25%, transparent);
+        }}
+        .r-mid {{
+            border-left-color: var(--gold);
+            box-shadow: -3px 0 12px color-mix(in srgb, var(--gold) 25%, transparent);
+        }}
+        .r-lo {{
+            border-left-color: var(--accent-2);
+            box-shadow: -3px 0 12px color-mix(in srgb, var(--accent-2) 22%, transparent);
+        }}
+
+        /* ── 持仓分配条：渐变 + 微光 ───────────────────────── */
+        .allocation-bar {{
+            height: 10px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            position: relative;
+        }}
+        .allocation-cash {{
+            background: linear-gradient(90deg, var(--accent-2), color-mix(in srgb, var(--accent-2) 80%, var(--accent)));
+            position: relative;
+            overflow: hidden;
+        }}
+        .allocation-cash::after {{
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 60%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2.5s ease-in-out infinite;
+        }}
+        .allocation-stock {{
+            background: linear-gradient(90deg, var(--gold), color-mix(in srgb, var(--gold) 80%, var(--accent)));
+            position: relative;
+            overflow: hidden;
+        }}
+        .allocation-stock::after {{
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 60%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+            animation: shimmer 2.5s ease-in-out 0.8s infinite;
+        }}
+
+        /* ── LED 状态圆点 ────────────────────────────────────── */
+        .led {{
+            display: inline-block;
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }}
+        .led-green  {{ background: var(--down);  box-shadow: 0 0 6px var(--down); }}
+        .led-yellow {{ background: var(--gold);  box-shadow: 0 0 6px var(--gold); }}
+        .led-red    {{ background: var(--up);    box-shadow: 0 0 6px var(--up); animation: led-blink 1.8s ease-in-out infinite; }}
+        .led-blue   {{ background: var(--accent); box-shadow: 0 0 6px var(--accent); }}
+
+        /* ── 指标值：数据加载入场动画 ──────────────────────── */
+        .metric-value, .metric-value-sm, .score-num, .big-number {{
+            animation: data-in 0.35s ease both;
+        }}
+
+        /* ── Agent Flow 步骤：科技感升级 ───────────────────── */
+        .agent-flow-card {{
+            background: color-mix(in srgb, var(--surface) 92%, var(--accent-soft)) !important;
+            border-color: color-mix(in srgb, var(--accent) 22%, transparent) !important;
+        }}
+        .agent-flow-steps span {{
+            border-radius: 6px !important;
+            border-color: color-mix(in srgb, var(--border) 80%, var(--accent)) !important;
+        }}
+        .agent-flow-steps b {{
+            background: color-mix(in srgb, var(--accent-soft) 90%, transparent) !important;
+            color: var(--accent) !important;
+            font-family: var(--font-num) !important;
+        }}
+
+        /* ── 主按钮：科技蓝渐变 ─────────────────────────────── */
+        .stFormSubmitButton button,
+        .stButton button[kind="primary"] {{
+            background: linear-gradient(135deg,
+                color-mix(in srgb, var(--accent) 70%, #0c4a6e),
+                var(--accent) 58%,
+                color-mix(in srgb, var(--accent) 80%, #38bdf8)) !important;
+            border-color: var(--accent) !important;
+            box-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 30%, transparent) !important;
+        }}
+        .stFormSubmitButton button:hover,
+        .stButton button[kind="primary"]:hover {{
+            box-shadow: 0 8px 32px color-mix(in srgb, var(--accent) 45%, transparent) !important;
+            filter: brightness(1.08);
+        }}
+
+        /* ── 输入框 focus：科技蓝光圈 ───────────────────────── */
+        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stNumberInput"] input:focus,
+        textarea:focus {{
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+                        var(--glow-accent) !important;
+        }}
+
+        /* ── expander 头部：科技感边框 ─────────────────────── */
+        [data-testid="stExpander"] {{
+            border-color: var(--border) !important;
+            border-radius: var(--radius-md) !important;
+        }}
+        [data-testid="stExpander"]:focus-within,
+        [data-testid="stExpander"][open] {{
+            border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important;
+        }}
+
+        /* ── 指标卡左侧装饰条 ───────────────────────────────── */
+        .metric-card, .metric-card-sm {{
+            position: relative;
+            overflow: hidden;
+        }}
+        .metric-card::before, .metric-card-sm::before {{
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 3px; height: 100%;
+            background: linear-gradient(180deg, var(--accent), transparent);
+            border-radius: 3px 0 0 3px;
+            opacity: 0.7;
+        }}
+
+        /* ── 顶部导航 pill 颜色跟随主色 ─────────────────────── */
+        [data-testid="stMarkdownContainer"]:has(#fi-top-nav) ~ [data-testid="stHorizontalBlock"] .stButton button {{
+            border-color: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+        }}
+        [data-testid="stMarkdownContainer"]:has(#fi-top-nav) ~ [data-testid="stHorizontalBlock"] .stButton button:hover {{
+            border-color: var(--accent) !important;
+            color: var(--accent) !important;
+            box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 20%, transparent) !important;
+        }}
+
+        /* ── 深色模式专属：玻璃态卡片 ──────────────────────── */
+        @media (prefers-color-scheme: dark) {{
+            .card, .hero-card, .market-card, .verdict-card,
+            .metric-card, .metric-card-sm, .watch-card {{
+                backdrop-filter: blur(12px);
+            }}
+        }}
         </style>
         """
     )
@@ -1335,6 +1642,20 @@ def html_escape(value: Any) -> str:
 def _hesc(d: dict, key: str, default: str = "") -> str:
     """html_escape a single key from a dict, with a safe default."""
     return html_escape(str(d.get(key, default) or default))
+
+
+def _safe_ai_text(text: Any, max_len: int = 200) -> str:
+    """Strip HTML/script from AI-generated strings before rendering in UI.
+
+    Prevents prompt-injection echo (OWASP LLM01/LLM02): if a user crafts
+    malicious input that makes DeepSeek reflect it back as parse_note or
+    similar fields, this caps length and removes tags before display.
+    """
+    cleaned = str(text if text is not None else "")
+    # Remove any HTML/script tags that DeepSeek might echo back
+    import re as _re
+    cleaned = _re.sub(r"<[^>]{0,200}>", "", cleaned)
+    return cleaned[:max_len]
 
 
 def site_header() -> None:
@@ -1485,10 +1806,10 @@ def nl_input_block() -> None:
                         + "。请确认下方表单后再体检。"
                     )
                     if result.get("parse_note"):
-                        st.caption(f"解析说明：{result['parse_note']}")
+                        st.caption(f"解析说明：{_safe_ai_text(result['parse_note'])}")
                     st.rerun()
                 else:
-                    st.warning(f"未识别到持仓。{result.get('parse_note', '请检查输入格式或手动填写。')}")
+                    st.warning(f"未识别到持仓。{_safe_ai_text(result.get('parse_note', '请检查输入格式或手动填写。'))}")
             else:
                 st.warning("请先填写持仓描述。")
 
@@ -1497,7 +1818,7 @@ def nl_input_block() -> None:
             st.caption(
                 f"上次解析来源：{saved.get('source', '')}  "
                 f"置信度：{saved.get('confidence', '')}  "
-                f"说明：{saved.get('parse_note', '')}"
+                f"说明：{_safe_ai_text(saved.get('parse_note', ''))}"
             )
 
 
@@ -2028,18 +2349,30 @@ def spark_svg(change: float | None, score: int) -> str:
 
 
 def score_dial(score: int, ring_color: str = "var(--accent)") -> str:
-    radius = 54
+    radius = 52
     circumference = 2 * pi * radius
-    offset = circumference * (1 - score / 100)
+    offset = circumference * (1 - max(0, min(100, score)) / 100)
+    # 双圈：底部虚线轨道 + 顶部实心进度弧
     return f"""
     <div class="score-dial">
         <svg width="136" height="136" viewBox="0 0 136 136" aria-label="综合评分 {score}/100">
-            <circle cx="68" cy="68" r="{radius}" stroke="var(--border)" stroke-width="10" fill="none"></circle>
-            <circle cx="68" cy="68" r="{radius}" stroke="{ring_color}" stroke-width="10" fill="none"
+            <!-- 背景轨道 -->
+            <circle cx="68" cy="68" r="{radius}" stroke="var(--border)" stroke-width="8"
+                    fill="none" stroke-dasharray="4 3"
+                    transform="rotate(-90 68 68)"></circle>
+            <!-- 进度弧（带圆角）-->
+            <circle cx="68" cy="68" r="{radius}" stroke="{ring_color}" stroke-width="9" fill="none"
                     stroke-linecap="round" transform="rotate(-90 68 68)"
-                    stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"></circle>
-            <text x="68" y="62" text-anchor="middle" font-size="42" font-weight="800" fill="var(--text)" font-family="var(--font-num)">{score}</text>
-            <text x="68" y="83" text-anchor="middle" font-size="14" fill="var(--text-3)" font-family="var(--font-num)">/100</text>
+                    stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"
+                    style="filter:drop-shadow(0 0 6px {ring_color})"></circle>
+            <!-- 评分数字 -->
+            <text x="68" y="64" text-anchor="middle" dominant-baseline="middle"
+                  font-size="40" font-weight="700" fill="{ring_color}"
+                  font-family="JetBrains Mono,Inter,monospace">{score}</text>
+            <!-- 单位 -->
+            <text x="68" y="86" text-anchor="middle"
+                  font-size="12" fill="var(--text-3)"
+                  font-family="JetBrains Mono,Inter,monospace" letter-spacing="1">/100</text>
         </svg>
         <div class="score-caption">综合评分</div>
     </div>
