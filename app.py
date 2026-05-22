@@ -2412,7 +2412,6 @@ def home_page() -> None:
     with st.expander("显示设置", expanded=False):
         display_settings()
     cache_tools()
-    agent_capabilities()
 
 
 def to_float(value: Any) -> float | None:
