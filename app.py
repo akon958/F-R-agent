@@ -32,7 +32,7 @@ from ai_report import (
     generate_agent_report,
     get_dynamic_questions,
 )
-from ui_shell import agent_flow_html, site_header_html
+from ui_shell import site_header_html
 
 FOLLOWUP_VERSION = "v5_single_ai_report_entry"
 FOLLOWUP_ANSWER_IMPL = "ai_report.answer_followup_question"
@@ -72,24 +72,6 @@ from storage import (
 )
 
 
-MARKET_INDEXES = [
-    {"name": "上证指数", "code": "000001.SH", "value": "3,154.03", "change": 0.42},
-    {"name": "深证成指", "code": "399001.SZ", "value": "9,681.18", "change": -0.18},
-    {"name": "沪深300", "code": "000300.SH", "value": "3,673.22", "change": 0.25},
-]
-
-WATCH_ITEMS = [
-    {"code": "600519", "name": "贵州茅台", "price": "1,486.20", "change": 0.86, "owner": "妈妈关注", "industry": "白酒"},
-    {"code": "000001", "name": "平安银行", "price": "11.42", "change": -0.35, "owner": "爸爸关注", "industry": "银行"},
-    {"code": "300750", "name": "宁德时代", "price": "196.80", "change": 1.12, "owner": "家庭共同", "industry": "电池"},
-    {"code": "600036", "name": "招商银行", "price": "35.61", "change": 0.24, "owner": "家庭共同", "industry": "银行"},
-]
-
-RECENT_ITEMS = [
-    {"code": "600519", "name": "贵州茅台", "time": "今天 09:42", "verdict": "稳健"},
-    {"code": "300750", "name": "宁德时代", "time": "昨天 19:15", "verdict": "中性"},
-    {"code": "000001", "name": "平安银行", "time": "3 天前", "verdict": "警示"},
-]
 
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="collapsed")
@@ -1696,38 +1678,6 @@ def change_class(value: float | None) -> str:
     return "flat"
 
 
-def market_aside() -> None:
-    rows = []
-    for item in MARKET_INDEXES:
-        cls = change_class(float(item["change"]))
-        rows.append(
-            f"""
-            <div class="market-row">
-                <div>
-                    <div class="market-name">{html_escape(item["name"])}</div>
-                    <div class="market-code">{html_escape(item["code"])}</div>
-                </div>
-                <div>
-                    <div class="market-value">{html_escape(item["value"])}</div>
-                    <div class="change-text {cls}">{signed_change(float(item["change"]))}</div>
-                </div>
-            </div>
-            """
-        )
-    render_html(
-        f"""
-        <aside class="market-card">
-            <div class="market-title">
-                <h3>今日大盘</h3>
-                <span class="muted">A 股</span>
-            </div>
-            {''.join(rows)}
-            <div class="delay"><span class="delay-dot"></span>行情延迟 15 分钟 · 仅供参考</div>
-        </aside>
-        """
-    )
-
-
 def set_first_code(code: str) -> None:
     st.session_state["pending_code"] = normalize_code(code)
 
@@ -1749,11 +1699,18 @@ def risk_profile_hint_grid(selected: str) -> str:
 
 def home_hero() -> None:
     render_html(
-        """
+        f"""
         <div class="hero-card" style="padding: 1.3rem 1.3rem 0.6rem; margin-bottom: 0.5rem;">
             <div class="eyebrow">家庭投资风险体检</div>
             <h1 class="hero-title">输入持仓，看清风险。</h1>
             <p class="hero-subtitle">帮家人看清持仓风险和资金结构。不预测涨跌，不构成买卖建议。</p>
+            <div class="agent-flow-steps" style="margin-top:0.9rem;">
+                <span><b>1</b> 输入持仓</span>
+                <span><b>2</b> 智能体检</span>
+                <span><b>3</b> 追问深挖</span>
+                <span><b>4</b> 记录观察</span>
+            </div>
+            <p class="agent-flow-note">{HOME_DISCLAIMER}</p>
         </div>
         """
     )
@@ -2110,81 +2067,6 @@ def run_analysis(cash: float, risk_profile: str, raw_rows: list[dict[str, float 
         st.stop()
 
 
-def watchlist_block() -> None:
-    cards = []
-    for item in WATCH_ITEMS:
-        cls = change_class(float(item["change"]))
-        cards.append(
-            f"""
-            <article class="watch-card">
-                <div class="watch-top">
-                    <div>
-                        <div class="watch-name">{html_escape(item["name"])}</div>
-                        <div class="muted">{html_escape(item["code"])} · {html_escape(item["industry"])}</div>
-                    </div>
-                    <div class="owner-pill">{html_escape(item["owner"])}</div>
-                </div>
-                <div class="price-line">
-                    <div class="big-number">{html_escape(item["price"])}</div>
-                    <div class="change-text {cls}">{signed_change(float(item["change"]))}</div>
-                </div>
-            </article>
-            """
-        )
-    render_html(
-        f"""
-        <section class="block">
-            <div class="block-head">
-                <div>
-                    <h2 class="block-title">我的关注列表</h2>
-                    <p class="block-subtitle">常看的公司放在一起，快速触发分析。接入云数据库后可多人共享。</p>
-                </div>
-                <div class="ghost-btn">＋ 添加关注</div>
-            </div>
-            <div class="watch-grid">{''.join(cards)}</div>
-        </section>
-        """
-    )
-    cols = st.columns(len(WATCH_ITEMS))
-    for idx, item in enumerate(WATCH_ITEMS):
-        if cols[idx].button(f"分析 {item['name']}", key=f"watch_{item['code']}", use_container_width=True):
-            set_first_code(item["code"])
-            st.rerun()
-
-
-def recent_block() -> None:
-    rows = []
-    for item in RECENT_ITEMS:
-        rows.append(
-            f"""
-            <div class="recent-row">
-                <div>
-                    <strong>{html_escape(item["name"])}</strong>
-                    <div class="muted">{html_escape(item["code"])}</div>
-                </div>
-                <div class="muted recent-time">{html_escape(item["time"])}</div>
-                <div><span class="verdict-pill">{html_escape(item["verdict"])}</span> <span class="muted">→</span></div>
-            </div>
-            """
-        )
-    render_html(
-        f"""
-        <section class="block">
-            <div class="block-head">
-                <div>
-                    <h2 class="block-title">最近分析过的股票</h2>
-                    <p class="block-subtitle">保留最近看过的公司，方便家人继续接着聊。</p>
-                </div>
-            </div>
-            <div class="list-shell">{''.join(rows)}</div>
-        </section>
-        """
-    )
-
-
-def guide_block() -> None:
-    render_html(agent_flow_html(HOME_DISCLAIMER))
-
 def cache_tools() -> None:
     with st.expander("高级选项：数据缓存工具", expanded=False):
         try:
@@ -2225,11 +2107,6 @@ def cache_tools() -> None:
 
 def home_page() -> None:
     home_hero()
-    with st.expander("这个工具会做什么", expanded=False):
-        guide_block()
-    with st.expander("可用斜杠命令", expanded=False):
-        from question_router import COMMAND_HELP as _SLASH_HELP
-        st.markdown(_SLASH_HELP)
     st.divider()
     cache_tools()
     with st.expander("显示设置", expanded=False):
@@ -3401,16 +3278,7 @@ def followup_block(agent_context: dict[str, Any]) -> None:
                 </div>
                 """
             )
-            if source == "local_fallback":
-                raw = item.get("raw_error", "") or item.get("error", "")
-                if raw:
-                    with st.expander("AI 未能回答的原因（开发者诊断）", expanded=False):
-                        st.code(raw, language="text")
 
-    # ── 快捷命令提示 ───────────────────────────────────────────
-    with st.expander("⚡ 快捷命令", expanded=False):
-        from question_router import slash_command_help_text  # noqa: PLC0415
-        st.caption(slash_command_help_text())
 
 
 def followup_entry_block(agent_result: dict[str, Any], agent_context: dict[str, Any]) -> None:
@@ -3998,8 +3866,8 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         if _analysis:
             risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
 
-    # ── Part 3：完整持仓数据与缺失说明（默认折叠）────────────────
-    with st.expander("完整持仓数据与缺失说明", expanded=False):
+    # ── Part 3：持仓详情与数据来源（默认折叠）────────────────────
+    with st.expander("持仓详情 · 数据来源", expanded=False):
         if _analysis:
             portfolio_metrics_block(summary, _analysis)
             with st.expander("持仓明细与数据来源", expanded=False):
@@ -4013,138 +3881,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                         st.caption("· 估值数据暂缺，本次不评价估值高低。")
                     else:
                         st.caption(f"· {title}：{len(items)} 只数据缺失")
-
-
-def developer_debug_block(agent_result: dict[str, Any]) -> None:
-    if not agent_result:
-        render_error_debug(st.session_state.get("last_agent_error"))
-        return
-    with st.expander("开发者信息 / 调试详情", expanded=False):
-        error_info = st.session_state.get("last_agent_error")
-        if error_info:
-            st.write("**最近一次错误**")
-            st.write(f"- 错误类型：{error_info.get('错误类型', '')}")
-            st.write(f"- 错误信息：{error_info.get('错误信息', '')}")
-            st.write(f"- 当前工作目录：{error_info.get('当前工作目录', '')}")
-            st.write(f"- 已找到缓存文件：{error_info.get('已找到缓存文件', '')}")
-        followup_error = st.session_state.get("last_followup_error")
-        if followup_error:
-            st.write("**最近一次追问兜底**")
-            st.write(f"- 追问回答来源：{followup_source_label(followup_error.get('source', 'local_fallback'))}")
-            st.write(f"- 兜底原因：{followup_error.get('error', '')}")
-            raw_err = followup_error.get("raw_error", "")
-            if raw_err:
-                st.code(raw_err, language="text")
-            call_path = followup_error.get("call_path", "")
-            if call_path:
-                st.caption(f"调用路径：{call_path}")
-        followup_save = st.session_state.get("last_followup_save") or get_last_followup_save_status()
-        if followup_save:
-            st.write("**AI 追问保存**")
-            st.write(f"- 保存状态：{'成功' if followup_save.get('saved') else '未保存'}")
-            st.write(f"- 保存位置：{'Supabase' if followup_save.get('backend') == 'supabase' else '本地 CSV'}")
-            if followup_save.get("error"):
-                st.write(f"- 保存说明：{followup_save.get('error')}")
-        comment_status = st.session_state.get("family_comment_last_save") or get_last_family_comment_save_status()
-        comment_read_status = get_last_family_comment_read_status()
-        comment_backend = comment_status.get("backend") or get_storage_status().get("backend", "local_csv")
-        comment_read_backend = comment_read_status.get("backend") or "local_csv"
-        comment_backend_label = "Supabase" if comment_backend == "supabase" else "本地 CSV"
-        comment_read_label = "Supabase" if comment_read_backend == "supabase" else "local_csv"
-        st.write("**家庭观察记录**")
-        save_state_label = "成功" if comment_status.get("saved") or comment_status.get("success") else "失败"
-        st.write(f"- 最近一次观察记录保存状态：{save_state_label}")
-        st.write(f"- 保存位置：{comment_backend_label}")
-        st.write(f"- 当前读取来源：{comment_read_label}")
-        st.write(f"- 最近读取到的观察记录数量：{st.session_state.get('family_comments_last_count', 0)}")
-        st.write(f"- 最后一条保存状态：{comment_status.get('message', '')}")
-        if comment_status.get("error"):
-            st.write(f"- 保存失败原因：{comment_status.get('error')}")
-        if comment_read_status.get("error"):
-            st.write(f"- 读取失败原因：{comment_read_status.get('error')}")
-        agent_context = agent_result.get("agent_context", {}) if agent_result else {}
-
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            if st.button("测试 DeepSeek 追问接口", key="test_deepseek_followup_api"):
-                if agent_context:
-                    try:
-                        st.session_state["followup_self_test"] = answer_followup_question(
-                            agent_context, "1+1是多少"
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        st.session_state["followup_self_test"] = {
-                            "answer": "",
-                            "source": "local_fallback",
-                            "error": f"追问自检调用异常：{type(exc).__name__}",
-                            "raw_error": f"{type(exc).__name__}: {exc}",
-                            "call_path": "app.developer_debug_block test button (top-level except)",
-                        }
-                else:
-                    st.session_state["followup_self_test"] = {
-                        "answer": "",
-                        "source": "local_fallback",
-                        "error": "缺少本次体检上下文，请先完成一键智能体检",
-                        "raw_error": "agent_context missing",
-                        "call_path": "n/a",
-                    }
-        with col_t2:
-            if st.button("DeepSeek 直连自检（绕过 followup）", key="test_deepseek_direct"):
-                try:
-                    from ai_report import deepseek_self_test as _ds_probe  # type: ignore
-                    st.session_state["deepseek_direct_test"] = _ds_probe()
-                except Exception as exc:  # noqa: BLE001
-                    st.session_state["deepseek_direct_test"] = {
-                        "ok": False,
-                        "api_key_present": False,
-                        "shared_call_deepseek_id": None,
-                        "response_preview": "",
-                        "error": f"deepseek_self_test 调用异常：{type(exc).__name__}",
-                        "raw_error": f"{type(exc).__name__}: {exc}",
-                    }
-        self_test = st.session_state.get("followup_self_test")
-        if self_test:
-            st.write("**追问自检结果（answer_followup_question）**")
-            st.write(f"- source: {self_test.get('source', '')}")
-            st.write(f"- error: {self_test.get('error', '')}")
-            raw = self_test.get("raw_error", "")
-            if raw:
-                st.code(raw, language="text")
-            st.write(f"- call_path: {self_test.get('call_path', '')}")
-            st.write(f"- answer: {self_test.get('answer', '')[:400]}")
-        direct_test = st.session_state.get("deepseek_direct_test")
-        if direct_test:
-            st.write("**DeepSeek 直连自检结果（_call_deepseek 直接探测）**")
-            st.write(f"- ok: {direct_test.get('ok', False)}")
-            st.write(f"- api_key_present: {direct_test.get('api_key_present', False)}")
-            st.write(f"- shared_call_deepseek_id: {direct_test.get('shared_call_deepseek_id', '')}")
-            st.write(f"- response_preview: {direct_test.get('response_preview', '')}")
-            st.write(f"- error: {direct_test.get('error', '')}")
-            raw = direct_test.get("raw_error", "")
-            if raw:
-                st.code(raw, language="text")
-            st.caption(
-                "如果『直连自检』ok=True 但『追问自检』source=local_fallback，"
-                "说明 DeepSeek 通的，问题在 _call_deepseek_followup 的 prompt 组装或 agent_context 序列化。"
-            )
-        debug_info = agent_result.get("debug_info", {})
-        if debug_info:
-            for key, value in debug_info.items():
-                st.write(f"- {key}：{value}")
-        for step in agent_result.get("debug_steps", []):
-            st.write(f"- {step}")
-        st.write(f"- saved_history: {agent_result.get('saved_history')}")
-        st.write(f"- data_status: {agent_result.get('data_status')}")
-
-
-def inspection_process_block(agent_result: dict[str, Any]) -> None:
-    if not agent_result:
-        return
-    with st.expander("本次补充家庭情况", expanded=False):
-        reverse_qa = _normalize_reverse_qa(agent_result.get("reverse_qa") or agent_result.get("agent_context", {}).get("reverse_qa"))
-        st.write(f"- 半年内资金使用：{_reverse_label(reverse_qa['money_need_6m'], _MONEY_NEED_MAP)}")
-        st.write(f"- 波动反应：{_reverse_label(reverse_qa['volatility_reaction'], _VOLATILITY_MAP)}")
-        st.write(f"- 过往分歧：{reverse_qa.get('last_disagreement') or '未填写'}")
 
 
 def history_replay_block(agent_result: dict[str, Any] | None) -> None:
@@ -4929,16 +4665,6 @@ def analysis_page() -> None:
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     agent_result_block(agent_result)
-
-    # ── 补充家庭情况 / 数据警告（折叠）─────────────────────────
-    with st.expander("补充家庭情况", expanded=False):
-        inspection_process_block(agent_result)
-        for warning in fetch_warnings:
-            if "本地缓存" in str(warning) or "实时行情模块" in str(warning):
-                st.info(warning)
-            else:
-                st.warning(warning)
-    developer_debug_block(agent_result)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
 
