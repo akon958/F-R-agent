@@ -384,7 +384,15 @@ def _load_memory_inputs_parallel(
     family_comments and analysis_history are independent network calls. Running
     them in two threads saves one round-trip on Streamlit Cloud while keeping
     all storage access inside storage.py.
+
+    IMPORTANT: st.session_state is not accessible from daemon threads (no
+    ScriptRunContext propagation with plain threading.Thread). We capture
+    family_id here in the main Streamlit thread and pass it explicitly to all
+    storage calls so each thread queries the correct account's data.
     """
+    # Capture in main thread — daemon threads cannot read st.session_state
+    _fid = get_family_id()
+
     result: dict[str, Any] = {
         "family_comments": [],
         "history_records": [],
@@ -395,28 +403,28 @@ def _load_memory_inputs_parallel(
 
     def _load_comments() -> None:
         try:
-            result["family_comments"] = load_recent_family_comments(limit=comment_limit)
+            result["family_comments"] = load_recent_family_comments(limit=comment_limit, family_id=_fid)
         except Exception as exc:  # noqa: BLE001
             result["family_comments"] = []
             result["errors"]["family_comments"] = f"{type(exc).__name__}: {str(exc)[:160]}"
 
     def _load_history() -> None:
         try:
-            result["history_records"] = load_recent_analysis_history(limit=history_limit)
+            result["history_records"] = load_recent_analysis_history(limit=history_limit, family_id=_fid)
         except Exception as exc:  # noqa: BLE001
             result["history_records"] = []
             result["errors"]["history_records"] = f"{type(exc).__name__}: {str(exc)[:160]}"
 
     def _load_followups() -> None:
         try:
-            result["followup_records"] = load_recent_followup_history(limit=followup_limit)
+            result["followup_records"] = load_recent_followup_history(limit=followup_limit, family_id=_fid)
         except Exception as exc:  # noqa: BLE001
             result["followup_records"] = []
             result["errors"]["followup_records"] = f"{type(exc).__name__}: {str(exc)[:160]}"
 
     def _load_profile() -> None:
         try:
-            result["family_profile"] = load_family_profile()
+            result["family_profile"] = load_family_profile(family_id=_fid)
         except Exception as exc:  # noqa: BLE001
             result["family_profile"] = None
             result["errors"]["family_profile"] = f"{type(exc).__name__}: {str(exc)[:160]}"

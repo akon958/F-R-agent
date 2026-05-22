@@ -140,15 +140,12 @@ def _clear_user_runtime_state() -> None:
         "agent_result",
         "stocks",
         "fetch_warnings",
-        "followup_answers",
-        "followup_questions",
         "family_comments_cache",
         "family_comments",
         "family_comments_last_count",
         "family_comment_last_save",
         "last_followup_save",
         "notes",
-        "notes_loaded",
         "guided_step",
         "guided_member",
         "guided_focus",
@@ -157,8 +154,16 @@ def _clear_user_runtime_state() -> None:
         "guided_stance_label",
         "guided_text",
         "guided_save_result",
+        # Keys omitted in original — would leak prior user's risk profile and Q&A state
+        "nl_input_mode",
+        "nl_parsed_result",
+        "reverse_qa",
+        "risk_profile",
+        "risk_profile_segment",  # segmented_control widget state for risk_profile
+        "report_mode",
     ):
         st.session_state.pop(key, None)
+    # Reset to safe defaults (these are always written, so no need to pop first)
     st.session_state["active_view"] = "analysis"
     st.session_state["notes_loaded"] = False
     st.session_state["followup_answers"] = []
@@ -167,9 +172,15 @@ def _clear_user_runtime_state() -> None:
 
 
 def _apply_family_login(result: dict[str, Any]) -> None:
+    family_id = str(result.get("family_id") or "").strip()
+    if not family_id:
+        # Guard: a missing/corrupt family_id would silently fall back to
+        # "default_family" in get_family_id(), routing all reads/writes to the
+        # shared default bucket.  Refuse the login instead.
+        raise ValueError(f"登录结果中缺少有效的 family_id，登录被拒绝（账号：{result.get('account_name')}）")
     _clear_user_runtime_state()
     st.session_state["family_logged_in"] = True
-    st.session_state["family_id"] = str(result.get("family_id") or "")
+    st.session_state["family_id"] = family_id
     st.session_state["family_account_name"] = str(result.get("account_name") or "")
     st.session_state["family_account_backend"] = str(result.get("backend") or "")
 
@@ -212,8 +223,11 @@ def auth_gate() -> bool:
         if st.button("登录 FamilyReader", key="family_login_btn", use_container_width=True, type="primary"):
             result = verify_family_account(login_name, login_password)
             if result.get("success"):
-                _apply_family_login(result)
-                st.rerun()
+                try:
+                    _apply_family_login(result)
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(f"登录失败：{exc}")
             else:
                 st.warning(result.get("message") or "登录失败，请检查账号或密码。")
     with tab_create:
@@ -226,8 +240,11 @@ def auth_gate() -> bool:
             else:
                 result = create_family_account(create_name, create_password)
                 if result.get("success"):
-                    _apply_family_login(result)
-                    st.rerun()
+                    try:
+                        _apply_family_login(result)
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(f"账号创建成功但无法登录：{exc}")
                 else:
                     st.warning(result.get("message") or "账号创建失败，请稍后再试。")
     st.caption("密码只用于区分家庭数据；不要使用银行卡、支付软件等重要密码。")

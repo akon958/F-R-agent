@@ -234,14 +234,10 @@ def _account_result(
     }
 
 
-def _save_local_account(row: dict[str, Any]) -> bool:
-    return _append_csv_row(FAMILY_ACCOUNTS_FILE, row)
-
-
 def create_family_account(account_name: str, password: str) -> dict[str, Any]:
     """Create a lightweight family account for data separation."""
     clean_name = _normalise_account_name(account_name)
-    key = _account_key(clean_name)
+    key = _account_key(account_name)  # _account_key already normalises; no need to pass pre-normalised name
     if len(clean_name) < 2:
         return _account_result(False, clean_name, message="账号名至少 2 个字符")
     if len(str(password or "")) < 6:
@@ -255,6 +251,7 @@ def create_family_account(account_name: str, password: str) -> dict[str, Any]:
         "account_key": key,
         "password_salt": salt,
         "password_hash": password_hash,
+        "created_at": _now_iso(),
     }
     client = get_supabase_client()
     if client is not None:
@@ -271,7 +268,11 @@ def create_family_account(account_name: str, password: str) -> dict[str, Any]:
             client.table("family_accounts").insert(payload).execute()
             return _account_result(True, clean_name, "supabase", "家庭账号已创建")
         except Exception as exc:  # noqa: BLE001
-            cloud_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            exc_str = str(exc)
+            # Unique-constraint violation: treat as "account already exists"
+            if "duplicate" in exc_str.lower() or "unique" in exc_str.lower() or "23505" in exc_str:
+                return _account_result(False, clean_name, "supabase", "这个家庭账号已经存在")
+            cloud_error = f"{type(exc).__name__}: {exc_str[:160]}"
     else:
         cloud_error = "未配置 Supabase，使用本地账号文件"
 
@@ -279,8 +280,7 @@ def create_family_account(account_name: str, password: str) -> dict[str, Any]:
     if any(str(row.get("account_key", "")).lower() == key for row in rows):
         return _account_result(False, clean_name, "local_csv", "这个家庭账号已经存在", cloud_error)
     local_row = dict(payload)
-    local_row["created_at"] = _now_iso()
-    if _save_local_account(local_row):
+    if _append_csv_row(FAMILY_ACCOUNTS_FILE, local_row):
         return _account_result(True, clean_name, "local_csv", "家庭账号已创建，本地保存", cloud_error)
     return _account_result(False, clean_name, "local_csv", "家庭账号创建失败", cloud_error)
 
@@ -307,33 +307,31 @@ def verify_family_account(account_name: str, password: str) -> dict[str, Any]:
                 return _account_result(False, clean_name, "supabase", "未找到这个家庭账号")
             row = rows[0]
             if _verify_password(password, str(row.get("password_salt", "")), str(row.get("password_hash", ""))):
-                return {
-                    "success": True,
-                    "family_id": str(row.get("family_id") or _family_id_from_account(clean_name)),
-                    "account_name": str(row.get("account_name") or clean_name),
-                    "backend": "supabase",
-                    "message": "登录成功",
-                    "error": "",
-                }
+                verified_name = str(row.get("account_name") or clean_name)
+                res = _account_result(True, verified_name, "supabase", "登录成功")
+                # Prefer the DB's stored family_id as the authoritative value.
+                res["family_id"] = str(row.get("family_id") or res["family_id"])
+                return res
             return _account_result(False, clean_name, "supabase", "密码不正确")
         except Exception as exc:  # noqa: BLE001
             cloud_error = f"{type(exc).__name__}: {str(exc)[:160]}"
     else:
         cloud_error = "未配置 Supabase，使用本地账号文件"
 
-    rows = _read_csv_rows(FAMILY_ACCOUNTS_FILE)
-    for row in rows:
+    csv_rows = _read_csv_rows(FAMILY_ACCOUNTS_FILE)
+    found = False
+    for row in csv_rows:
         if str(row.get("account_key", "")).lower() != key:
             continue
+        found = True
         if _verify_password(password, str(row.get("password_salt", "")), str(row.get("password_hash", ""))):
-            return {
-                "success": True,
-                "family_id": str(row.get("family_id") or _family_id_from_account(clean_name)),
-                "account_name": str(row.get("account_name") or clean_name),
-                "backend": "local_csv",
-                "message": "登录成功，本地账号文件",
-                "error": cloud_error,
-            }
+            verified_name = str(row.get("account_name") or clean_name)
+            res = _account_result(True, verified_name, "local_csv", "登录成功，本地账号文件", cloud_error)
+            res["family_id"] = str(row.get("family_id") or res["family_id"])
+            return res
+        # Password wrong for this row — keep iterating; there may be more rows
+        # with the same key (e.g. from a double-create race) that match.
+    if found:
         return _account_result(False, clean_name, "local_csv", "密码不正确", cloud_error)
     return _account_result(False, clean_name, "local_csv", "未找到这个家庭账号", cloud_error)
 
@@ -350,15 +348,24 @@ def _get_secret(name: str) -> str:
     return os.getenv(name, "").strip()
 
 
+_supabase_client_cache: dict[str, Any] = {}  # keyed by (url, key) — module-level singleton
+
+
 def get_supabase_client() -> Any | None:
     url = _get_secret("SUPABASE_URL")
     key = _get_secret("SUPABASE_KEY")
     if not url or not key:
         return None
+    cache_key = f"{url}::{key}"
+    cached = _supabase_client_cache.get(cache_key)
+    if cached is not None:
+        return cached
     try:
         from supabase import create_client
 
-        return create_client(url, key)
+        client = create_client(url, key)
+        _supabase_client_cache[cache_key] = client
+        return client
     except Exception:  # noqa: BLE001
         return None
 
@@ -748,36 +755,18 @@ def load_recent_family_comments(limit: int = 20, family_id: str | None = None) -
             )
             rows = result.data if isinstance(result.data, list) else []
             normalized = [_normalize_comment_row(r) for r in rows]
-            if normalized:
-                _LAST_FAMILY_COMMENT_READ_STATUS = {
-                    "backend": "supabase",
-                    "connected": True,
-                    "count": len(normalized),
-                    "message": "已从 Supabase 读取家庭观察记录",
-                    "error": "",
-                }
-                return normalized
-            local_rows = [
-                row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, _fid)
-            ]
-            if local_rows:
-                fallback = [_normalize_comment_row(r) for r in local_rows[:limit]]
-                _LAST_FAMILY_COMMENT_READ_STATUS = {
-                    "backend": "local_csv",
-                    "connected": False,
-                    "count": len(fallback),
-                    "message": "Supabase 暂无记录，已显示本地 CSV 记录",
-                    "error": "",
-                }
-                return fallback
             _LAST_FAMILY_COMMENT_READ_STATUS = {
                 "backend": "supabase",
                 "connected": True,
-                "count": 0,
-                "message": "Supabase 暂无家庭观察记录",
+                "count": len(normalized),
+                "message": "已从 Supabase 读取家庭观察记录" if normalized else "Supabase 暂无家庭观察记录",
                 "error": "",
             }
-            return []
+            return normalized
+            # NOTE: No CSV fallback here — Supabase returned successfully (even
+            # with 0 rows).  Falling through to the local CSV when the cloud
+            # query succeeds but returns empty would serve wrong-account data
+            # from a CSV file that may belong to a different family.
         except Exception as exc:  # noqa: BLE001
             read_error = f"{type(exc).__name__}: {str(exc)[:220]}"
     else:
