@@ -291,7 +291,22 @@ def fetch_market(
     return None
 
 
-def fetch_spot_data(ak: Any) -> Any | None:
+def fetch_spot_data(ak: Any, fast_spot: bool = False) -> Any | None:
+    if fast_spot:
+        print("快速行情模式：跳过容易失败的东财全市场接口，直接使用新浪 HTTP 备用接口...", flush=True)
+        df = fetch_sina_valuation_pages()
+        if is_valid_frame(df):
+            print(f"快速行情模式成功：获取 {len(df)} 条行情数据。", flush=True)
+            return df
+
+        print("新浪 HTTP 备用接口失败，改用 AkShare 备用接口 stock_zh_a_spot ...", flush=True)
+        df = fetch_market("备用接口 stock_zh_a_spot", ak.stock_zh_a_spot, retries=1)
+        if is_valid_frame(df):
+            return df
+
+        print("快速行情模式失败：备用行情接口均未返回有效数据。", flush=True)
+        return None
+
     print("正在尝试获取沪深京 A 股全市场数据...", flush=True)
     df = fetch_market("全市场接口 stock_zh_a_spot_em", ak.stock_zh_a_spot_em)
     if is_valid_frame(df):
@@ -446,7 +461,7 @@ def fetch_sina_valuation_pages() -> Any | None:
     AkShare 的 stock_zh_a_spot 会丢弃 per/pb/mktcap/nmc/turnoverratio，
     这里直接读原始 JSON，保留这些字段。
     """
-    print("东财补抓为空，改用新浪 HTTP 原始接口补抓 PE/PB...", flush=True)
+    print("正在使用新浪 HTTP 原始接口获取行情和 PE/PB...", flush=True)
     try:
         import requests
     except Exception as exc:  # noqa: BLE001
@@ -905,6 +920,11 @@ def parse_args() -> argparse.Namespace:
         help="只处理前 N 只股票（财务数据部分），0 表示不限制（默认）",
     )
     parser.add_argument(
+        "--fast-spot",
+        action="store_true",
+        help="跳过东财全市场接口，直接使用新浪 HTTP 备用接口更新行情（适合 GitHub Actions 日常快速刷新）",
+    )
+    parser.add_argument(
         "--retry-failed",
         action="store_true",
         help="只重试 failed_codes.csv 里的失败股票，跳过重新拉取行情",
@@ -1049,7 +1069,7 @@ def main() -> None:
         print(f"  模式：--limit {args.limit}，财务数据只处理前 {args.limit} 只。", flush=True)
 
     # 第一步：行情
-    spot_df = fetch_spot_data(ak)
+    spot_df = fetch_spot_data(ak, fast_spot=args.fast_spot)
     if not is_valid_frame(spot_df):
         return
 
@@ -1064,7 +1084,10 @@ def main() -> None:
         if output.empty:
             print("生成的缓存数据为空，中止。", flush=True)
             return
-        output = merge_valuation_fields(output, fetch_valuation_pages())
+        if args.fast_spot:
+            print("快速行情模式已包含 PE/PB 等字段，跳过额外估值补抓。", flush=True)
+        else:
+            output = merge_valuation_fields(output, fetch_valuation_pages())
     except Exception as exc:  # noqa: BLE001
         print(f"处理行情数据出错：{exc}", flush=True)
         return
