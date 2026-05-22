@@ -54,6 +54,8 @@ from data_fetcher import (
     refresh_market_cache,
 )
 from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
+from nl_parser import parse_holdings_nl
+from report_exporter import export_text_report
 from storage import (
     format_datetime_for_display,
     get_last_family_comment_read_status,
@@ -120,6 +122,8 @@ def init_state() -> None:
         "reverse_qa": dict(_REVERSE_QA_DEFAULT),
         "last_followup_save": {},
         "risk_profile": "平衡",
+        "nl_input_mode": False,
+        "nl_parsed_result": {},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -1435,12 +1439,80 @@ def home_hero() -> None:
     portfolio_form()
 
 
+def _apply_nl_parsed_to_form(parsed: dict) -> None:
+    """将 NL 解析结果填入表单 session_state。"""
+    holdings = list(parsed.get("holdings") or [])
+    cash     = float(parsed.get("cash") or 0)
+    if not holdings:
+        return
+    # 填充持仓行
+    needed = len(holdings)
+    st.session_state["holding_rows"] = max(st.session_state.get("holding_rows", 2), needed)
+    for idx, h in enumerate(holdings):
+        st.session_state[f"code_{idx}"]   = str(h.get("code") or "")
+        st.session_state[f"amount_{idx}"] = float(h.get("amount") or 0)
+    # 后续行清空
+    for idx in range(len(holdings), st.session_state["holding_rows"]):
+        st.session_state[f"code_{idx}"]   = ""
+        st.session_state[f"amount_{idx}"] = 0.0
+    # 现金不强制覆盖，但如果解析出来就提示（通过 session_state 临时存）
+    if cash > 0:
+        st.session_state["nl_parsed_cash"] = cash
+
+
+def nl_input_block() -> None:
+    """自然语言持仓输入面板（可展开）。"""
+    with st.expander("✏️ 用自然语言描述持仓（AI 帮你解析）", expanded=st.session_state.get("nl_input_mode", False)):
+        st.caption("例如：我有茅台 20 万，招行 10 万，现金 5 万")
+        nl_text = st.text_area(
+            "持仓描述",
+            placeholder="可以直接用说话的方式：我持有贵州茅台 200000 元，招商银行 100000 元，另外现金 50000 元",
+            height=90,
+            label_visibility="collapsed",
+            key="nl_input_text",
+        )
+        if st.button("🤖 AI 解析持仓", use_container_width=True, key="nl_parse_btn"):
+            if nl_text.strip():
+                with st.spinner("正在解析持仓描述..."):
+                    result = parse_holdings_nl(nl_text.strip())
+                st.session_state["nl_parsed_result"] = result
+                if result.get("holdings"):
+                    _apply_nl_parsed_to_form(result)
+                    st.session_state["nl_input_mode"] = False
+                    st.success(
+                        f"已解析 {len(result['holdings'])} 条持仓"
+                        + (f"，现金 {result['cash']/10000:.1f} 万元" if result.get("cash") else "")
+                        + "。请确认下方表单后再体检。"
+                    )
+                    if result.get("parse_note"):
+                        st.caption(f"解析说明：{result['parse_note']}")
+                    st.rerun()
+                else:
+                    st.warning(f"未识别到持仓。{result.get('parse_note', '请检查输入格式或手动填写。')}")
+            else:
+                st.warning("请先填写持仓描述。")
+
+        saved = st.session_state.get("nl_parsed_result") or {}
+        if saved.get("holdings"):
+            st.caption(
+                f"上次解析来源：{saved.get('source', '')}  "
+                f"置信度：{saved.get('confidence', '')}  "
+                f"说明：{saved.get('parse_note', '')}"
+            )
+
+
 def portfolio_form() -> None:
     pending_code = st.session_state.pop("pending_code", "")
     if pending_code:
         st.session_state["code_0"] = pending_code
         if float(st.session_state.get("amount_0", 0) or 0) <= 0:
             st.session_state["amount_0"] = 20000.0
+
+    # 自然语言输入面板
+    nl_input_block()
+
+    # 若 NL 解析出了现金，用临时 key 写回 number_input
+    _nl_cash = st.session_state.pop("nl_parsed_cash", None)
 
     st.markdown('<div class="search-shell">', unsafe_allow_html=True)
     code_col, amount_col = st.columns([1.4, 1])
@@ -1488,7 +1560,8 @@ def portfolio_form() -> None:
             st.session_state.holding_rows += 1
             st.rerun()
 
-    cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=50000.0, step=1000.0)
+    _cash_default = float(_nl_cash) if _nl_cash and _nl_cash > 0 else 50000.0
+    cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=_cash_default, step=1000.0)
     current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
     if current_risk not in RISK_PROFILE_OPTIONS:
         current_risk = "平衡"
@@ -2804,6 +2877,16 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
     clean_question = question.strip()
     if not clean_question:
         return
+
+    # 构建多轮对话历史（最旧在前，最多取最近3条）
+    _existing: list[dict[str, Any]] = list(st.session_state.get("followup_answers", []))
+    # followup_answers 是新插到最前，所以需要反转取最旧的先
+    _chat_history: list[dict[str, str]] = [
+        {"question": str(a.get("question") or ""), "answer": str(a.get("answer") or "")}
+        for a in reversed(_existing[-3:])
+        if a.get("question") and a.get("answer")
+    ]
+
     routed = route_slash_command(clean_question)
     effective_question = clean_question
     command = ""
@@ -2819,12 +2902,12 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
             else:
                 effective_question = str(routed.get("routed_question", "") or clean_question)
                 answer, source, error, raw_error, call_path = unpack_followup_result(
-                    answer_followup_question(agent_context, effective_question)
+                    answer_followup_question(agent_context, effective_question, _chat_history)
                 )
                 answer = sanitize_compliance_text(answer)
         else:
             answer, source, error, raw_error, call_path = unpack_followup_result(
-                answer_followup_question(agent_context, clean_question)
+                answer_followup_question(agent_context, clean_question, _chat_history)
             )
             answer = sanitize_compliance_text(answer)
     except Exception as exc:  # noqa: BLE001
@@ -2936,31 +3019,61 @@ def followup_block(agent_context: dict[str, Any]) -> None:
             save_followup_answer(agent_context, custom_question)
             st.rerun()
 
+    # ── 对话历史气泡（最新在上）────────────────────────────────
     followup_answers: list[dict[str, str]] = st.session_state.get("followup_answers", [])
     if followup_answers:
         _ans_n = len(followup_answers)
-        with st.expander(f"📝 查看 AI 回答（{_ans_n} 条）", expanded=True):
-            for item in followup_answers[:3]:
-                st.markdown(f"**问题：** {item['question']}")
-                st.markdown(f"**AI 回答：**\n\n{item['answer']}")
-                source = item.get("source", "local_fallback")
-                st.caption(f"回答来源：{followup_source_label(source)}")
-                st.caption(f"保存状态：{followup_save_label(item)}")
-                if source == "local_fallback":
-                    raw = item.get("raw_error", "") or item.get("error", "")
-                    if raw:
-                        with st.expander("为什么进入本地兜底？（开发者诊断）", expanded=False):
-                            st.code(raw, language="text")
-                            cp = item.get("call_path", "")
-                            if cp:
-                                st.caption(f"调用路径：{cp}")
-            if _ans_n > 3:
-                for item in followup_answers[3:]:
-                    st.markdown(f"**问题：** {item['question']}")
-                    st.markdown(f"**AI 回答：**\n\n{item['answer']}")
-                    st.caption(f"回答来源：{followup_source_label(item.get('source', 'local_fallback'))}")
-                    st.caption(f"保存状态：{followup_save_label(item)}")
-                    st.markdown("---")
+        render_html(
+            f'<p style="font-size:0.78rem;color:var(--text-3);margin:0.6rem 0 0.3rem;">'
+            f'本次已追问 {_ans_n} 条，AI 回答已记住上下文</p>'
+        )
+        # 气泡式展示（最新的在最上方）
+        for item in followup_answers:
+            q_text = html_escape(str(item.get("question") or ""))
+            a_text = str(item.get("answer") or "")
+            source = item.get("source", "local_fallback")
+            src_label = followup_source_label(source)
+            src_color = "#15803d" if source == "deepseek" else "#6b7280"
+            render_html(
+                f"""
+                <div style="margin-bottom:1rem;">
+                  <div style="display:flex;justify-content:flex-end;margin-bottom:0.3rem;">
+                    <div style="background:var(--accent-soft);border:1px solid var(--border);
+                                border-radius:14px 14px 4px 14px;padding:0.5rem 0.85rem;
+                                max-width:88%;font-size:0.88rem;color:var(--text);font-weight:600;">
+                      {q_text}
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:flex-start;gap:0.45rem;">
+                    <div style="width:1.6rem;height:1.6rem;border-radius:999px;flex-shrink:0;
+                                background:var(--accent);display:grid;place-items:center;
+                                color:#fff;font-size:0.7rem;font-weight:800;margin-top:0.15rem;">AI</div>
+                    <div style="background:var(--surface);border:1px solid var(--border);
+                                border-radius:4px 14px 14px 14px;padding:0.6rem 0.9rem;
+                                max-width:92%;font-size:0.85rem;line-height:1.65;color:var(--text);">
+                """
+            )
+            st.markdown(a_text)
+            render_html(
+                f"""
+                    <p style="font-size:0.68rem;color:{src_color};margin:0.3rem 0 0;">
+                        {src_label} · {followup_save_label(item)}
+                    </p>
+                    </div>
+                  </div>
+                </div>
+                """
+            )
+            if source == "local_fallback":
+                raw = item.get("raw_error", "") or item.get("error", "")
+                if raw:
+                    with st.expander("AI 未能回答的原因（开发者诊断）", expanded=False):
+                        st.code(raw, language="text")
+
+    # ── 快捷命令提示 ───────────────────────────────────────────
+    with st.expander("⚡ 快捷命令", expanded=False):
+        from question_router import slash_command_help_text  # noqa: PLC0415
+        st.caption(slash_command_help_text())
 
 
 def followup_entry_block(agent_result: dict[str, Any], agent_context: dict[str, Any]) -> None:
@@ -3416,6 +3529,36 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             f'margin:0 0 0.4rem;padding:0.35rem 0.75rem;'
             f'background:var(--accent-soft);border-radius:8px;">'
             f'📌&nbsp;{html_escape(_behavior_note)}</p>'
+        )
+
+    # ── 主动预警：与上次体检相比的关键变化 ──────────────────────
+    _delta = agent_result.get("delta_alert") or {}
+    if _delta.get("has_alert"):
+        _dlevel  = str(_delta.get("level") or "caution")
+        _dsum    = str(_delta.get("summary") or "")
+        _dbg, _dfg = {
+            "warning":  ("#fef2f2", "#b91c1c"),
+            "caution":  ("#fffbeb", "#92400e"),
+            "improved": ("#f0fdf4", "#15803d"),
+        }.get(_dlevel, ("#f8fafc", "#475569"))
+        _dicon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(_dlevel, "△")
+        _changes_html = "".join(
+            f'<span style="display:block;font-size:0.78rem;color:{_dfg};'
+            f'padding:0.1rem 0;">{html_escape(c)}</span>'
+            for c in (_delta.get("changes") or [])
+        )
+        render_html(
+            f"""
+            <div style="margin:0.3rem 0 0.45rem;padding:0.55rem 0.85rem;
+                        background:{_dbg};border-radius:10px;
+                        border:1.5px solid color-mix(in srgb,{_dfg} 30%,transparent);">
+                <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.18rem;">
+                    <span style="font-size:0.82rem;">{_dicon}</span>
+                    <span style="font-size:0.85rem;font-weight:700;color:{_dfg};">与上次体检相比</span>
+                </div>
+                {_changes_html}
+            </div>
+            """
         )
 
     agent_memory_block(agent_result.get("agent_memory", {}))
@@ -4012,6 +4155,23 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
         agent_result["agent_context"] = agent_context
         st.session_state["agent_result"] = agent_result
     st.caption(f"报告来源：{_report_source_label(report_source)}")
+
+    # 报告导出按钮
+    try:
+        _export_text = export_text_report(agent_result)
+        _export_col1, _export_col2 = st.columns([3, 1])
+        with _export_col2:
+            st.download_button(
+                "⬇️ 下载报告",
+                data=_export_text.encode("utf-8"),
+                file_name="family_risk_report.txt",
+                mime="text/plain",
+                use_container_width=True,
+                help="下载本次体检完整报告（纯文本格式，可发给家人）",
+                key="export_report_btn",
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     if st.button("看完了，开始 AI 追问 →", use_container_width=True,
                  key="goto_followup_from_report", type="primary"):

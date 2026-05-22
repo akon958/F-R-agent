@@ -940,7 +940,16 @@ def _safe_followup_error(exc: Exception) -> str:
     return f"{cls}: {text[:250]}"
 
 
-def _call_deepseek_followup(agent_context: dict[str, Any], question: str) -> str:
+def _call_deepseek_followup(
+    agent_context: dict[str, Any],
+    question: str,
+    chat_history: list[dict[str, str]] | None = None,
+) -> str:
+    """调用 DeepSeek 回答追问，支持多轮对话历史。
+
+    chat_history 是已有的对话列表（最旧在前），每项包含 "question" 和 "answer"。
+    只取最近 3 轮，每条回答截断到 250 字，避免 token 超额。
+    """
     # 追问使用更丰富的上下文（含个股实际 PE/PB/ROE 等非空字段）
     context = _agent_context_for_followup_prompt(agent_context)
     system_prompt = f"""
@@ -956,18 +965,31 @@ def _call_deepseek_followup(agent_context: dict[str, Any], question: str) -> str
 7. 结尾必须保留免责声明：{DISCLAIMER}
 8. 如果 stock_details 中有非空的 PE/PB/ROE 等数据，回答估值/财务相关问题时可以引用具体数值，
    但只能描述这个数字意味着什么，不能据此说应该买卖持有。
+9. 如果对话历史中已经解释过某个问题，可以在本次回答中简单呼应，不要完全重复上次内容。
 """.strip()
+
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+
+    # 注入对话历史（最多最近 3 轮，回答截短到 250 字防 token 溢出）
+    if chat_history:
+        for exchange in chat_history[-3:]:
+            hist_q = str(exchange.get("question") or "").strip()
+            hist_a = str(exchange.get("answer") or "").strip()[:250]
+            if hist_q and hist_a:
+                messages.append({"role": "user", "content": hist_q})
+                messages.append({"role": "assistant", "content": hist_a})
+
+    # 当前问题附带完整 agent_context（每次都带，确保 AI 数据不缺失）
     user_prompt = (
         "用户追问：\n"
         f"{question}\n\n"
         "本次体检 agent_context：\n"
         + json.dumps(context, ensure_ascii=False, indent=2)
     )
+    messages.append({"role": "user", "content": user_prompt})
+
     content = _call_deepseek(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        messages,
         temperature=0.2,
         timeout=30,
         max_tokens=900,
@@ -1273,13 +1295,20 @@ def deepseek_self_test() -> dict[str, Any]:
         }
 
 
-def answer_followup_question(agent_context: dict[str, Any], question: str) -> dict[str, str]:
+def answer_followup_question(
+    agent_context: dict[str, Any],
+    question: str,
+    chat_history: list[dict[str, str]] | None = None,
+) -> dict[str, str]:
     """Return dict: {answer, source, error, raw_error, call_path}.
 
     source = "deepseek" on success; "local_fallback" otherwise.
     raw_error preserves the full exception chain for cloud debugging.
     call_path always == "ai_report.answer_followup_question -> _call_deepseek_followup -> _call_deepseek"
     so app.py can verify main report and follow-up share the same DeepSeek client.
+
+    chat_history: 最近几轮对话记录（最旧在前），每项包含 "question" 和 "answer"，
+    用于多轮对话上下文注入。None 时退化为单轮模式。
     """
     call_path = "ai_report.answer_followup_question -> _call_deepseek_followup -> _call_deepseek"
     q = str(question or "").strip()
@@ -1315,7 +1344,9 @@ def answer_followup_question(agent_context: dict[str, Any], question: str) -> di
 
     try:
         return {
-            "answer": sanitize_compliance_text(_call_deepseek_followup(agent_context, q)),
+            "answer": sanitize_compliance_text(
+                _call_deepseek_followup(agent_context, q, chat_history)
+            ),
             "source": "deepseek",
             "error": "",
             "raw_error": "",

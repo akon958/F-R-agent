@@ -27,6 +27,7 @@ except ImportError:
             "report_source": "local_fallback",
         }
 from data_fetcher import get_stock_metrics, normalize_code
+from delta_alert import compute_delta
 from memory_agent import build_agent_memory_summary
 from validator import cross_validate
 from storage import (
@@ -785,6 +786,17 @@ def run_family_risk_agent(
     agent_result["debug_info"]["保存历史记录"] = agent_result["saved_history"]
     agent_result["debug_info"]["存储方式"] = agent_result["storage_status"].get("backend")
     agent_result["debug_info"]["saved_history"] = agent_result["saved_history"]
+
+    # ── Delta Alert：对比本次与上次体检，检测关键指标变化 ──────────
+    try:
+        _delta_input = {
+            "risk_score": agent_result.get("risk_score", 0),
+            "portfolio_summary": portfolio_summary,
+        }
+        agent_result["delta_alert"] = compute_delta(_delta_input, _history_records)
+    except Exception:  # noqa: BLE001
+        agent_result["delta_alert"] = {"has_alert": False, "level": "stable", "changes": [], "summary": ""}
+
     emit("准备智能追问建议", 96)
     emit("完成体检", 100)
     return agent_result
