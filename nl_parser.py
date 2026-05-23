@@ -101,6 +101,102 @@ def _parse_amount_text(text: str) -> float | None:
     return None
 
 
+def _resolve_code_hint(text: str) -> str:
+    """Resolve a 6-digit stock code from either a code-like string or a stock name."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 6:
+        return digits
+
+    if raw in _NAME_TO_CODE:
+        return _NAME_TO_CODE[raw]
+
+    try:
+        from data_fetcher import resolve_code_or_name  # local import to avoid startup coupling
+
+        return str(resolve_code_or_name(raw) or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _normalize_risk_preference(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text in _RISK_PREFERENCES else ""
+
+
+def _post_process_result(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Repair parsed holdings by filling stock codes from names when possible."""
+    holdings: list[dict[str, Any]] = []
+    repaired_count = 0
+    unresolved_count = 0
+    seen: set[tuple[str, str]] = set()
+
+    for item in parsed.get("holdings") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        raw_code = str(item.get("code") or "").strip()
+        try:
+            amount = float(item.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        if amount <= 0:
+            continue
+
+        resolved_code = _resolve_code_hint(raw_code) or _resolve_code_hint(name)
+        if not raw_code and resolved_code:
+            repaired_count += 1
+        if not resolved_code:
+            unresolved_count += 1
+
+        dedupe_key = (resolved_code, name) if resolved_code else ("", name)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        holdings.append({"code": resolved_code, "name": name, "amount": amount})
+
+    note_parts: list[str] = []
+    base_note = str(parsed.get("parse_note") or "").strip()
+    if base_note:
+        note_parts.append(base_note)
+    if repaired_count:
+        note_parts.append(f"已根据名称补全 {repaired_count} 只持仓的股票代码。")
+    if unresolved_count:
+        note_parts.append(f"仍有 {unresolved_count} 只持仓未识别股票代码。")
+
+    result = dict(parsed)
+    result["holdings"] = holdings
+    result["cash"] = float(parsed.get("cash") or 0)
+    result["risk_preference"] = _normalize_risk_preference(parsed.get("risk_preference"))
+    result["parse_note"] = " ".join(note_parts).strip()
+    if holdings:
+        if unresolved_count == 0:
+            result["confidence"] = "high"
+        elif str(parsed.get("confidence") or "") == "low":
+            result["confidence"] = "medium"
+    else:
+        result["confidence"] = "low"
+    return result
+
+
+def _iter_known_name_code_pairs() -> list[tuple[str, str]]:
+    pairs: dict[str, str] = dict(_NAME_TO_CODE)
+    try:
+        from data_fetcher import _build_name_lookup  # type: ignore[attr-defined]
+
+        for name, code in dict(_build_name_lookup() or {}).items():
+            clean_name = str(name or "").strip()
+            clean_code = str(code or "").strip()
+            if clean_name and clean_code:
+                pairs.setdefault(clean_name, clean_code)
+    except Exception:  # noqa: BLE001
+        pass
+    return sorted(pairs.items(), key=lambda x: -len(x[0]))
+
+
 def _regex_parse(text: str) -> dict[str, Any]:
     """正则兜底解析器：适合格式较规范的中文描述。"""
     holdings: list[dict[str, Any]] = []
@@ -137,7 +233,7 @@ def _regex_parse(text: str) -> dict[str, Any]:
 
     # 模式2: "茅台20万" / "招行 10万元"（仅匹配已知名称）
     # 长名称优先排序，防止"平安"在"中国平安"之前命中导致代码错误
-    _sorted_names = sorted(_NAME_TO_CODE.items(), key=lambda x: -len(x[0]))
+    _sorted_names = _iter_known_name_code_pairs()
     for name, code in _sorted_names:
         # 跳过已通过代码或名称匹配到的（双重去重：code 和 name 均检查）
         if any(h["code"] == code or h["name"] == name for h in holdings):
@@ -248,6 +344,6 @@ def parse_holdings_nl(text: str) -> dict[str, Any]:
 
     ds = _deepseek_parse(text)
     if ds is not None:
-        return ds
+        return _post_process_result(ds)
 
-    return _regex_parse(text)
+    return _post_process_result(_regex_parse(text))
