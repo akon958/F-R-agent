@@ -3213,7 +3213,6 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
     risk_factors = agent_result.get("risk_factors") or {}
     top_focus = [item for item in list(risk_factors.get("top_focus") or []) if isinstance(item, dict)]
     confidence = agent_result.get("data_confidence") or {}
-    task_review = agent_result.get("task_review") or {}
     if not top_focus and not confidence:
         return
 
@@ -3236,32 +3235,6 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
         for item in top_focus[:2]
     )
     conf_text = str(confidence.get("summary") or "")
-    review_text = str(task_review.get("summary") or "")
-    _is_first_run = bool(task_review.get("is_first_run"))
-    _gaps = [g for g in (task_review.get("gaps") or []) if isinstance(g, dict)]
-    _moved = [g for g in _gaps if g.get("moved_against_intention")]
-    if _is_first_run:
-        review_html = '<p style="font-size:0.74rem;color:var(--text-3);margin:0.35rem 0 0;">首次体检，下次开始可以看任务回看。</p>'
-    elif _moved:
-        _metric_labels: dict[str, str] = {"cash": "现金比例", "concentration": "最大持仓"}
-        _lines = []
-        for _g in _moved[:2]:
-            _mlabel = _metric_labels.get(str(_g.get("metric") or ""), str(_g.get("metric") or ""))
-            _times = int(_g.get("times_flagged") or 1)
-            _prev = f"{float(_g.get('first_value') or 0):.0%}"
-            _cur = f"{float(_g.get('latest_value') or 0):.0%}"
-            _lines.append(
-                f'<li style="font-size:0.74rem;color:var(--text-3);margin:0.15rem 0;">'
-                f'上次已提醒{html_escape(_mlabel)}（共{_times}次），从{_prev}变为{_cur}，与关注方向相反。</li>'
-            )
-        review_html = '<ul style="margin:0.35rem 0 0;padding-left:1.1rem;">' + "".join(_lines) + "</ul>"
-    elif review_text:
-        review_html = (
-            f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.35rem 0 0;">'
-            f'上次任务回看：{html_escape(review_text)}</p>'
-        )
-    else:
-        review_html = ""
     # 外层 expander 标题已包含 "Agent 主动判断" 和数据可信度，此处不再重复显示
     _conf_inline_html = (
         f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.5rem 0 0;">'
@@ -3276,7 +3249,6 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
                 {chips}
             </div>
             {_conf_inline_html}
-            {review_html}
         </section>
         """
     )
@@ -4598,7 +4570,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         return
 
     summary = agent_result.get("portfolio_summary", {})
-    main_risks = agent_result.get("main_risks", []) or ["当前没有明显刺眼的问题，但仍需定期复盘。"]
     missing_data = agent_result.get("missing_data", {})
     data_status = agent_result.get("data_status", "未知")
     agent_context = agent_result.get("agent_context", {})
@@ -4707,58 +4678,11 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     # 1d. 家庭分歧（有则显示）
     family_disagreement_block(agent_result.get("family_disagreement", {}))
 
-    # 1e. Agent 主动抓重点（默认展开，这是最重要的结论之一）
+    # 1e. Agent 主动抓重点（结果页唯一的重点风险入口）
     with st.expander(f"Agent 主动判断 · 数据可信度：{_conf_level or '未知'}", expanded=True):
         agent_focus_block(agent_result)
 
-    # 1f. 主要风险（最多 3 条）
-    with st.expander(f"主要风险提示（共 {len(main_risks)} 项）", expanded=False):
-        _show_risks = main_risks[:3]
-        _extra_risk_n = max(0, len(main_risks) - 3)
-        _risk_rows = "".join(
-            f'<li style="padding:0.18rem 0;display:flex;align-items:baseline;gap:0.55rem;'
-            f'border-bottom:1px solid rgba(122,62,46,0.07);">'
-            f'<span style="flex-shrink:0;font-size:0.65rem;font-weight:700;color:#fff;'
-            f'background:#b94040;border-radius:50%;width:1.35em;height:1.35em;'
-            f'display:inline-flex;align-items:center;justify-content:center;line-height:1;">'
-            f'{i + 1}</span>'
-            f'<span style="font-size:0.83rem;line-height:1.45;color:var(--text);">{html_escape(r)}</span>'
-            f'</li>'
-            for i, r in enumerate(_show_risks)
-        )
-        _more_html = (
-            f'<p style="font-size:0.7rem;color:var(--text-3);margin:0.2rem 0 0;padding-left:0.1rem;">'
-            f'另有 {_extra_risk_n} 项，展开"Agent 智能分析详情"可查看。</p>'
-            if _extra_risk_n else ""
-        )
-        render_html(
-            f"""
-            <section style="margin:0 0 0.45rem;border-radius:10px;
-                            border:1.5px solid #e8c4b2;background:#fff9f6;overflow:hidden;">
-                <div style="padding:0.4rem 0.85rem 0.28rem;display:flex;align-items:center;
-                            gap:0.4rem;border-bottom:1px solid #f0ddd3;">
-                    <svg width="15" height="15" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
-                        <path d="M8.5 1.5 L15.5 14.5 L1.5 14.5 Z"
-                              fill="#b94040" opacity="0.18"
-                              stroke="#b94040" stroke-width="1.4" stroke-linejoin="round"/>
-                        <line x1="8.5" y1="6.5" x2="8.5" y2="10.5"
-                              stroke="#b94040" stroke-width="1.6" stroke-linecap="round"/>
-                        <circle cx="8.5" cy="12.5" r="0.85" fill="#b94040"/>
-                    </svg>
-                    <span style="font-size:0.85rem;font-weight:700;color:#7a3e2e;">主要风险提示</span>
-                    <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">
-                        共 {len(main_risks)} 项待关注
-                    </span>
-                </div>
-                <ul style="margin:0;padding:0.1rem 0.85rem 0.35rem;list-style:none;">
-                    {_risk_rows}
-                </ul>
-                {_more_html}
-            </section>
-            """
-        )
-
-    # 1g. 下一步 CTA：查看 AI 风险说明
+    # 1f. 下一步 CTA：查看 AI 风险说明
     render_html("""
     <div class="fr-step-card">
         <p class="fr-step-kicker">Next</p>
@@ -5224,12 +5148,8 @@ def followup_page(agent_result: dict[str, Any]) -> None:
         key="fup_to_guided_comment",
         type="primary",
     ):
-        st.session_state["_guided_run_id"] = _fup_run_id
-        for _k in ("guided_step", "guided_member", "guided_focus", "guided_focus_label",
-            "guided_stance", "guided_stance_label", "guided_text", "guided_save_result"):
-            st.session_state.pop(_k, None)
-        st.session_state["guided_step"] = 1
-        st.session_state["active_view"] = "guided_comment"
+        st.session_state["_comments_run_id"] = _fup_run_id
+        st.session_state["active_view"] = "comments"
         st.rerun()
     with st.expander("追问历史保存情况", expanded=False):
         latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
@@ -5310,45 +5230,7 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
 
 
 def guided_comment_page(agent_result: dict[str, Any]) -> None:
-    def _clear_wizard() -> None:
-        for _k in (
-            "guided_step",
-            "guided_member",
-            "guided_focus",
-            "guided_focus_label",
-            "guided_stance",
-            "guided_stance_label",
-            "guided_text",
-            "guided_save_result",
-            "gw_extra_text",
-        ):
-            st.session_state.pop(_k, None)
-
-    if st.button("← 返回 AI 追问", use_container_width=True, key="guided_nav_back"):
-        _clear_wizard()
-        _navigate_to("followup")
-
-    crumb_targets = [
-        ("体检结论", "analysis"),
-        ("AI 风险说明", "ai_report"),
-    ]
-    crumb_cols = st.columns(len(crumb_targets))
-    for idx, (label, view) in enumerate(crumb_targets):
-        with crumb_cols[idx]:
-            if st.button(label, use_container_width=True, key=f"guided_nav_crumb_{idx}"):
-                _clear_wizard()
-                _navigate_to(view)
-
-    render_html(
-        '<p style="font-size:0.72rem;color:var(--text-3);margin:0.35rem 0 0.6rem;">'
-        '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问 &rsaquo; 记录家人看法</p>'
-    )
-    run_id = str(
-        st.session_state.get("_guided_run_id", "")
-        or st.session_state.get("_comments_run_id", "")
-        or (agent_result.get("run_id", "") if agent_result else "")
-    )
-    discussion_block(run_id=run_id)
+    comments_page(agent_result)
 
 
 def analysis_page() -> None:
