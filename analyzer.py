@@ -1086,35 +1086,28 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
     notes: list[str] = []
     overheated = False
 
-    if turnover is None:
-        score -= 12
-        notes.append(f"{name} 缺少换手率（今天有多少人在买卖这只股票）数据，短期热度判断不完整。")
-    elif turnover > 5:
+    if turnover is not None and turnover > 5:
         score -= 28
         overheated = True
         notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）很高，价格容易上上下下。")
-    elif turnover > 3:
+    elif turnover is not None and turnover > 3:
         score -= 18
         notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）偏高，别被短期气氛带着做决定。")
-    elif turnover > 1.5:
+    elif turnover is not None and turnover > 1.5:
         score -= 8
 
-    if volume_ratio is None:
-        score -= 8
-    elif volume_ratio > 2:
+    if volume_ratio is not None and volume_ratio > 2:
         score -= 20
         overheated = True
         notes.append(f"{name} 量比（今天成交量比平时多多少）明显放大，容易让人冲动。")
-    elif volume_ratio > 1.4:
+    elif volume_ratio is not None and volume_ratio > 1.4:
         score -= 9
 
-    if amplitude is None:
-        score -= 8
-    elif amplitude > 7:
+    if amplitude is not None and amplitude > 7:
         score -= 22
         overheated = True
         notes.append(f"{name} 振幅（今天股价最高最低相差多少）较大，持有时心理压力会更大。")
-    elif amplitude > 4:
+    elif amplitude is not None and amplitude > 4:
         score -= 12
 
     if change is not None and abs(change) > 5:
@@ -1126,9 +1119,6 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
     if change is not None and change > 4 and turnover is not None and turnover > 3:
         overheated = True
         notes.append(f"{name} 涨跌幅和换手率同时偏高，不建议被短期热度带着走。")
-
-    if amount is None:
-        notes.append(f"{name} 缺少成交额数据，交易热度只能保守判断。")
 
     if bid_ask_ratio is not None and (bid_ask_ratio > 1.4 or bid_ask_ratio < 0.7):
         score -= 8
