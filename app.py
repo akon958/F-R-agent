@@ -166,7 +166,6 @@ def init_state() -> None:
     for idx, amount in enumerate(DEFAULT_AMOUNTS):
         st.session_state.setdefault(f"amount_{idx}", amount)
     if st.session_state.get("followup_version") != FOLLOWUP_VERSION:
-        st.session_state["followup_answers"] = []
         st.session_state["followup_version"] = FOLLOWUP_VERSION
     # 每个 session 只从本地文件读取一次，之后以 session_state 为准
     if not st.session_state.notes_loaded:
