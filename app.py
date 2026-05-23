@@ -2183,8 +2183,11 @@ def display_settings() -> None:
 
 
 def top_toolbar() -> None:
-    """全局顶部操作先收起，避免手机端把小入口挤成主按钮。"""
-    return
+    """全局顶部工具栏：紧凑的显示设置入口（字号/主题），所有页面都可见。
+
+    放在 site_header 之后、页面主体之前。默认折叠，不抢占手机首屏。"""
+    with st.expander("⚙️ 显示设置", expanded=False):
+        display_settings()
 
 
 
@@ -2596,18 +2599,6 @@ def clean_holdings(raw_rows: list[dict[str, float | str]]) -> list[dict[str, flo
     return holdings
 
 
-def loading_card(code: str) -> None:
-    render_html(
-        f"""
-        <div class="card" style="padding: 2.2rem; margin: 1rem 0;">
-            <div class="kicker">生成报告中</div>
-            <h3 style="margin: .35rem 0;">正在生成 {html_escape(code)} 的分析报告…</h3>
-            <p class="muted">✓ 获取公司基础信息<br>✓ 拉取最近财报数据<br>○ AI 综合分析中<br>○ 整理风险提示</p>
-        </div>
-        """
-    )
-
-
 AGENT_PROGRESS_STEPS = [
     "检查输入是否完整",
     "读取行情和财务缓存",
@@ -2819,8 +2810,7 @@ def cache_tools() -> None:
 def home_page() -> None:
     home_hero()
     cache_tools()
-    with st.expander("显示设置", expanded=False):
-        display_settings()
+    # 显示设置已移到全局 top_toolbar()，所有页面都能调整字号/主题
 
 
 def to_float(value: Any) -> float | None:
@@ -5058,9 +5048,15 @@ def discussion_entry_block(run_id: str = "") -> None:
 
 def comments_page(agent_result: dict[str, Any]) -> None:
     """家庭观察记录专属子页。"""
-    if st.button("← 继续深入", use_container_width=True, key="back_from_comments_view"):
-        st.session_state["active_view"] = "followup"
-        st.rerun()
+    _bc1, _bc2 = st.columns(2)
+    with _bc1:
+        if st.button("← 返回追问", use_container_width=True, key="back_from_comments_view"):
+            st.session_state["active_view"] = "followup"
+            st.rerun()
+    with _bc2:
+        if st.button("↑ 体检结论", use_container_width=True, key="comments_to_root"):
+            st.session_state["active_view"] = "analysis"
+            st.rerun()
     run_id = str(st.session_state.get("_comments_run_id", "") or
                  (agent_result.get("run_id", "") if agent_result else ""))
     discussion_block(run_id=run_id)
@@ -5149,9 +5145,16 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
 
 def followup_page(agent_result: dict[str, Any]) -> None:
     agent_context = agent_result.get("agent_context", {}) if agent_result else {}
-    if st.button("← AI 风险说明", key="back_to_analysis_view"):
-        st.session_state["active_view"] = "ai_report"
-        st.rerun()
+    # 2 级深度页面：提供"返回上一级"和"直达体检结论"两个导航选项
+    _bc1, _bc2 = st.columns(2)
+    with _bc1:
+        if st.button("← AI 风险说明", use_container_width=True, key="back_to_analysis_view"):
+            st.session_state["active_view"] = "ai_report"
+            st.rerun()
+    with _bc2:
+        if st.button("↑ 体检结论", use_container_width=True, key="followup_to_root"):
+            st.session_state["active_view"] = "analysis"
+            st.rerun()
     render_html(
         '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.6rem;">'
         '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问</p>'
@@ -5284,10 +5287,18 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
         ):
             st.session_state.pop(_k, None)
 
-    if st.button("← 返回 AI 追问", key="guided_back_btn"):
-        _clear_wizard()
-        st.session_state["active_view"] = "followup"
-        st.rerun()
+    # 3 级深度页面：提供"返回上一级"和"直达体检结论"两个导航选项
+    _bc1, _bc2 = st.columns(2)
+    with _bc1:
+        if st.button("← AI 追问", use_container_width=True, key="guided_back_btn"):
+            _clear_wizard()
+            st.session_state["active_view"] = "followup"
+            st.rerun()
+    with _bc2:
+        if st.button("↑ 体检结论", use_container_width=True, key="guided_to_root"):
+            _clear_wizard()
+            st.session_state["active_view"] = "analysis"
+            st.rerun()
     render_html(
         '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.3rem;">'
         '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问 &rsaquo; 记录家人看法</p>'
