@@ -2439,84 +2439,13 @@ def home_hero() -> None:
     )
     agent_intake_block()
     with st.expander("📝 手动逐项填写（AI 识别有误时使用）", expanded=False):
-        portfolio_form(show_nl=False)
+        portfolio_form()
 
 
-def _apply_nl_parsed_to_form(parsed: dict) -> None:
-    """将 NL 解析结果填入表单 session_state。"""
-    holdings = list(parsed.get("holdings") or [])
-    cash     = float(parsed.get("cash") or 0)
-    if not holdings:
-        return
-    # 填充持仓行
-    needed = len(holdings)
-    st.session_state["holding_rows"] = max(st.session_state.get("holding_rows", 2), needed)
-    for idx, h in enumerate(holdings):
-        st.session_state[f"code_{idx}"]   = str(h.get("code") or "")
-        st.session_state[f"amount_{idx}"] = float(h.get("amount") or 0)
-    # 后续行清空
-    for idx in range(len(holdings), st.session_state["holding_rows"]):
-        st.session_state[f"code_{idx}"]   = ""
-        st.session_state[f"amount_{idx}"] = 0.0
-    # 现金不强制覆盖，但如果解析出来就提示（通过 session_state 临时存）
-    if cash > 0:
-        st.session_state["nl_parsed_cash"] = cash
-
-
-def nl_input_block() -> None:
-    """自然语言持仓输入面板（可展开）。"""
-    with st.expander("快速粘贴持仓（可选）", expanded=st.session_state.get("nl_input_mode", False)):
-        st.caption("适合懒得逐项填写时使用；不填也可以直接手动输入。")
-        nl_text = st.text_area(
-            "持仓描述",
-            placeholder="可以直接用说话的方式：我持有贵州茅台 200000 元，招商银行 100000 元，另外现金 50000 元",
-            height=90,
-            label_visibility="collapsed",
-            key="nl_input_text",
-        )
-        if st.button("🤖 AI 解析持仓", use_container_width=True, key="nl_parse_btn"):
-            if nl_text.strip():
-                with st.spinner("正在解析持仓描述..."):
-                    result = parse_holdings_nl(nl_text.strip())
-                st.session_state["nl_parsed_result"] = result
-                if result.get("holdings"):
-                    _apply_nl_parsed_to_form(result)
-                    st.session_state["nl_input_mode"] = False
-                    st.success(
-                        f"已解析 {len(result['holdings'])} 条持仓"
-                        + (f"，现金 {result['cash']/10000:.1f} 万元" if result.get("cash") else "")
-                        + "。请确认下方表单后再体检。"
-                    )
-                    if result.get("parse_note"):
-                        st.caption(f"解析说明：{_safe_ai_text(result['parse_note'])}")
-                    st.rerun()
-                else:
-                    st.warning(f"未识别到持仓。{_safe_ai_text(result.get('parse_note', '请检查输入格式或手动填写。'))}")
-            else:
-                st.warning("请先填写持仓描述。")
-
-        saved = st.session_state.get("nl_parsed_result") or {}
-        if saved.get("holdings"):
-            st.caption(
-                f"上次解析来源：{saved.get('source', '')}  "
-                f"置信度：{saved.get('confidence', '')}  "
-                f"说明：{_safe_ai_text(saved.get('parse_note', ''))}"
-            )
-
-
-def portfolio_form(show_nl: bool = True) -> None:
+def portfolio_form() -> None:
     pending_code = st.session_state.pop("pending_code", "")
     if pending_code:
         st.session_state["code_0"] = pending_code
-        if float(st.session_state.get("amount_0", 0) or 0) <= 0:
-            st.session_state["amount_0"] = 20000.0
-
-    # 自然语言输入面板（首页主入口已升级为 Agent 一句话输入；这里只在需要时保留旧入口）
-    if show_nl:
-        nl_input_block()
-
-    # 若 NL 解析出了现金，用临时 key 写回 number_input
-    _nl_cash = st.session_state.pop("nl_parsed_cash", None)
 
     st.markdown('<div class="search-shell">', unsafe_allow_html=True)
     code_col, amount_col = st.columns([1.4, 1])
@@ -2564,8 +2493,7 @@ def portfolio_form(show_nl: bool = True) -> None:
             st.session_state.holding_rows += 1
             st.rerun()
 
-    _cash_default = float(_nl_cash) if _nl_cash and _nl_cash > 0 else 0.0
-    cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=_cash_default, step=1000.0)
+    cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=0.0, step=1000.0)
     current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
     if current_risk not in RISK_PROFILE_OPTIONS:
         current_risk = "平衡"
@@ -4040,13 +3968,26 @@ def save_followup_answer(agent_context: dict[str, Any], question: str) -> None:
 def followup_block(agent_context: dict[str, Any]) -> None:
     """继续追问区域：动态问题按钮（每次体检结果不同，问题随之变化） + 保留回答历史。"""
     existing_answers = list(st.session_state.get("followup_answers", []))
-    if existing_answers and any(
-        "source" not in item or "error" not in item or "raw_error" not in item
-        for item in existing_answers
-        if isinstance(item, dict)
-    ):
-        # 旧版本字段不全（v3 之前），全部清掉，避免诊断信息缺失
-        st.session_state["followup_answers"] = []
+    migrated_count = 0
+    for item in existing_answers:
+        if not isinstance(item, dict):
+            continue
+        if "source" not in item:
+            item["source"] = "local_fallback"
+            migrated_count += 1
+        if "error" not in item:
+            item["error"] = ""
+            migrated_count += 1
+        if "raw_error" not in item:
+            item["raw_error"] = ""
+            migrated_count += 1
+        if "call_path" not in item:
+            item["call_path"] = "legacy followup record migrated in app.followup_block"
+        if "saved" not in item:
+            item["saved"] = "false"
+    if migrated_count:
+        st.session_state["followup_answers"] = existing_answers
+        st.info("已保留旧版追问记录，并补齐诊断字段。")
 
     render_html(
         """
@@ -4187,55 +4128,65 @@ def reverse_qa_block(agent_result: dict[str, Any], agent_context: dict[str, Any]
         or agent_context.get("reverse_qa")
         or st.session_state.get("reverse_qa")
     )
-    with st.expander("补充家庭情况，让报告更贴近实际", expanded=False):
-        st.caption("这是可选项，不填写也不影响体检。填写后会重新生成本次 AI 风险说明。")
-        with st.form("reverse_qa_form"):
-            money_label = st.selectbox(
-                "这笔钱半年内有没有可能要用？",
-                _MONEY_NEED_LABELS,
-                index=_MONEY_NEED_LABELS.index(_reverse_label(current["money_need_6m"], _MONEY_NEED_MAP)),
-                key="reverse_money_need_6m",
-            )
-            volatility_label = st.selectbox(
-                "如果最大那只持仓短期波动比较大，你第一反应更可能是？",
-                _VOLATILITY_LABELS,
-                index=_VOLATILITY_LABELS.index(_reverse_label(current["volatility_reaction"], _VOLATILITY_MAP)),
-                key="reverse_volatility_reaction",
-            )
-            last_disagreement = st.text_input(
-                "你们上一次因为投资有不同意见，是关于什么？",
-                value=current.get("last_disagreement", ""),
-                placeholder="例如：现金留多少、某只股票占比高不高、要不要继续观察等",
-                key="reverse_last_disagreement",
-            )
-            submitted = st.form_submit_button("更新本次 AI 风险说明", use_container_width=True)
+    render_html(
+        """
+        <section class="block ai-report" style="padding:0.95rem 1rem;margin-bottom:0.7rem;">
+            <div class="block-head" style="margin-bottom:.35rem;">
+                <div>
+                    <h2 class="block-title" style="font-size:1.12rem;">补充家庭情况，让报告更贴近实际</h2>
+                    <p class="block-subtitle">这是可选项；填写后会重新生成本次 AI 风险说明。</p>
+                </div>
+            </div>
+        </section>
+        """
+    )
+    with st.form("reverse_qa_form"):
+        money_label = st.selectbox(
+            "这笔钱半年内有没有可能要用？",
+            _MONEY_NEED_LABELS,
+            index=_MONEY_NEED_LABELS.index(_reverse_label(current["money_need_6m"], _MONEY_NEED_MAP)),
+            key="reverse_money_need_6m",
+        )
+        volatility_label = st.selectbox(
+            "如果最大那只持仓短期波动比较大，你第一反应更可能是？",
+            _VOLATILITY_LABELS,
+            index=_VOLATILITY_LABELS.index(_reverse_label(current["volatility_reaction"], _VOLATILITY_MAP)),
+            key="reverse_volatility_reaction",
+        )
+        last_disagreement = st.text_input(
+            "你们上一次因为投资有不同意见，是关于什么？",
+            value=current.get("last_disagreement", ""),
+            placeholder="例如：现金留多少、某只股票占比高不高、要不要继续观察等",
+            key="reverse_last_disagreement",
+        )
+        submitted = st.form_submit_button("更新本次 AI 风险说明", use_container_width=True)
 
-        if submitted:
-            reverse_qa = {
-                "money_need_6m": _MONEY_NEED_MAP.get(money_label, "uncertain"),
-                "volatility_reaction": _VOLATILITY_MAP.get(volatility_label, "discuss"),
-                "last_disagreement": str(last_disagreement or "").strip(),
-            }
-            st.session_state["reverse_qa"] = reverse_qa
-            agent_context["reverse_qa"] = reverse_qa
-            agent_result["reverse_qa"] = reverse_qa
-            with st.spinner("正在根据补充情况更新报告..."):
-                report_text, report_source, dinner_talk = _unpack_agent_report(
-                    generate_agent_report(agent_context, mode)
-                )
-            agent_result["ai_report"] = report_text
-            agent_result["dinner_talk"] = dinner_talk
-            agent_result["report_source"] = report_source
-            agent_result["report_mode"] = mode
-            agent_context["ai_report"] = report_text
-            agent_context["dinner_talk"] = dinner_talk
-            agent_context["report_source"] = report_source
-            agent_context["report_mode"] = mode
-            agent_result["agent_context"] = agent_context
-            st.session_state["agent_result"] = agent_result
-            st.session_state.pop("followup_questions", None)
-            st.success("已根据补充家庭情况更新本次报告。")
-            st.rerun()
+    if submitted:
+        reverse_qa = {
+            "money_need_6m": _MONEY_NEED_MAP.get(money_label, "uncertain"),
+            "volatility_reaction": _VOLATILITY_MAP.get(volatility_label, "discuss"),
+            "last_disagreement": str(last_disagreement or "").strip(),
+        }
+        st.session_state["reverse_qa"] = reverse_qa
+        agent_context["reverse_qa"] = reverse_qa
+        agent_result["reverse_qa"] = reverse_qa
+        with st.spinner("正在根据补充情况更新报告..."):
+            report_text, report_source, dinner_talk = _unpack_agent_report(
+                generate_agent_report(agent_context, mode)
+            )
+        agent_result["ai_report"] = report_text
+        agent_result["dinner_talk"] = dinner_talk
+        agent_result["report_source"] = report_source
+        agent_result["report_mode"] = mode
+        agent_context["ai_report"] = report_text
+        agent_context["dinner_talk"] = dinner_talk
+        agent_context["report_source"] = report_source
+        agent_context["report_mode"] = mode
+        agent_result["agent_context"] = agent_context
+        st.session_state["agent_result"] = agent_result
+        st.session_state.pop("followup_questions", None)
+        st.success("已根据补充家庭情况更新本次报告。")
+        st.rerun()
 
 
 def family_disagreement_block(disagreement: dict[str, Any]) -> None:
@@ -5081,17 +5032,15 @@ def ai_report_page(agent_result: dict[str, Any]) -> None:
     # 报告导出按钮
     try:
         _export_text = export_text_report(agent_result)
-        _export_col1, _export_col2 = st.columns([3, 1])
-        with _export_col2:
-            st.download_button(
-                "⬇️ 下载报告",
-                data=_export_text.encode("utf-8"),
-                file_name="family_risk_report.txt",
-                mime="text/plain",
-                use_container_width=True,
-                help="下载本次体检完整报告（纯文本格式，可发给家人）",
-                key="export_report_btn",
-            )
+        st.download_button(
+            "下载本次报告",
+            data=_export_text.encode("utf-8"),
+            file_name="family_risk_report.txt",
+            mime="text/plain",
+            use_container_width=True,
+            help="下载本次体检完整报告（纯文本格式，可发给家人）",
+            key="export_report_btn",
+        )
     except Exception:  # noqa: BLE001
         pass
 
