@@ -5343,7 +5343,32 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
         '<p style="font-size:0.72rem;color:var(--text-3);margin:0.35rem 0 0.6rem;">'
         '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问 &rsaquo; 记录家人看法</p>'
     )
-    _legacy_guided_comment_page(agent_result)
+    run_id = str(
+        st.session_state.get("_guided_run_id", "")
+        or st.session_state.get("_comments_run_id", "")
+        or (agent_result.get("run_id", "") if agent_result else "")
+    )
+    discussion_block(run_id=run_id)
+
+
+def analysis_page() -> None:
+    agent_result = st.session_state.get("agent_result", {})
+    active_view = st.session_state.get("active_view", "analysis")
+
+    if active_view == "followup":
+        followup_page(agent_result)
+    elif active_view == "history":
+        history_page(agent_result)
+    elif active_view == "comments":
+        comments_page(agent_result)
+    elif active_view == "guided_comment":
+        guided_comment_page(agent_result)
+    elif active_view == "ai_report":
+        ai_report_page(agent_result)
+    else:
+        agent_result_block(agent_result)
+
+    render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
 
 init_state()
 inject_css()
