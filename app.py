@@ -2399,7 +2399,7 @@ def home_hero() -> None:
         """
     )
     agent_intake_block()
-    with st.expander("手动填写 / 调整持仓", expanded=False):
+    with st.expander("📝 手动逐项填写（AI 识别有误时使用）", expanded=False):
         portfolio_form(show_nl=False)
 
 
@@ -2602,7 +2602,7 @@ def loading_card(code: str) -> None:
     render_html(
         f"""
         <div class="card" style="padding: 2.2rem; margin: 1rem 0;">
-            <div class="kicker">Generating report</div>
+            <div class="kicker">生成报告中</div>
             <h3 style="margin: .35rem 0;">正在生成 {html_escape(code)} 的分析报告…</h3>
             <p class="muted">✓ 获取公司基础信息<br>✓ 拉取最近财报数据<br>○ AI 综合分析中<br>○ 整理风险提示</p>
         </div>
@@ -2820,9 +2820,9 @@ def cache_tools() -> None:
 
 def home_page() -> None:
     home_hero()
+    cache_tools()
     with st.expander("显示设置", expanded=False):
         display_settings()
-    cache_tools()
 
 
 def to_float(value: Any) -> float | None:
@@ -4670,7 +4670,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             f'padding:0.1rem 0;">{html_escape(c)}</span>'
             for c in (_delta.get("changes") or [])
         )
-        with st.expander(f"与上次体检相比（{_dlabel}）", expanded=False):
+        with st.expander(f"与上次体检相比（{_dlabel}）", expanded=(_dlevel == "warning")):
             render_html(
                 f"""
                 <div style="margin:0 0 0.4rem;padding:0.5rem 0.85rem;
@@ -4707,8 +4707,8 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     # 1d. 家庭分歧（有则显示）
     family_disagreement_block(agent_result.get("family_disagreement", {}))
 
-    # 1e. Agent 主动抓重点
-    with st.expander(f"Agent 主动判断 · 数据可信度：{_conf_level or '未知'}", expanded=False):
+    # 1e. Agent 主动抓重点（默认展开，这是最重要的结论之一）
+    with st.expander(f"Agent 主动判断 · 数据可信度：{_conf_level or '未知'}", expanded=True):
         agent_focus_block(agent_result)
 
     # 1f. 主要风险（最多 3 条）
@@ -4793,12 +4793,14 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         if _analysis:
             risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
 
-    # ── Part 3：持仓详情与数据来源（默认折叠）────────────────────
-    with st.expander("持仓详情 · 数据来源", expanded=False):
+    # ── Part 3：体检数据一览（直接展示，核心指标不折叠）─────────────
+    if _analysis:
+        portfolio_metrics_block(summary, _analysis)
+
+    # ── Part 4：持仓明细与数据来源（折叠）────────────────────────────
+    with st.expander("持仓明细 · 数据来源", expanded=False):
         if _analysis:
-            portfolio_metrics_block(summary, _analysis)
-            with st.expander("持仓明细与数据来源", expanded=False):
-                holdings_detail(_analysis)
+            holdings_detail(_analysis)
         has_missing = any(bool(v) for v in missing_data.values())
         if has_missing:
             st.markdown("**数据缺失说明**")
