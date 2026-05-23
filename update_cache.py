@@ -267,14 +267,19 @@ def fetch_market(
     label: str,
     fetcher: Callable[[], Any],
     retries: int = 3,
+    quick_fail: bool = False,
 ) -> Any | None:
-    """带重试的接口调用：网络错误自动重试，每次等待时间递增。"""
+    """带重试的接口调用：网络错误自动重试，每次等待时间递增。
+    quick_fail=True 时只重试 1 次、等 2s，适合接口经常超时的网络环境。
+    """
+    if quick_fail:
+        retries = 1
     for attempt in range(1, retries + 1):
         try:
             df = fetcher()
         except Exception as exc:  # noqa: BLE001
             if attempt < retries and _is_network_error(exc):
-                wait = attempt * 4
+                wait = 2 if quick_fail else attempt * 4
                 print(
                     f"{label} 网络错误（第{attempt}/{retries}次），{wait}s 后重试…",
                     flush=True,
@@ -291,7 +296,7 @@ def fetch_market(
     return None
 
 
-def fetch_spot_data(ak: Any, fast_spot: bool = False) -> Any | None:
+def fetch_spot_data(ak: Any, fast_spot: bool = False, quick_fail: bool = False) -> Any | None:
     if fast_spot:
         print("快速行情模式：跳过容易失败的东财全市场接口，直接使用新浪 HTTP 备用接口...", flush=True)
         df = fetch_sina_valuation_pages()
@@ -300,7 +305,7 @@ def fetch_spot_data(ak: Any, fast_spot: bool = False) -> Any | None:
             return df
 
         print("新浪 HTTP 备用接口失败，改用 AkShare 备用接口 stock_zh_a_spot ...", flush=True)
-        df = fetch_market("备用接口 stock_zh_a_spot", ak.stock_zh_a_spot, retries=1)
+        df = fetch_market("备用接口 stock_zh_a_spot", ak.stock_zh_a_spot, retries=1, quick_fail=quick_fail)
         if is_valid_frame(df):
             return df
 
@@ -308,7 +313,7 @@ def fetch_spot_data(ak: Any, fast_spot: bool = False) -> Any | None:
         return None
 
     print("正在尝试获取沪深京 A 股全市场数据...", flush=True)
-    df = fetch_market("全市场接口 stock_zh_a_spot_em", ak.stock_zh_a_spot_em)
+    df = fetch_market("全市场接口 stock_zh_a_spot_em", ak.stock_zh_a_spot_em, quick_fail=quick_fail)
     if is_valid_frame(df):
         return df
 
@@ -317,7 +322,7 @@ def fetch_spot_data(ak: Any, fast_spot: bool = False) -> Any | None:
     for name, fn in [("沪A", ak.stock_sh_a_spot_em),
                      ("深A", ak.stock_sz_a_spot_em),
                      ("京A", ak.stock_bj_a_spot_em)]:
-        sub = fetch_market(name, fn)
+        sub = fetch_market(name, fn, quick_fail=quick_fail)
         if is_valid_frame(sub):
             frames.append(sub)
     if frames:
@@ -326,7 +331,7 @@ def fetch_spot_data(ak: Any, fast_spot: bool = False) -> Any | None:
         return combined
 
     print("东财接口全部失败，尝试备用接口 stock_zh_a_spot ...", flush=True)
-    df = fetch_market("备用接口 stock_zh_a_spot", ak.stock_zh_a_spot)
+    df = fetch_market("备用接口 stock_zh_a_spot", ak.stock_zh_a_spot, quick_fail=quick_fail)
     if is_valid_frame(df):
         return df
 
@@ -548,10 +553,10 @@ def fetch_sina_valuation_pages() -> Any | None:
 
 def _tencent_market_prefix(code: Any) -> str:
     normalized = normalize_code(code)
+    if normalized.startswith(("8", "4", "92")):
+        return f"bj{normalized}"
     if normalized.startswith(("6", "9")):
         return f"sh{normalized}"
-    if normalized.startswith("8"):
-        return f"bj{normalized}"
     return f"sz{normalized}"
 
 
@@ -665,7 +670,12 @@ def fetch_baidu_kline_fields(codes: list[str], limit: int = 0) -> Any | None:
         "Referer": "https://gushitong.baidu.com/",
     }
     rows: list[dict[str, Any]] = []
+    total = len(normalized_codes)
+    consecutive_failures = 0
     for seq, code in enumerate(normalized_codes, 1):
+        if seq == 1 or seq % 20 == 0 or seq == total:
+            pct = seq / total * 100
+            print(f"  百度 K 线进度：{seq}/{total}（{pct:.0f}%），已补到振幅 {len(rows)} 只。", flush=True)
         params = {
             "all": "1",
             "isIndex": "false",
@@ -680,12 +690,16 @@ def fetch_baidu_kline_fields(codes: list[str], limit: int = 0) -> Any | None:
             "ktype": "1",
         }
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            resp = requests.get(url, params=params, headers=headers, timeout=5)
             resp.raise_for_status()
             payload = resp.json()
+            consecutive_failures = 0
         except Exception as exc:  # noqa: BLE001
-            if seq <= 5:
-                print(f"  百度 K 线补抓 [{code}] 失败：{exc}", flush=True)
+            consecutive_failures += 1
+            if consecutive_failures <= 3 or consecutive_failures % 20 == 0:
+                print(f"  百度 K 线 [{code}] 失败（连续 {consecutive_failures} 次）：{exc}", flush=True)
+            if consecutive_failures == 20:
+                print("  ⚠ 连续 20 次失败，大概率是 VPN/代理干扰。建议 Ctrl+C 后关闭 VPN 再重跑，或加 --no-baidu 跳过此阶段。", flush=True)
             time.sleep(0.25)
             continue
 
@@ -772,6 +786,25 @@ def missing_numeric_codes(df: Any, column: str) -> list[str]:
         return []
     missing = df[column].map(to_float).isna()
     return [normalize_code(code) for code in df.loc[missing, "代码"].tolist() if normalize_code(code)]
+
+
+def supplement_realtime_quote_fields(output: Any, no_baidu: bool = False) -> Any:
+    """Supplement realtime quote fields using HTTP fallbacks independent of AkShare."""
+    if output is None or output.empty or "代码" not in output.columns:
+        return output
+
+    output = merge_valuation_fields(output, fetch_tencent_quote_fields(output["代码"].tolist()))
+    if no_baidu:
+        print("  --no-baidu：跳过百度 K 线兜底，使用腾讯数据直接保存。", flush=True)
+        return output
+    missing_amplitude = missing_numeric_codes(output, "振幅")
+    if missing_amplitude:
+        print(f"腾讯补抓后仍有 {len(missing_amplitude)} 只缺振幅，准备走百度 K 线兜底。", flush=True)
+        if len(missing_amplitude) > 500:
+            print("缺口超过 500 只，本次跳过百度逐只兜底；建议先关闭 VPN/代理后重跑腾讯补抓。", flush=True)
+        else:
+            output = merge_valuation_fields(output, fetch_baidu_kline_fields(missing_amplitude))
+    return output
 
 
 def build_cache_rows(spot_df: Any, old_cache: Any) -> Any:
@@ -1121,6 +1154,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="从 stock_metrics.csv 找出财务字段全空的股票并重新抓取，不重新拉取行情",
     )
+    parser.add_argument(
+        "--no-baidu",
+        action="store_true",
+        help="跳过百度 K 线兜底补振幅，只用腾讯接口（VPN 环境下百度逐只请求很慢，建议加此参数）",
+    )
+    parser.add_argument(
+        "--quick-fail",
+        action="store_true",
+        help="行情接口失败时只重试 1 次、等待 2s（默认 3 次、最长等 12s）。适合行情接口经常超时的网络环境。",
+    )
     return parser.parse_args()
 
 
@@ -1256,8 +1299,20 @@ def main() -> None:
         print(f"  模式：--limit {args.limit}，财务数据只处理前 {args.limit} 只。", flush=True)
 
     # 第一步：行情
-    spot_df = fetch_spot_data(ak, fast_spot=args.fast_spot)
+    spot_df = fetch_spot_data(ak, fast_spot=args.fast_spot, quick_fail=args.quick_fail)
     if not is_valid_frame(spot_df):
+        output = read_existing_cache()
+        if output.empty:
+            print("行情接口全部失败，且本地 stock_metrics.csv 为空，无法继续补抓。", flush=True)
+            return
+        print("行情入口失败，改用现有 stock_metrics.csv 继续走腾讯/百度补抓量比和振幅。", flush=True)
+        try:
+            output = supplement_realtime_quote_fields(output, no_baidu=args.no_baidu)
+            save_cache(output)
+        except Exception as exc:  # noqa: BLE001
+            print(f"使用现有缓存补抓量比/振幅失败：{exc}", flush=True)
+            return
+        print(f"完成！已基于现有 stock_metrics.csv 补抓实时行情字段：{len(output)} 只股票。", flush=True)
         return
 
     try:
@@ -1275,10 +1330,7 @@ def main() -> None:
             print("快速行情模式已包含 PE/PB 等字段，跳过额外估值补抓。", flush=True)
         else:
             output = merge_valuation_fields(output, fetch_valuation_pages())
-        output = merge_valuation_fields(output, fetch_tencent_quote_fields(output["代码"].tolist()))
-        missing_amplitude = missing_numeric_codes(output, "振幅")
-        if missing_amplitude:
-            output = merge_valuation_fields(output, fetch_baidu_kline_fields(missing_amplitude))
+        output = supplement_realtime_quote_fields(output, no_baidu=args.no_baidu)
     except Exception as exc:  # noqa: BLE001
         print(f"处理行情数据出错：{exc}", flush=True)
         return
