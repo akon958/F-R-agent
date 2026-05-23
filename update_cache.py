@@ -546,6 +546,186 @@ def fetch_sina_valuation_pages() -> Any | None:
     return output
 
 
+def _tencent_market_prefix(code: Any) -> str:
+    normalized = normalize_code(code)
+    if normalized.startswith(("6", "9")):
+        return f"sh{normalized}"
+    if normalized.startswith("8"):
+        return f"bj{normalized}"
+    return f"sz{normalized}"
+
+
+def fetch_tencent_quote_fields(codes: list[str]) -> Any | None:
+    """Use Tencent quote API to supplement volume ratio and amplitude.
+
+    a-stock-data documents Tencent qt.gtimg.cn fields as:
+    37=amount(10k yuan), 38=turnover rate, 39=PE(TTM), 43=amplitude,
+    44=market cap(100m yuan), 45=float market cap(100m yuan), 46=PB, 49=volume ratio.
+    """
+    normalized_codes = [normalize_code(code) for code in codes]
+    normalized_codes = [code for code in normalized_codes if code]
+    if not normalized_codes:
+        return None
+
+    print("正在使用腾讯财经接口补抓量比/振幅字段...", flush=True)
+    try:
+        import urllib.request
+    except Exception as exc:  # noqa: BLE001
+        print(f"  腾讯补抓失败：无法导入 urllib.request。原因：{exc}", flush=True)
+        return None
+
+    rows: list[dict[str, Any]] = []
+    batch_size = 80
+    for start in range(0, len(normalized_codes), batch_size):
+        batch = normalized_codes[start:start + batch_size]
+        query = ",".join(_tencent_market_prefix(code) for code in batch)
+        url = "https://qt.gtimg.cn/q=" + query
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            resp = urllib.request.urlopen(req, timeout=12)
+            text = resp.read().decode("gbk", errors="ignore")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  腾讯补抓第 {start // batch_size + 1} 批失败：{exc}", flush=True)
+            time.sleep(0.5)
+            continue
+
+        for line in text.strip().split(";"):
+            if not line.strip() or "=" not in line or '"' not in line:
+                continue
+            key = line.split("=", 1)[0].split("_")[-1]
+            values = line.split('"')[1].split("~")
+            if len(values) < 50:
+                continue
+            code = normalize_code(key[2:])
+            if not code:
+                continue
+            amount_wan = to_float(values[37])
+            market_cap_yi = to_float(values[44])
+            float_market_cap_yi = to_float(values[45])
+            rows.append(
+                {
+                    "代码": code,
+                    "名称": values[1] or None,
+                    "最新价": to_float(values[3]),
+                    "涨跌幅": to_float(values[32]),
+                    "成交额": amount_wan * 10000 if amount_wan is not None else None,
+                    "市盈率-动态": to_float(values[39]),
+                    "市净率": to_float(values[46]),
+                    "换手率": to_float(values[38]),
+                    "总市值": market_cap_yi * 100000000 if market_cap_yi is not None else None,
+                    "流通市值": float_market_cap_yi * 100000000 if float_market_cap_yi is not None else None,
+                    "量比": to_float(values[49]),
+                    "振幅": to_float(values[43]),
+                }
+            )
+        time.sleep(0.2)
+
+    if not rows:
+        print("  腾讯补抓失败：接口没有返回有效数据。", flush=True)
+        return None
+
+    output = pd.DataFrame(rows)
+    output = output[output["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
+    volume_ratio_count = int(output["量比"].map(to_float).notna().sum())
+    amplitude_count = int(output["振幅"].map(to_float).notna().sum())
+    print(
+        f"  腾讯补抓完成：{len(output)} 只，量比非空 {volume_ratio_count}，振幅非空 {amplitude_count}。",
+        flush=True,
+    )
+    return output
+
+
+def fetch_baidu_kline_fields(codes: list[str], limit: int = 0) -> Any | None:
+    """Use Baidu Stock Connect daily K-line as a fallback for amplitude.
+
+    This endpoint is per-stock, so it is intentionally used after batch quote
+    sources. It does not provide volume ratio, but high/low/open/close can
+    recover a daily amplitude when other sources miss it.
+    """
+    normalized_codes = [normalize_code(code) for code in codes]
+    normalized_codes = [code for code in normalized_codes if code]
+    if limit > 0:
+        normalized_codes = normalized_codes[:limit]
+    if not normalized_codes:
+        return None
+
+    print("正在使用百度股市通 K 线兜底补抓振幅字段...", flush=True)
+    try:
+        import requests
+    except Exception as exc:  # noqa: BLE001
+        print(f"  百度 K 线补抓失败：无法导入 requests。原因：{exc}", flush=True)
+        return None
+
+    url = "https://finance.pae.baidu.com/selfselect/getstockquotation"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/vnd.finance-web.v1+json",
+        "Origin": "https://gushitong.baidu.com",
+        "Referer": "https://gushitong.baidu.com/",
+    }
+    rows: list[dict[str, Any]] = []
+    for seq, code in enumerate(normalized_codes, 1):
+        params = {
+            "all": "1",
+            "isIndex": "false",
+            "isBk": "false",
+            "isBlock": "false",
+            "isFutures": "false",
+            "isStock": "true",
+            "newFormat": "1",
+            "group": "quotation_kline_ab",
+            "finClientType": "pc",
+            "code": code,
+            "ktype": "1",
+        }
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            if seq <= 5:
+                print(f"  百度 K 线补抓 [{code}] 失败：{exc}", flush=True)
+            time.sleep(0.25)
+            continue
+
+        market_data = ((payload.get("Result") or {}).get("newMarketData") or {})
+        keys = list(market_data.get("keys") or [])
+        lines = str(market_data.get("marketData") or "").split(";")
+        if not keys or not lines:
+            continue
+        latest = next((line for line in reversed(lines) if line.strip()), "")
+        values = latest.split(",")
+        if len(values) < len(keys):
+            continue
+        row = dict(zip(keys, values))
+        high = to_float(row.get("high"))
+        low = to_float(row.get("low"))
+        close = to_float(row.get("close"))
+        open_price = to_float(row.get("open"))
+        base = close or open_price
+        amplitude = (high - low) / base * 100 if high is not None and low is not None and base else None
+        rows.append(
+            {
+                "代码": code,
+                "最新价": close,
+                "成交额": to_float(row.get("amount")),
+                "振幅": amplitude,
+            }
+        )
+        time.sleep(0.2)
+
+    if not rows:
+        print("  百度 K 线补抓失败：接口没有返回有效数据。", flush=True)
+        return None
+
+    output = pd.DataFrame(rows)
+    output = output[output["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
+    amplitude_count = int(output["振幅"].map(to_float).notna().sum())
+    print(f"  百度 K 线补抓完成：{len(output)} 只，振幅非空 {amplitude_count}。", flush=True)
+    return output
+
+
 def fetch_valuation_pages() -> Any | None:
     valuation_df = fetch_eastmoney_valuation_pages()
     if valuation_df is not None and not valuation_df.empty:
@@ -585,6 +765,13 @@ def merge_valuation_fields(cache_df: Any, valuation_df: Any | None) -> Any:
     pb_count = int(updated["市净率"].map(to_float).notna().sum())
     print(f"  估值字段已合并：匹配 {matched} 只，当前 PE 非空 {pe_count}，PB 非空 {pb_count}。", flush=True)
     return updated
+
+
+def missing_numeric_codes(df: Any, column: str) -> list[str]:
+    if column not in df.columns:
+        return []
+    missing = df[column].map(to_float).isna()
+    return [normalize_code(code) for code in df.loc[missing, "代码"].tolist() if normalize_code(code)]
 
 
 def build_cache_rows(spot_df: Any, old_cache: Any) -> Any:
@@ -1088,6 +1275,10 @@ def main() -> None:
             print("快速行情模式已包含 PE/PB 等字段，跳过额外估值补抓。", flush=True)
         else:
             output = merge_valuation_fields(output, fetch_valuation_pages())
+        output = merge_valuation_fields(output, fetch_tencent_quote_fields(output["代码"].tolist()))
+        missing_amplitude = missing_numeric_codes(output, "振幅")
+        if missing_amplitude:
+            output = merge_valuation_fields(output, fetch_baidu_kline_fields(missing_amplitude))
     except Exception as exc:  # noqa: BLE001
         print(f"处理行情数据出错：{exc}", flush=True)
         return
