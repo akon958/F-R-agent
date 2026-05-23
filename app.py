@@ -1113,22 +1113,6 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
             font-weight: 700;
             font-size: 1.35rem;
         }}
-        .spark-card {{
-            height: 100%;
-            min-height: 245px;
-            border-radius: 14px;
-            background: var(--bg-2);
-            padding: 1.2rem;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-        }}
-        .spark-svg {{
-            width: 100%;
-            height: 120px;
-            margin: 1rem 0;
-        }}
-
         .verdict-card {{
             display: grid;
             grid-template-columns: 1fr auto;
@@ -2350,12 +2334,26 @@ def agent_intake_block() -> None:
         risk_default = "平衡"
     if st.session_state.get("agent_intake_risk_profile") not in RISK_PROFILE_OPTIONS:
         st.session_state["agent_intake_risk_profile"] = risk_default
-    risk_profile = st.selectbox(
-        "风险偏好识别结果（可以改）",
-        RISK_PROFILE_OPTIONS,
-        index=RISK_PROFILE_OPTIONS.index(st.session_state.get("agent_intake_risk_profile", risk_default)),
-        key="agent_intake_risk_profile",
-    )
+    st.markdown('<div class="fr-field-label">风险偏好识别结果（可以改）</div>', unsafe_allow_html=True)
+    if hasattr(st, "segmented_control"):
+        _seg = st.segmented_control(
+            "风险偏好",
+            options=RISK_PROFILE_OPTIONS,
+            key="agent_intake_risk_profile",
+            label_visibility="collapsed",
+        )
+        # segmented_control 在用户主动取消选择时会返回 None，此时回退到 session_state 里上一次的值
+        risk_profile = str(_seg) if _seg else str(
+            st.session_state.get("agent_intake_risk_profile") or risk_default
+        )
+    else:
+        risk_profile = str(st.selectbox(
+            "风险偏好识别结果（可以改）",
+            RISK_PROFILE_OPTIONS,
+            index=RISK_PROFILE_OPTIONS.index(st.session_state.get("agent_intake_risk_profile", risk_default)),
+            key="agent_intake_risk_profile",
+            label_visibility="collapsed",
+        ) or risk_default)
     st.caption(RISK_PROFILE_HINTS.get(risk_profile, ""))
 
     st.markdown("**关键追问**")
@@ -2525,7 +2523,7 @@ def portfolio_form(show_nl: bool = True) -> None:
             st.session_state.holding_rows += 1
             st.rerun()
 
-    _cash_default = float(_nl_cash) if _nl_cash and _nl_cash > 0 else 50000.0
+    _cash_default = float(_nl_cash) if _nl_cash and _nl_cash > 0 else 0.0
     cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=_cash_default, step=1000.0)
     current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
     if current_risk not in RISK_PROFILE_OPTIONS:
@@ -2917,26 +2915,6 @@ def first_stock() -> dict[str, Any]:
     return {}
 
 
-def spark_svg(change: float | None, score: int) -> str:
-    base = 54
-    points = []
-    for idx in range(12):
-        direction = 1 if (change or 0) >= 0 else -1
-        wobble = ((idx * 7 + score) % 13) - 6
-        y = base - direction * idx * 2.3 + wobble * 0.9
-        x = 8 + idx * 20
-        points.append((x, max(18, min(94, y))))
-    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
-    area = f"8,108 {line} 228,108"
-    cls = "var(--up)" if (change or 0) >= 0 else "var(--down)"
-    return f"""
-    <svg class="spark-svg" viewBox="0 0 236 120" role="img" aria-label="近 30 日走势">
-        <polygon points="{area}" fill="{cls}" opacity="0.10"></polygon>
-        <polyline points="{line}" fill="none" stroke="{cls}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
-    </svg>
-    """
-
-
 def score_dial(score: int, ring_color: str = "var(--accent)") -> str:
     radius = 52
     circumference = 2 * pi * radius
@@ -3042,13 +3020,6 @@ def stock_header(analysis: dict[str, Any]) -> None:
                     <div class="kv"><dt>市净率 PB</dt><dd>{fmt_optional(stock_field(stock, "pb"), default="估值数据暂缺")}</dd></div>
                     <div class="kv"><dt>更新时间</dt><dd>{html_escape(stock_field(stock, "updated_at") or "暂无")}</dd></div>
                 </dl>
-            </div>
-            <div class="spark-card">
-                <div>
-                    <div class="kicker">近 30 日走势</div>
-                    {spark_svg(change, int(analysis["score"]))}
-                </div>
-                <div class="muted">30 日走势仅作视觉提示 · 1 年数据待后端补充</div>
             </div>
         </section>
         """
@@ -4670,7 +4641,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             f'padding:0.1rem 0;">{html_escape(c)}</span>'
             for c in (_delta.get("changes") or [])
         )
-        with st.expander(f"与上次体检相比（{_dlabel}）", expanded=(_dlevel == "warning")):
+        with st.expander(f"综合评分变化：{_dlabel}", expanded=(_dlevel == "warning")):
             render_html(
                 f"""
                 <div style="margin:0 0 0.4rem;padding:0.5rem 0.85rem;
@@ -5364,12 +5335,22 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
                 st.session_state["guided_step"] = 1
                 st.rerun()
         with _cb:
-            if st.button("返回填仓页面", use_container_width=True, key="gw_go_home"):
+            if st.button("返回体检结果", use_container_width=True, key="gw_go_home"):
                 _clear_wizard()
-                st.session_state.pop("analysis", None)
-                st.session_state.pop("stocks", None)
-                st.session_state.pop("fetch_warnings", None)
+                st.session_state["active_view"] = "analysis"
                 st.rerun()
+        # 第三选项：清除本次体检数据，回到填仓页面（用户主动选择才会清空）
+        if st.button(
+            "重新填写持仓（清除本次结果）",
+            use_container_width=True,
+            type="secondary",
+            key="gw_restart",
+        ):
+            _clear_wizard()
+            st.session_state.pop("analysis", None)
+            st.session_state.pop("stocks", None)
+            st.session_state.pop("fetch_warnings", None)
+            st.rerun()
     else:
         # ── 单屏表单 ──────────────────────────────────────────────
         render_html(
@@ -5493,10 +5474,6 @@ def analysis_page() -> None:
         return
     if _active == "guided_comment":
         guided_comment_page(agent_result)
-        render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
-        return
-    if _active == "records":
-        followup_page(agent_result)
         render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
         return
     if _active == "ai_report":

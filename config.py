@@ -8,8 +8,8 @@ FIXED_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不
 HOME_DISCLAIMER = FIXED_DISCLAIMER
 REPORT_DISCLAIMER = "本报告由 AI 综合生成，仅供学习参考，不构成投资建议。投资有风险，决策需谨慎。"
 
-DEFAULT_CODES = ["600519", "000001", "300750"]
-DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
+DEFAULT_CODES: list[str] = []
+DEFAULT_AMOUNTS: list[float] = []
 
 DEFAULT_REPORT_MODE = "标准版"
 REPORT_MODES = ["标准版", "简洁版", "详细版"]
