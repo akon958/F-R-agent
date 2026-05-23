@@ -88,6 +88,40 @@ def render_html(html: str) -> None:
         st.markdown(html, unsafe_allow_html=True)
 
 
+def _navigate_to(view: str) -> None:
+    st.session_state["active_view"] = view
+    st.rerun()
+
+
+def render_subpage_nav(
+    *,
+    back_label: str,
+    back_view: str,
+    crumbs: list[tuple[str, str | None]],
+    key_prefix: str,
+) -> None:
+    if st.button(back_label, use_container_width=True, key=f"{key_prefix}_back"):
+        _navigate_to(back_view)
+
+    crumb_targets = [(label, view) for label, view in crumbs[:-1] if view]
+    if crumb_targets:
+        crumb_cols = st.columns(len(crumb_targets))
+        for idx, (label, view) in enumerate(crumb_targets):
+            with crumb_cols[idx]:
+                if st.button(
+                    label,
+                    use_container_width=True,
+                    key=f"{key_prefix}_crumb_{idx}",
+                ):
+                    _navigate_to(view)
+
+    crumb_text = " › ".join(label for label, _ in crumbs)
+    render_html(
+        f'<p style="font-size:0.72rem;color:var(--text-3);margin:0.35rem 0 0.6rem;">'
+        f"{html_escape(crumb_text)}</p>"
+    )
+
+
 def init_state() -> None:
     defaults = {
         "holding_rows": 2,
@@ -5494,6 +5528,257 @@ def analysis_page() -> None:
         return
     agent_result_block(agent_result)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
+
+
+_legacy_guided_comment_page = guided_comment_page
+
+
+def comments_page(agent_result: dict[str, Any]) -> None:
+    """家庭观察记录专属子页。"""
+    render_subpage_nav(
+        back_label="← 返回追问",
+        back_view="followup",
+        crumbs=[
+            ("体检结论", "analysis"),
+            ("AI 风险说明", "ai_report"),
+            ("AI 追问", "followup"),
+            ("记录家人看法", None),
+        ],
+        key_prefix="comments_nav",
+    )
+    run_id = str(
+        st.session_state.get("_comments_run_id", "")
+        or (agent_result.get("run_id", "") if agent_result else "")
+    )
+    discussion_block(run_id=run_id)
+
+
+def ai_report_page(agent_result: dict[str, Any]) -> None:
+    """第 2 步：AI 风险说明页。"""
+    agent_context = agent_result.get("agent_context", {}) if agent_result else {}
+
+    render_subpage_nav(
+        back_label="← 返回体检结论",
+        back_view="analysis",
+        crumbs=[
+            ("体检结论", "analysis"),
+            ("AI 风险说明", None),
+        ],
+        key_prefix="ai_report_nav",
+    )
+
+    if not agent_result:
+        st.info("请先完成一次一键智能体检，再查看 AI 风险说明。")
+        return
+
+    render_html(
+        """
+        <div style="padding:0.1rem 0 0.8rem;">
+            <h2 style="font-size:1.2rem;font-weight:700;color:var(--text);margin:0 0 0.12rem;">
+                本次 AI 风险说明
+            </h2>
+            <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
+                基于本次体检数据生成，不构成买卖建议。
+            </p>
+        </div>
+        """
+    )
+
+    mode = st.radio(
+        "报告模式",
+        options=REPORT_MODES,
+        horizontal=True,
+        key="report_mode",
+    )
+    display_report = str(agent_result.get("ai_report", "") or "暂无风险说明。")
+    report_source = str(agent_result.get("report_source", "local_fallback") or "local_fallback")
+    cached_mode = str(agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE)
+    if agent_context and mode != cached_mode:
+        with st.spinner("正在按新的报告模式生成说明..."):
+            report_text, report_source, dinner_talk = _unpack_agent_report(
+                generate_agent_report(agent_context, mode)
+            )
+        display_report = report_text
+        agent_result["ai_report"] = display_report
+        agent_result["dinner_talk"] = dinner_talk
+        agent_result["report_source"] = report_source
+        agent_result["report_mode"] = mode
+        agent_context["ai_report"] = display_report
+        agent_context["dinner_talk"] = dinner_talk
+        agent_context["report_source"] = report_source
+        agent_context["report_mode"] = mode
+        agent_result["agent_context"] = agent_context
+        st.session_state["agent_result"] = agent_result
+    st.caption(f"报告来源：{_report_source_label(report_source)}")
+
+    try:
+        _export_text = export_text_report(agent_result)
+        _export_col1, _export_col2 = st.columns([3, 1])
+        with _export_col2:
+            st.download_button(
+                "⬇ 下载报告",
+                data=_export_text.encode("utf-8"),
+                file_name="family_risk_report.txt",
+                mime="text/plain",
+                use_container_width=True,
+                help="下载本次体检完整报告（纯文本格式，可发给家人）。",
+                key="export_report_btn",
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    render_html('<div class="card" style="padding:1.4rem;margin-top:0.6rem;">')
+    st.markdown(display_report)
+    render_html("</div>")
+
+    if st.button("读完了，继续问 AI →", use_container_width=True, key="goto_followup_from_report", type="primary"):
+        _navigate_to("followup")
+
+
+def followup_page(agent_result: dict[str, Any]) -> None:
+    agent_context = agent_result.get("agent_context", {}) if agent_result else {}
+
+    render_subpage_nav(
+        back_label="← 返回 AI 风险说明",
+        back_view="ai_report",
+        crumbs=[
+            ("体检结论", "analysis"),
+            ("AI 风险说明", "ai_report"),
+            ("AI 追问", None),
+        ],
+        key_prefix="followup_nav",
+    )
+
+    if not agent_context:
+        st.info("请先完成一次一键智能体检，再继续追问。")
+        return
+
+    _fup_mode = agent_result.get("report_mode", DEFAULT_REPORT_MODE) or DEFAULT_REPORT_MODE
+    reverse_qa_block(agent_result, agent_context, _fup_mode)
+    followup_block(agent_context)
+
+    _fup_answers = list(st.session_state.get("followup_answers", []))
+    _has_followup = bool(_fup_answers)
+    _fup_ans_n = len(_fup_answers)
+    _fup_run_id = str(agent_result.get("run_id", "") if agent_result else "")
+    _cta_label = (
+        f"完成追问（{_fup_ans_n} 条），记录家人看法 →"
+        if _has_followup
+        else "不追问了，直接记录家人看法 →"
+    )
+    render_html(
+        '<div style="margin:1rem 0 0.45rem;color:var(--text-3);font-size:0.8rem;">'
+        '下一步会用 30 秒记录家人的关注点，方便以后对比家庭看法变化。</div>'
+    )
+    if st.button(
+        _cta_label,
+        use_container_width=True,
+        key="fup_to_guided_comment",
+        type="primary",
+    ):
+        st.session_state["_guided_run_id"] = _fup_run_id
+        for _k in (
+            "guided_step",
+            "guided_member",
+            "guided_focus",
+            "guided_focus_label",
+            "guided_stance",
+            "guided_stance_label",
+            "guided_text",
+            "guided_save_result",
+        ):
+            st.session_state.pop(_k, None)
+        st.session_state["guided_step"] = 1
+        _navigate_to("guided_comment")
+    with st.expander("追问历史保存情况", expanded=False):
+        latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
+        backend = latest_status.get("backend", "local_csv")
+        backend_label = "Supabase 云数据库" if backend == "supabase" else "本地 CSV"
+        saved_label = "已保存" if latest_status.get("saved") else "未保存"
+        st.write(f"- 最近一次保存状态：{saved_label}")
+        st.write(f"- 保存位置：{backend_label}")
+        if latest_status.get("error"):
+            st.write(f"- 保存说明：{latest_status.get('error')}")
+        try:
+            recent = load_recent_followup_history(limit=5)
+        except Exception:  # noqa: BLE001
+            recent = []
+        st.write(f"- 最近读取到的追问记录数量：{len(recent)}")
+        if recent:
+            st.caption("最近保存的追问：")
+        for row in recent[:3]:
+            created_at = format_datetime_for_display(row.get("created_at"))
+            st.write(f"- {created_at}｜{row.get('question', '')}")
+
+
+def history_page(agent_result: dict[str, Any]) -> None:
+    render_subpage_nav(
+        back_label="← 返回体检结论",
+        back_view="analysis",
+        crumbs=[
+            ("体检结论", "analysis"),
+            ("历史", None),
+        ],
+        key_prefix="history_nav",
+    )
+    render_html(
+        """
+        <div style="padding:0.25rem 0 0.85rem;">
+            <h2 style="font-size:1.2rem;font-weight:700;color:var(--text);margin:0 0 0.12rem;">
+                历史体检
+            </h2>
+            <p style="font-size:0.82rem;color:var(--text-3);margin:0;">
+                回看最近记录、评分变化和仍需关注的风险点。
+            </p>
+        </div>
+        """
+    )
+    history_replay_block(agent_result)
+    history_records_block()
+
+
+def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
+    """结果页仅保留 agent_result_block 内的单一 Next 入口，避免重复卡片。"""
+    return
+
+
+def guided_comment_page(agent_result: dict[str, Any]) -> None:
+    def _clear_wizard() -> None:
+        for _k in (
+            "guided_step",
+            "guided_member",
+            "guided_focus",
+            "guided_focus_label",
+            "guided_stance",
+            "guided_stance_label",
+            "guided_text",
+            "guided_save_result",
+            "gw_extra_text",
+        ):
+            st.session_state.pop(_k, None)
+
+    if st.button("← 返回 AI 追问", use_container_width=True, key="guided_nav_back"):
+        _clear_wizard()
+        _navigate_to("followup")
+
+    crumb_cols = st.columns(3)
+    for idx, (label, view) in enumerate(
+        [
+            ("体检结论", "analysis"),
+            ("AI 风险说明", "ai_report"),
+            ("AI 追问", "followup"),
+        ]
+    ):
+        with crumb_cols[idx]:
+            if st.button(label, use_container_width=True, key=f"guided_nav_crumb_{idx}"):
+                _clear_wizard()
+                _navigate_to(view)
+
+    render_html(
+        '<p style="font-size:0.72rem;color:var(--text-3);margin:0.35rem 0 0.6rem;">'
+        '体检结论 › AI 风险说明 › AI 追问 › 记录家人看法</p>'
+    )
+    _legacy_guided_comment_page(agent_result)
 
 
 init_state()
