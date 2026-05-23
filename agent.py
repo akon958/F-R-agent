@@ -12,10 +12,17 @@ from analyzer import (
     analyze_portfolio,
     assess_data_confidence,
     build_risk_factor_breakdown,
-    compute_intention_action_gap,
     detect_family_disagreement,
     detect_intent_action_gap,
 )
+try:
+    from analyzer import compute_intention_action_gap
+except ImportError:
+    def compute_intention_action_gap(  # type: ignore[misc]
+        history_records: list,
+        current_summary: dict,
+    ) -> list:
+        return []
 from config import DEFAULT_REPORT_MODE, FIXED_DISCLAIMER
 try:
     from ai_report import generate_agent_report  # type: ignore
