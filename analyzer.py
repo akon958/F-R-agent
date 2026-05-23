@@ -506,6 +506,78 @@ def detect_intent_action_gap(
     return {"has_gap": True, "gaps": gaps, "summary": summary}
 
 
+def compute_intention_action_gap(
+    history_records: list[dict[str, Any]],
+    current_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """比对历史关注项（集中度/现金）与当前指标，返回≤2条言行差距。"""
+    if not history_records:
+        return []
+
+    cur_cash = float(current_summary.get("cash_ratio") or 0)
+    cur_single = float(current_summary.get("max_single_ratio") or 0)
+    prev_cash = float(history_records[0].get("cash_ratio") or 0)
+    prev_single = float(history_records[0].get("max_position_ratio") or 0)
+
+    _TRACKED = {"cash", "concentration"}
+    tracked: dict[str, dict[str, Any]] = {}
+
+    def _get_tasks(rec: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = rec.get("watch_tasks")
+        if not raw:
+            full = rec.get("full_agent_result")
+            if isinstance(full, str):
+                try:
+                    full = json.loads(full)
+                except Exception:  # noqa: BLE001
+                    full = {}
+            if isinstance(full, dict):
+                raw = full.get("watch_tasks")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                raw = []
+        if not isinstance(raw, list):
+            return []
+        return [t for t in raw if isinstance(t, dict)]
+
+    for rec in reversed(history_records):  # oldest → newest
+        for task in _get_tasks(rec):
+            cat = str(task.get("category") or "")
+            if cat not in _TRACKED:
+                continue
+            title = str(task.get("title") or cat)
+            if cat not in tracked:
+                tracked[cat] = {"times_flagged": 1, "task_title": title}
+            else:
+                tracked[cat]["times_flagged"] += 1
+                tracked[cat]["task_title"] = title
+
+    gaps: list[dict[str, Any]] = []
+    if "cash" in tracked:
+        info = tracked["cash"]
+        gaps.append({
+            "metric": "cash",
+            "task_title": info["task_title"],
+            "times_flagged": info["times_flagged"],
+            "first_value": prev_cash,
+            "latest_value": cur_cash,
+            "moved_against_intention": (prev_cash - cur_cash) > 0.005,
+        })
+    if "concentration" in tracked:
+        info = tracked["concentration"]
+        gaps.append({
+            "metric": "concentration",
+            "task_title": info["task_title"],
+            "times_flagged": info["times_flagged"],
+            "first_value": prev_single,
+            "latest_value": cur_single,
+            "moved_against_intention": (cur_single - prev_single) > 0.005,
+        })
+    return gaps[:2]
+
+
 def assess_data_confidence(
     analysis: dict[str, Any],
     missing_data: dict[str, list[str]],

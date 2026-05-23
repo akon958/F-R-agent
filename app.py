@@ -2586,7 +2586,12 @@ def clean_holdings(raw_rows: list[dict[str, float | str]]) -> list[dict[str, flo
     holdings: list[dict[str, float | str]] = []
     for row in raw_rows:
         # resolve_code_or_name handles both numeric codes and Chinese stock names
-        code = resolve_code_or_name(str(row.get("code", "")))
+        label = str(row.get("code", "")).strip()
+        code = resolve_code_or_name(label)
+        # If name lookup fails but we have a non-empty label (e.g. unlisted stock),
+        # keep the label as-is — agent's missing_data path handles it gracefully.
+        if not code and label:
+            code = label
         amount = float(row.get("amount", 0) or 0)
         if code and amount > 0:
             holdings.append({"code": code, "amount": amount})
