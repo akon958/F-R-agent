@@ -12,6 +12,7 @@ from analyzer import (
     analyze_portfolio,
     assess_data_confidence,
     build_risk_factor_breakdown,
+    compute_intention_action_gap,
     detect_family_disagreement,
     detect_intent_action_gap,
 )
@@ -274,11 +275,11 @@ def _review_previous_watch_tasks(
 ) -> dict[str, Any]:
     """Review prior watch tasks against this run. No external calls."""
     if not history_records:
-        return {"has_review": False, "items": [], "summary": ""}
+        return {"has_review": False, "items": [], "summary": "", "is_first_run": True, "gaps": []}
 
     previous_tasks = _extract_watch_tasks_from_record(history_records[0])
     if not previous_tasks:
-        return {"has_review": False, "items": [], "summary": ""}
+        return {"has_review": False, "items": [], "summary": "", "is_first_run": False, "gaps": []}
 
     cash_ratio = float(portfolio_summary.get("cash_ratio", 0) or 0)
     max_single = float(portfolio_summary.get("max_single_ratio", 0) or 0)
@@ -330,7 +331,7 @@ def _review_previous_watch_tasks(
         summary = f"上次提醒的 {open_n} 项仍适合继续观察。"
     else:
         summary = "上次观察任务本次基本已改善。"
-    return {"has_review": True, "items": items, "summary": summary}
+    return {"has_review": True, "items": items, "summary": summary, "is_first_run": False, "gaps": []}
 
 
 def _generate_watch_tasks(
@@ -1056,6 +1057,7 @@ def run_family_risk_agent(
         missing_data=missing_data,
         analysis=analysis,
     )
+    task_review["gaps"] = compute_intention_action_gap(history_records, portfolio_summary)
     agent_context["risk_factors"] = risk_factors
     agent_context["task_review"] = task_review
     agent_context["data_confidence"] = {

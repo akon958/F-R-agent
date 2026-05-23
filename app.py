@@ -3233,11 +3233,31 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
     )
     conf_text = str(confidence.get("summary") or "")
     review_text = str(task_review.get("summary") or "")
-    review_html = (
-        f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.35rem 0 0;">'
-        f'上次任务回看：{html_escape(review_text)}</p>'
-        if review_text else ""
-    )
+    _is_first_run = bool(task_review.get("is_first_run"))
+    _gaps = [g for g in (task_review.get("gaps") or []) if isinstance(g, dict)]
+    _moved = [g for g in _gaps if g.get("moved_against_intention")]
+    if _is_first_run:
+        review_html = '<p style="font-size:0.74rem;color:var(--text-3);margin:0.35rem 0 0;">首次体检，下次开始可以看任务回看。</p>'
+    elif _moved:
+        _metric_labels: dict[str, str] = {"cash": "现金比例", "concentration": "最大持仓"}
+        _lines = []
+        for _g in _moved[:2]:
+            _mlabel = _metric_labels.get(str(_g.get("metric") or ""), str(_g.get("metric") or ""))
+            _times = int(_g.get("times_flagged") or 1)
+            _prev = f"{float(_g.get('first_value') or 0):.0%}"
+            _cur = f"{float(_g.get('latest_value') or 0):.0%}"
+            _lines.append(
+                f'<li style="font-size:0.74rem;color:var(--text-3);margin:0.15rem 0;">'
+                f'上次已提醒{html_escape(_mlabel)}（共{_times}次），从{_prev}变为{_cur}，与关注方向相反。</li>'
+            )
+        review_html = '<ul style="margin:0.35rem 0 0;padding-left:1.1rem;">' + "".join(_lines) + "</ul>"
+    elif review_text:
+        review_html = (
+            f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.35rem 0 0;">'
+            f'上次任务回看：{html_escape(review_text)}</p>'
+        )
+    else:
+        review_html = ""
     render_html(
         f"""
         <section style="margin:0 0 0.55rem;border:1.5px solid var(--border);
@@ -5223,7 +5243,7 @@ def next_steps_entry_block(agent_result: dict[str, Any]) -> None:
 
 
 def guided_comment_page(agent_result: dict[str, Any]) -> None:
-    """向导式家庭看法记录 — 分步引导（共 3 步 + 完成确认）。"""
+    """单屏家庭看法记录（≤5 次交互）。"""
     step = int(st.session_state.get("guided_step", 1))
     run_id = str(
         st.session_state.get("_guided_run_id", "")
@@ -5238,148 +5258,17 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
         ):
             st.session_state.pop(_k, None)
 
-    # ── 返回按钮（步骤 1~3 可以返回） ──────────────────────────
-    if step < 4:
-        if st.button("← 返回 AI 追问", key="guided_back_btn"):
-            _clear_wizard()
-            st.session_state["active_view"] = "followup"
-            st.rerun()
-        render_html(
-            '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.3rem;">'
-            '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问 &rsaquo; 记录家人看法</p>'
-        )
+    if st.button("← 返回 AI 追问", key="guided_back_btn"):
+        _clear_wizard()
+        st.session_state["active_view"] = "followup"
+        st.rerun()
+    render_html(
+        '<p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.3rem;">'
+        '体检结论 &rsaquo; AI 风险说明 &rsaquo; AI 追问 &rsaquo; 记录家人看法</p>'
+    )
 
-    # ── 进度指示器（步骤 1~3）──────────────────────────────────
-    if step <= 3:
-        _step_labels = ["谁来记录", "关注什么", "整体倾向"]
-        _chips = ""
-        for _i, _lbl in enumerate(_step_labels):
-            _is_active = (_i + 1 == step)
-            _bg    = "#7a3e2e" if _is_active else "#ece5e1"
-            _color = "#fff"    if _is_active else "#9e8070"
-            _fw    = "700"     if _is_active else "500"
-            _chips += (
-                '<span style="display:inline-block;padding:0.22rem 0.72rem;'
-                'border-radius:20px;font-size:0.72rem;font-weight:' + _fw + ';'
-                'background:' + _bg + ';color:' + _color + ';margin:0 0.15rem;">'
-                + html_escape(_lbl) + '</span>'
-            )
-        render_html('<div style="margin:0.3rem 0 1.1rem;">' + _chips + '</div>')
-
-    # ── 步骤 1：谁来记录 ────────────────────────────────────────
-    if step == 1:
-        render_html(
-            '<p style="font-size:1.05rem;font-weight:700;color:var(--text);'
-            'margin:0 0 0.85rem;">这次是谁来记录看法？</p>'
-        )
-        _c1, _c2 = st.columns(2)
-        for _i, _opt in enumerate(_GW_MEMBER_OPTIONS):
-            with (_c1 if _i % 2 == 0 else _c2):
-                if st.button(_opt, use_container_width=True, key=f"gw_m_{_i}"):
-                    st.session_state["guided_member"] = _opt
-                    st.session_state["guided_step"] = 2
-                    st.rerun()
-        render_html(
-            '<p style="font-size:0.82rem;color:var(--text-3);margin:0.75rem 0 0.3rem;">或者自填：</p>'
-        )
-        _custom = st.text_input(
-            "自填成员",
-            placeholder="例如：奶奶、全家讨论…",
-            key="gw_member_custom_input",
-            label_visibility="collapsed",
-        )
-        if st.button("确认并下一步 →", use_container_width=True, key="gw_m_custom_confirm"):
-            st.session_state["guided_member"] = (_custom.strip() or "其他")
-            st.session_state["guided_step"] = 2
-            st.rerun()
-
-    # ── 步骤 2：关注什么 ────────────────────────────────────────
-    elif step == 2:
-        _member = html_escape(str(st.session_state.get("guided_member", "") or ""))
-        render_html(
-            '<p style="font-size:1.05rem;font-weight:700;color:var(--text);'
-            'margin:0 0 0.85rem;">' + _member + ' 最关注哪一块？</p>'
-        )
-        _c1, _c2 = st.columns(2)
-        for _i, (_lbl, _val) in enumerate(_GW_FOCUS_OPTIONS):
-            with (_c1 if _i % 2 == 0 else _c2):
-                if st.button(_lbl, use_container_width=True, key=f"gw_f_{_i}"):
-                    st.session_state["guided_focus"] = _val
-                    st.session_state["guided_focus_label"] = _lbl
-                    st.session_state["guided_step"] = 3
-                    st.rerun()
-
-    # ── 步骤 3：整体倾向 → 可选文字 → 保存 ─────────────────────
-    elif step == 3:
-        _member      = html_escape(str(st.session_state.get("guided_member", "") or ""))
-        _focus_label = html_escape(str(st.session_state.get("guided_focus_label", "") or ""))
-        _stance_set  = bool(st.session_state.get("guided_stance"))
-
-        if not _stance_set:
-            # 3a：选择立场
-            render_html(
-                '<p style="font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 0.85rem;">'
-                + _member
-                + ' 对<span style="color:#7a3e2e;"> '
-                + _focus_label
-                + '</span> 的整体倾向是？</p>'
-            )
-            _sc1, _sc2, _sc3 = st.columns(3)
-            for _i, (_lbl, _val) in enumerate(_GW_STANCE_OPTIONS):
-                with [_sc1, _sc2, _sc3][_i]:
-                    if st.button(_lbl, use_container_width=True, key=f"gw_s_{_i}"):
-                        st.session_state["guided_stance"] = _val
-                        st.session_state["guided_stance_label"] = _lbl
-                        st.rerun()
-        else:
-            # 3b：立场已选，补充文字 + 保存
-            _stance_label = html_escape(str(st.session_state.get("guided_stance_label", "") or ""))
-            render_html(
-                '<div style="background:#fff9f6;border:1.5px solid #e8c4b2;'
-                'border-radius:12px;padding:0.85rem 1rem;margin-bottom:0.85rem;">'
-                '<p style="font-size:0.75rem;color:var(--text-3);margin:0 0 0.35rem;">已选择</p>'
-                '<p style="font-size:0.97rem;font-weight:600;color:var(--text);margin:0;">'
-                + _member + '&nbsp;·&nbsp;' + _focus_label + '&nbsp;·&nbsp;' + _stance_label
-                + '</p></div>'
-                '<p style="font-size:0.88rem;color:var(--text-3);margin:0 0 0.4rem;">'
-                '还有什么想补充的吗？（选填）</p>'
-            )
-            st.text_area(
-                "补充说明",
-                placeholder="例如：觉得现金再多一点会更安心…",
-                height=90,
-                key="gw_extra_text",
-                label_visibility="collapsed",
-            )
-            st.caption("记录仅供家庭参考，不作为任何操作建议。")
-            if st.button("保存这条记录 ✓", use_container_width=True, key="gw_save_btn"):
-                _text_val = str(st.session_state.get("gw_extra_text", "") or "").strip()
-                st.session_state["guided_text"] = _text_val
-                _comment: dict[str, Any] = {
-                    "member":       str(st.session_state.get("guided_member", "") or ""),
-                    "comment_type": "观察",
-                    "focus":        str(st.session_state.get("guided_focus", "other") or "other"),
-                    "stance":       str(st.session_state.get("guided_stance", "neutral") or "neutral"),
-                    "content":      _text_val,
-                    "run_id":       run_id,
-                }
-                try:
-                    _save_res = save_family_comment(_comment)
-                    st.session_state["guided_save_result"] = _save_res
-                    st.session_state["family_comment_last_save"] = get_last_family_comment_save_status()
-                    st.session_state.pop("family_comments_cache", None)
-                    st.session_state.pop("family_comments", None)
-                except Exception as _exc:  # noqa: BLE001
-                    st.session_state["guided_save_result"] = {
-                        "success": False,
-                        "backend": "local_csv",
-                        "error":   str(_exc)[:80],
-                    }
-                st.session_state["guided_step"] = 4
-                st.rerun()
-
-    # ── 步骤 4：完成确认 ────────────────────────────────────────
-    elif step == 4:
+    # ── 步骤 4：完成确认（保留） ────────────────────────────────
+    if step == 4:
         _save_result  = dict(st.session_state.get("guided_save_result") or {})
         _member_raw   = str(st.session_state.get("guided_member", "") or "")
         _focus_raw    = str(st.session_state.get("guided_focus_label", "") or "")
@@ -5427,6 +5316,58 @@ def guided_comment_page(agent_result: dict[str, Any]) -> None:
                 st.session_state.pop("stocks", None)
                 st.session_state.pop("fetch_warnings", None)
                 st.rerun()
+    else:
+        # ── 单屏表单 ──────────────────────────────────────────────
+        render_html(
+            '<p style="font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 0.85rem;">'
+            '记录一条家人看法</p>'
+        )
+        _focus_labels = [lbl for lbl, _ in _GW_FOCUS_OPTIONS]
+        _stance_labels = [lbl for lbl, _ in _GW_STANCE_OPTIONS]
+        _member_sel = st.selectbox("谁来记录", options=_GW_MEMBER_OPTIONS + ["其他"], key="gw_sb_member")
+        _focus_sel = st.selectbox("关注哪一块", options=_focus_labels, key="gw_sb_focus")
+        _stance_sel = st.selectbox("整体倾向", options=_stance_labels, key="gw_sb_stance")
+        _extra = st.text_area(
+            "补充说明（选填）",
+            placeholder="例如：觉得现金再多一点会更安心…",
+            height=80,
+            key="gw_sb_extra",
+        )
+        st.caption("记录仅供家庭参考，不作为任何操作建议。")
+        if st.button("保存这条记录 ✓", use_container_width=True, key="gw_save_btn"):
+            _focus_val = dict(_GW_FOCUS_OPTIONS).get(_focus_sel, "other")
+            _stance_val = dict(_GW_STANCE_OPTIONS).get(_stance_sel, "neutral")
+            _text_val = str(_extra or "").strip()
+            if not _text_val:
+                _text_val = f"{_member_sel} 在「{_focus_sel}」方向偏 {_stance_sel}"
+            st.session_state["guided_member"] = _member_sel
+            st.session_state["guided_focus"] = _focus_val
+            st.session_state["guided_focus_label"] = _focus_sel
+            st.session_state["guided_stance"] = _stance_val
+            st.session_state["guided_stance_label"] = _stance_sel
+            st.session_state["guided_text"] = _text_val
+            _comment: dict[str, Any] = {
+                "member":       _member_sel,
+                "comment_type": "观察",
+                "focus":        _focus_val,
+                "stance":       _stance_val,
+                "content":      _text_val,
+                "run_id":       run_id,
+            }
+            try:
+                _save_res = save_family_comment(_comment)
+                st.session_state["guided_save_result"] = _save_res
+                st.session_state["family_comment_last_save"] = get_last_family_comment_save_status()
+                st.session_state.pop("family_comments_cache", None)
+                st.session_state.pop("family_comments", None)
+            except Exception as _exc:  # noqa: BLE001
+                st.session_state["guided_save_result"] = {
+                    "success": False,
+                    "backend": "local_csv",
+                    "error":   str(_exc)[:80],
+                }
+            st.session_state["guided_step"] = 4
+            st.rerun()
 
 
 def records_hub_page(agent_result: dict[str, Any]) -> None:
