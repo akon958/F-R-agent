@@ -659,6 +659,7 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "recent_followups",
         "watch_tasks",
         "task_review",
+        "data_confidence",
     ]
     context = {key: agent_context.get(key) for key in allowed_keys}
 
@@ -902,6 +903,7 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 11. 如果 task_review.has_review=true，请用一句话说明上次观察任务这次有没有改善；如果没有，不要硬造历史。
 12. 如果 watch_tasks 有内容，可以把它们理解为"后续观察重点"，但不能写成交易动作。
 13. {reverse_rule}
+14. 如果 agent_context 里有 data_confidence，【数据缺失说明】段落必须严格依据 data_confidence.summary 的措辞写数据质量结论，不能自己推断。如果 data_confidence.level_code 是 "medium" 或 "low"，绝对不能在报告里写"没有数据缺失"或"数据完整"。
 {_mode_rules}
 """.strip()
 

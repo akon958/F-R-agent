@@ -1058,6 +1058,11 @@ def run_family_risk_agent(
     )
     agent_context["risk_factors"] = risk_factors
     agent_context["task_review"] = task_review
+    agent_context["data_confidence"] = {
+        "level": data_confidence.get("level"),
+        "level_code": data_confidence.get("level_code"),
+        "summary": data_confidence.get("summary"),
+    }
     watch_tasks = _generate_watch_tasks(
         analysis=analysis,
         portfolio_summary=portfolio_summary,

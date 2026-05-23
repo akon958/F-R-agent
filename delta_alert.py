@@ -71,6 +71,10 @@ def compute_delta(
     prev_max   = _safe_float(prev.get("max_position_ratio"))
     position_change = cur_max - prev_max
 
+    # ── 股票/基金仓位 ──────────────────────────────────────────────
+    cur_stock  = _safe_float(portfolio.get("stock_ratio"))
+    prev_stock = _safe_float(prev.get("stock_ratio"))
+
     changes: list[str] = []
     level = "stable"
 
@@ -85,21 +89,37 @@ def compute_delta(
         changes.append(f"综合评分提升 {score_change} 分，整体有所改善")
         level = "improved"
 
-    # 现金比例变化阈值：±6%
-    if cash_change < -0.06:
-        changes.append(f"现金比例下降 {abs(cash_change) * 100:.0f}%，流动性收紧")
+    # 现金/集中度：先检测镜像（同一动作两面），再分开显示独立变化
+    _cash_fell = cash_change < -0.06
+    _pos_rose  = position_change > 0.06
+    _mirror    = (
+        _cash_fell and _pos_rose
+        and abs(abs(cash_change) - position_change) <= 0.05
+    )
+    if _mirror:
+        # 合并为一条：显示前后结构变化，避免同一动作重复计数
+        _merged = (
+            f"组合从 {prev_cash*100:.0f}% 现金 / {prev_stock*100:.0f}% 股票"
+            f" 变成 {cur_cash*100:.0f}% 现金 / {cur_stock*100:.0f}% 股票，集中度大幅上升"
+        )
+        changes.append(_merged)
         if level in ("stable", "improved"):
-            level = "caution"
-    elif cash_change > 0.06:
-        changes.append(f"现金比例提升 {cash_change * 100:.0f}%，流动性改善")
+            level = "warning" if abs(cash_change) >= 0.20 else "caution"
+    else:
+        # 非镜像：分开显示各自独立变化
+        if _cash_fell:
+            changes.append(f"现金比例下降 {abs(cash_change) * 100:.0f}%，流动性收紧")
+            if level in ("stable", "improved"):
+                level = "caution"
+        elif cash_change > 0.06:
+            changes.append(f"现金比例提升 {cash_change * 100:.0f}%，流动性改善")
 
-    # 集中度变化阈值：±6%
-    if position_change > 0.06:
-        changes.append(f"最大持仓占比上升 {position_change * 100:.0f}%，集中度加剧")
-        if level in ("stable", "improved"):
-            level = "caution"
-    elif position_change < -0.06:
-        changes.append(f"持仓集中度下降 {abs(position_change) * 100:.0f}%")
+        if _pos_rose:
+            changes.append(f"最大持仓占比上升 {position_change * 100:.0f}%，集中度加剧")
+            if level in ("stable", "improved"):
+                level = "caution"
+        elif position_change < -0.06:
+            changes.append(f"持仓集中度下降 {abs(position_change) * 100:.0f}%")
 
     if not changes:
         return {**_empty, "summary": "与上次体检相比无明显变化"}

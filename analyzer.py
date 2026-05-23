@@ -250,17 +250,31 @@ def build_risk_factor_breakdown(
     else:
         data_score, data_status, data_boost = 88, "数据可信度较高", 0
 
+    _is_extreme = max_single >= 0.95 or cash_ratio <= 0.05
+    if _is_extreme:
+        _extreme_factor = [_make_factor(
+            "极端集中", min(cash_score, single_score), 40,
+            "资产高度集中在单只标的，且现金缓冲极薄",
+            "单只占比是否继续升高，家里是否能承受极端波动",
+            f"极端集中：资产几乎全部在一只股票上，没有现金缓冲（单只 {max_single:.0%} / 现金 {cash_ratio:.0%}）",
+            f"单只 {max_single:.1%}，现金 {cash_ratio:.1%}。", boost=20,
+        )]
+    else:
+        _extreme_factor = [
+            _make_factor(
+                "现金缓冲", cash_score, 18, "家里短期用钱是否有余地",
+                "现金比例、半年内资金用途、家庭备用金是否够用",
+                cash_status, f"现金比例约 {cash_ratio:.1%}。", boost=8 if cash_ratio < 0.15 else 0,
+            ),
+            _make_factor(
+                "单只集中", single_score, 22, "钱是否过多集中在一只标的上",
+                "最大单只占比是否继续升高，波动时家里是否能接受",
+                single_status, f"最大单只占比约 {max_single:.1%}。", boost=12 if max_single >= 0.30 else 0,
+            ),
+        ]
+
     factors = [
-        _make_factor(
-            "现金缓冲", cash_score, 18, "家里短期用钱是否有余地",
-            "现金比例、半年内资金用途、家庭备用金是否够用",
-            cash_status, f"现金比例约 {cash_ratio:.1%}。", boost=8 if cash_ratio < 0.15 else 0,
-        ),
-        _make_factor(
-            "单只集中", single_score, 22, "钱是否过多集中在一只标的上",
-            "最大单只占比是否继续升高，波动时家里是否能接受",
-            single_status, f"最大单只占比约 {max_single:.1%}。", boost=12 if max_single >= 0.30 else 0,
-        ),
+        *_extreme_factor,
         _make_factor(
             "行业集中", industry_score, 12, "股票部分是否集中在同一行业",
             "行业政策、经营环境和家庭是否理解该行业波动",
@@ -1317,6 +1331,13 @@ def analyze_portfolio(
     if position_summary["max_single_ratio"] > 0.40:
         score_cap = min(score_cap, 79)
         cap_reasons.append("单只持仓超过 40%，即使公司不错也不能给绿色。")
+
+    if position_summary["max_single_ratio"] >= 0.95:
+        score_cap = min(score_cap, 15)
+        cap_reasons.append("单只持仓超过 95%，组合几乎等同于单只股票，综合评分上限 15。")
+    elif position_summary["max_single_ratio"] >= 0.80:
+        score_cap = min(score_cap, 25)
+        cap_reasons.append("单只持仓超过 80%，集中度极高，综合评分上限 25。")
 
     if position_summary["cash_ratio"] < 0.05:
         score_cap = min(score_cap, 79)
