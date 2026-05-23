@@ -3234,19 +3234,20 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
         )
     else:
         review_html = ""
+    # 外层 expander 标题已包含 "Agent 主动判断" 和数据可信度，此处不再重复显示
+    _conf_inline_html = (
+        f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.5rem 0 0;">'
+        f'{html_escape(conf_text)}</p>'
+    ) if conf_text else ""
     render_html(
         f"""
         <section style="margin:0 0 0.55rem;border:1.5px solid var(--border);
                         background:var(--surface);border-radius:14px;padding:0.8rem 0.9rem;">
-            <p style="font-size:0.72rem;color:var(--text-3);margin:0 0 0.18rem;">Agent 主动判断</p>
             <h3 style="font-size:1rem;color:var(--text);margin:0 0 0.55rem;">这次最该先看什么</h3>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
                 {chips}
             </div>
-            <p style="font-size:0.74rem;color:var(--text-3);margin:0.5rem 0 0;">
-                数据可信度：{html_escape(str(confidence.get("level") or "未知"))}
-                {(" · " + html_escape(conf_text)) if conf_text else ""}
-            </p>
+            {_conf_inline_html}
             {review_html}
         </section>
         """
