@@ -3319,11 +3319,75 @@ def task_review_block(agent_result: dict[str, Any]) -> None:
     )
 
 
+def _portfolio_fin_metrics(stock_results: list[dict]) -> dict[str, Any]:
+    """按持仓金额加权汇总财务指标。
+    PE / PB 用调和加权平均（行业标准，避免高值标的过度拉高）。
+    ROE / 净利率 / 毛利率 / 资产负债率 用算术加权平均。
+    任一指标在所有持仓中均缺失时返回 None，供调用方显示"暂缺"。
+    """
+    if not stock_results:
+        return {}
+
+    def _harm(key: str) -> float | None:
+        """调和加权平均：只纳入正值持仓。"""
+        pairs: list[tuple[float, float]] = []
+        for s in stock_results:
+            v = s.get(key)
+            w = float(s.get("amount") or 0)
+            if v is None or w <= 0:
+                continue
+            try:
+                fv = float(v)
+                if fv > 0:
+                    pairs.append((fv, w))
+            except (TypeError, ValueError):
+                pass
+        if not pairs:
+            return None
+        total_w = sum(w for _, w in pairs)
+        denom = sum(w / v for v, w in pairs)
+        return total_w / denom if denom > 0 else None
+
+    def _wt(key: str) -> float | None:
+        """算术加权平均：纳入有有效数值的持仓。"""
+        pairs: list[tuple[float, float]] = []
+        for s in stock_results:
+            v = s.get(key)
+            w = float(s.get("amount") or 0)
+            if v is None or w <= 0:
+                continue
+            try:
+                pairs.append((float(v), w))
+            except (TypeError, ValueError):
+                pass
+        if not pairs:
+            return None
+        total_w = sum(w for _, w in pairs)
+        return sum(v * w for v, w in pairs) / total_w if total_w > 0 else None
+
+    return {
+        "pe":  _harm("pe"),
+        "pb":  _harm("pb"),
+        "roe": _wt("roe"),
+        # 净利率 / 毛利率 / 资产负债率 跨行业平均无意义，不在概览卡展示
+    }
+
+
 def portfolio_metrics_block(summary: dict[str, Any], analysis: dict[str, Any]) -> None:
     """合并版指标卡：持仓结构 + 核心财务，两列紧凑布局，去除重复。"""
     if not analysis:
         return
-    stock = first_stock()
+    stock_results = list(analysis.get("stock_results") or [])
+    fin = _portfolio_fin_metrics(stock_results)
+    n_stocks = len(stock_results)
+    # 多只持仓时注明这是加权平均值，让家人理解数字来源
+    fin_note_pe = "持仓加权平均（调和）" if n_stocks > 1 else "估值高低参考"
+    block_subtitle = (
+        "持仓结构 · 核心财务 · 财务指标按持仓金额加权平均"
+        if n_stocks > 1
+        else "持仓结构 · 核心财务 · 数据来源：最近报告期"
+    )
+
     cash_ratio  = max(0.0, min(1.0, float(summary.get("cash_ratio",  0) or 0)))
     stock_ratio = max(0.0, min(1.0, float(summary.get("stock_ratio", 0) or 0)))
     top_industry = str(analysis.get("top_industry") or "")
@@ -3335,12 +3399,11 @@ def portfolio_metrics_block(summary: dict[str, Any], analysis: dict[str, Any]) -
         ("股票/基金仓位", percent(stock_ratio),                                                    "资金暴露比例"),
         ("单只最大占比", percent(float(summary.get("max_single_ratio", 0) or 0)),                 "集中度风险参考"),
         ("行业集中度",   f"{html_escape(top_industry)}&nbsp;{percent(ind_conc)}" if top_industry else "暂无", "行业分布是否过于集中"),
-        ("PE 市盈率",    fmt_optional(stock_field(stock, "pe"),          default="暂缺"),          "估值高低参考"),
-        ("PB 市净率",    fmt_optional(stock_field(stock, "pb"),          default="暂缺"),          "账面价值倍数"),
-        ("ROE",          fmt_ratio(stock_field(stock, "roe")),                                     "公司用自己的钱赚钱的能力"),
-        ("净利率",       fmt_ratio(stock_field(stock, "net_margin")),                              "每百元营收留下的利润"),
-        ("毛利率",       fmt_ratio(stock_field(stock, "gross_margin")),                            "产品本身的盈利空间"),
-        ("资产负债率",   fmt_ratio(stock_field(stock, "debt_ratio")),                              "公司借钱占家底的比例"),
+        ("PE 市盈率",    fmt_optional(fin.get("pe"),  default="暂缺"),  fin_note_pe),
+        ("PB 市净率",    fmt_optional(fin.get("pb"),  default="暂缺"),  fin_note_pe),
+        # ROE 保留：衡量持仓公司整体赚钱效率，加权平均有意义
+        # 净利率 / 毛利率 / 资产负债率 已移至各持仓详细卡，跨行业平均无意义
+        ("ROE",          fmt_ratio(fin.get("roe")),                      "持仓加权：公司赚钱效率"),
     ]
     cards = "".join(
         f'<article class="metric-card-sm">'
@@ -3356,7 +3419,7 @@ def portfolio_metrics_block(summary: dict[str, Any], analysis: dict[str, Any]) -
             <div class="block-head" style="margin-bottom:.6rem;">
                 <div>
                     <h2 class="block-title">体检数据一览</h2>
-                    <p class="block-subtitle">持仓结构 · 核心财务 · 数据来源：最近报告期</p>
+                    <p class="block-subtitle">{block_subtitle}</p>
                 </div>
             </div>
             <div class="metric-grid-2">{cards}</div>
