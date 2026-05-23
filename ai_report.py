@@ -871,18 +871,11 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
             "   【给家人重点看的地方】\n"
             "   【免责声明】\n"
             "10. 【免责声明】必须一字不改：" + DISCLAIMER + "\n"
-            "11. 请同时生成一段【饭桌版】，用最口语、最像家人聊天的方式，"
-            "写一段 80 字以内、子女可以今晚直接对父母说出口的话。"
-            "系统会把这段合并进报告末尾，不在页面单独展示。"
-            "只解释本次风险现状和值得一起商量的点，不能出现任何具体交易动作、仓位动作、短期方向判断，"
-            '结尾落在"要不要我们一起再看看/商量一下"这种开放式表达。\n'
-            "12. 如果 history_analysis.records_count >= 2，可在【给家人重点看的地方】末尾"
+            "11. 如果 history_analysis.records_count >= 2，可在【给家人重点看的地方】末尾"
             "用一句话提及与上次相比的变化；如果 records_count < 2，只写"
             '"目前历史记录还不多，暂时先看本次体检结果"。不要展开历史，最多一句话。'
         )
-        _output_format = (
-            "输出格式：\n【正式报告】\n...正式报告...\n\n【饭桌版】\n...80字以内口语说明...\n\n"
-        )
+        _output_format = "输出格式：\n【正式报告】\n...报告内容...\n\n"
 
     system_prompt = f"""
 你是"家庭持仓风险体检 Agent"的报告生成器。你只能根据用户提供的 agent_context 写报告，不能编造任何缺失数据。
@@ -944,9 +937,8 @@ def generate_agent_report(agent_context: dict[str, Any], mode: str = "标准版"
     try:
         combined_report = _call_deepseek_agent_report(agent_context, mode)
         main_report, dinner_talk = _split_agent_report_sections(combined_report, agent_context)
-        merged_report = _merge_parent_report_with_dinner(main_report, dinner_talk, mode)
         return {
-            "ai_report": merged_report,
+            "ai_report": main_report,
             "main_report": main_report,
             "dinner_talk": dinner_talk,
             "report_source": "deepseek",
@@ -955,9 +947,8 @@ def generate_agent_report(agent_context: dict[str, Any], mode: str = "标准版"
         pass
     local_report = generate_local_agent_report(agent_context, mode)
     local_dinner_talk = sanitize_dinner_talk(_local_dinner_talk(agent_context), agent_context)
-    merged_report = _merge_parent_report_with_dinner(local_report, local_dinner_talk, mode)
     return {
-        "ai_report": merged_report,
+        "ai_report": local_report,
         "main_report": local_report,
         "dinner_talk": local_dinner_talk,
         "report_source": "local_fallback",

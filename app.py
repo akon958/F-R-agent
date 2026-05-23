@@ -2282,7 +2282,6 @@ def _agent_intake_summary_html(parsed: dict[str, Any]) -> str:
         <div class="kicker">Agent 已识别</div>
         <ul style="margin:0.45rem 0 0.2rem;padding-left:1.15rem;color:var(--text);">{holding_items}</ul>
         <p style="margin:0.35rem 0;color:var(--text);">现金：<b>{html_escape(_compact_amount(cash))}</b></p>
-        <p style="margin:0.2rem 0;color:var(--text-2);">风险偏好：{html_escape(risk)}</p>
         <p class="muted" style="margin:0.2rem 0 0;">来源：{html_escape(source)}，识别把握：{html_escape(confidence_label)}</p>
         {note_html}
     </div>
@@ -2295,10 +2294,7 @@ def agent_intake_block() -> None:
         """
         <div class="card" style="padding:1rem;margin:1rem 0 0.75rem;">
             <div class="kicker">Agent 入口</div>
-            <h3 style="margin:0.25rem 0 0.35rem;font-size:1.05rem;">直接说一句，Agent 先帮你读</h3>
-            <p class="muted" style="margin:0;">
-                例如：我家有茅台 2 万，现金 5 万，风险稳健，帮我看看。
-            </p>
+            <h3 style="margin:0.25rem 0 0;font-size:1.05rem;">直接说一句，Agent 先帮你读</h3>
         </div>
         """
     )
@@ -4596,24 +4592,26 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             "improved": ("#f0fdf4", "#15803d"),
         }.get(_dlevel, ("#f8fafc", "#475569"))
         _dicon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(_dlevel, "△")
+        _dlabel = {"warning": "风险上升", "caution": "有变化", "improved": "有改善"}.get(_dlevel, "有变化")
         _changes_html = "".join(
             f'<span style="display:block;font-size:0.78rem;color:{_dfg};'
             f'padding:0.1rem 0;">{html_escape(c)}</span>'
             for c in (_delta.get("changes") or [])
         )
-        render_html(
-            f"""
-            <div style="margin:0 0 0.4rem;padding:0.5rem 0.85rem;
-                        background:{_dbg};border-radius:10px;
-                        border:1.5px solid color-mix(in srgb,{_dfg} 30%,transparent);">
-                <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.15rem;">
-                    <span style="font-size:0.8rem;">{_dicon}</span>
-                    <span style="font-size:0.83rem;font-weight:700;color:{_dfg};">与上次体检相比</span>
+        with st.expander(f"与上次体检相比（{_dlabel}）", expanded=False):
+            render_html(
+                f"""
+                <div style="margin:0 0 0.4rem;padding:0.5rem 0.85rem;
+                            background:{_dbg};border-radius:10px;
+                            border:1.5px solid color-mix(in srgb,{_dfg} 30%,transparent);">
+                    <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.15rem;">
+                        <span style="font-size:0.8rem;">{_dicon}</span>
+                        <span style="font-size:0.83rem;font-weight:700;color:{_dfg};">与上次体检相比</span>
+                    </div>
+                    {_changes_html}
                 </div>
-                {_changes_html}
-            </div>
-            """
-        )
+                """
+            )
 
     # 1c. 给家人的一句话（dinner_talk，有才显示）
     _dinner = str(agent_result.get("dinner_talk") or agent_context.get("dinner_talk") or "")
@@ -4638,53 +4636,55 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     family_disagreement_block(agent_result.get("family_disagreement", {}))
 
     # 1e. Agent 主动抓重点
-    agent_focus_block(agent_result)
+    with st.expander(f"Agent 主动判断 · 数据可信度：{_conf_level or '未知'}", expanded=False):
+        agent_focus_block(agent_result)
 
     # 1f. 主要风险（最多 3 条）
-    _show_risks = main_risks[:3]
-    _extra_risk_n = max(0, len(main_risks) - 3)
-    _risk_rows = "".join(
-        f'<li style="padding:0.18rem 0;display:flex;align-items:baseline;gap:0.55rem;'
-        f'border-bottom:1px solid rgba(122,62,46,0.07);">'
-        f'<span style="flex-shrink:0;font-size:0.65rem;font-weight:700;color:#fff;'
-        f'background:#b94040;border-radius:50%;width:1.35em;height:1.35em;'
-        f'display:inline-flex;align-items:center;justify-content:center;line-height:1;">'
-        f'{i + 1}</span>'
-        f'<span style="font-size:0.83rem;line-height:1.45;color:var(--text);">{html_escape(r)}</span>'
-        f'</li>'
-        for i, r in enumerate(_show_risks)
-    )
-    _more_html = (
-        f'<p style="font-size:0.7rem;color:var(--text-3);margin:0.2rem 0 0;padding-left:0.1rem;">'
-        f'另有 {_extra_risk_n} 项，展开"Agent 智能分析详情"可查看。</p>'
-        if _extra_risk_n else ""
-    )
-    render_html(
-        f"""
-        <section style="margin:0 0 0.45rem;border-radius:10px;
-                        border:1.5px solid #e8c4b2;background:#fff9f6;overflow:hidden;">
-            <div style="padding:0.4rem 0.85rem 0.28rem;display:flex;align-items:center;
-                        gap:0.4rem;border-bottom:1px solid #f0ddd3;">
-                <svg width="15" height="15" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
-                    <path d="M8.5 1.5 L15.5 14.5 L1.5 14.5 Z"
-                          fill="#b94040" opacity="0.18"
-                          stroke="#b94040" stroke-width="1.4" stroke-linejoin="round"/>
-                    <line x1="8.5" y1="6.5" x2="8.5" y2="10.5"
-                          stroke="#b94040" stroke-width="1.6" stroke-linecap="round"/>
-                    <circle cx="8.5" cy="12.5" r="0.85" fill="#b94040"/>
-                </svg>
-                <span style="font-size:0.85rem;font-weight:700;color:#7a3e2e;">主要风险提示</span>
-                <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">
-                    共 {len(main_risks)} 项待关注
-                </span>
-            </div>
-            <ul style="margin:0;padding:0.1rem 0.85rem 0.35rem;list-style:none;">
-                {_risk_rows}
-            </ul>
-            {_more_html}
-        </section>
-        """
-    )
+    with st.expander(f"主要风险提示（共 {len(main_risks)} 项）", expanded=False):
+        _show_risks = main_risks[:3]
+        _extra_risk_n = max(0, len(main_risks) - 3)
+        _risk_rows = "".join(
+            f'<li style="padding:0.18rem 0;display:flex;align-items:baseline;gap:0.55rem;'
+            f'border-bottom:1px solid rgba(122,62,46,0.07);">'
+            f'<span style="flex-shrink:0;font-size:0.65rem;font-weight:700;color:#fff;'
+            f'background:#b94040;border-radius:50%;width:1.35em;height:1.35em;'
+            f'display:inline-flex;align-items:center;justify-content:center;line-height:1;">'
+            f'{i + 1}</span>'
+            f'<span style="font-size:0.83rem;line-height:1.45;color:var(--text);">{html_escape(r)}</span>'
+            f'</li>'
+            for i, r in enumerate(_show_risks)
+        )
+        _more_html = (
+            f'<p style="font-size:0.7rem;color:var(--text-3);margin:0.2rem 0 0;padding-left:0.1rem;">'
+            f'另有 {_extra_risk_n} 项，展开"Agent 智能分析详情"可查看。</p>'
+            if _extra_risk_n else ""
+        )
+        render_html(
+            f"""
+            <section style="margin:0 0 0.45rem;border-radius:10px;
+                            border:1.5px solid #e8c4b2;background:#fff9f6;overflow:hidden;">
+                <div style="padding:0.4rem 0.85rem 0.28rem;display:flex;align-items:center;
+                            gap:0.4rem;border-bottom:1px solid #f0ddd3;">
+                    <svg width="15" height="15" viewBox="0 0 17 17" fill="none" style="flex-shrink:0;">
+                        <path d="M8.5 1.5 L15.5 14.5 L1.5 14.5 Z"
+                              fill="#b94040" opacity="0.18"
+                              stroke="#b94040" stroke-width="1.4" stroke-linejoin="round"/>
+                        <line x1="8.5" y1="6.5" x2="8.5" y2="10.5"
+                              stroke="#b94040" stroke-width="1.6" stroke-linecap="round"/>
+                        <circle cx="8.5" cy="12.5" r="0.85" fill="#b94040"/>
+                    </svg>
+                    <span style="font-size:0.85rem;font-weight:700;color:#7a3e2e;">主要风险提示</span>
+                    <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">
+                        共 {len(main_risks)} 项待关注
+                    </span>
+                </div>
+                <ul style="margin:0;padding:0.1rem 0.85rem 0.35rem;list-style:none;">
+                    {_risk_rows}
+                </ul>
+                {_more_html}
+            </section>
+            """
+        )
 
     # 1g. 下一步 CTA：查看 AI 风险说明
     render_html("""
