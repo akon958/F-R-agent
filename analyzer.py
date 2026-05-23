@@ -105,6 +105,19 @@ RISK_FACTOR_META = {
     },
 }
 
+RISK_FACTOR_WEIGHTS = {
+    "现金缓冲": 14,
+    "单只集中": 14,
+    "行业集中": 10,
+    "估值完整性": 8,
+    "财务质量": 26,
+    "交易热度": 8,
+    "家庭分歧": 4,
+    "数据可信度": 10,
+    "风险承受匹配": 6,
+    "极端集中": 28,
+}
+
 
 def _factor_tone(score: float) -> tuple[str, str, str]:
     if score >= 80:
@@ -238,22 +251,22 @@ def build_risk_factor_breakdown(
         match_status = "仓位和风险偏好大体匹配" if match_score >= 70 else "仓位和风险偏好需要再确认"
 
     if family_disagreement.get("has_conflict"):
-        family_score, family_status, family_boost = 48, "家人看法不一致，需要先沟通", 18
+        family_score, family_status, family_boost = 48, "家人看法不一致，需要先沟通", 6
     else:
         family_score, family_status, family_boost = 88, "暂未发现明显家庭分歧", 0
 
     conf_code = str(data_confidence.get("level_code") or "")
     if conf_code == "low":
-        data_score, data_status, data_boost = 35, "数据可信度偏低", 20
+        data_score, data_status, data_boost = 35, "数据可信度偏低", 10
     elif conf_code == "medium":
-        data_score, data_status, data_boost = 65, "数据可信度中等", 10
+        data_score, data_status, data_boost = 65, "数据可信度中等", 6
     else:
         data_score, data_status, data_boost = 88, "数据可信度较高", 0
 
     _is_extreme = max_single >= 0.95 or cash_ratio <= 0.05
     if _is_extreme:
         _extreme_factor = [_make_factor(
-            "极端集中", min(cash_score, single_score), 40,
+            "极端集中", min(cash_score, single_score), RISK_FACTOR_WEIGHTS["极端集中"],
             "资产高度集中在单只标的，且现金缓冲极薄",
             "单只占比是否继续升高，家里是否能承受极端波动",
             f"极端集中：资产几乎全部在一只股票上，没有现金缓冲（单只 {max_single:.0%} / 现金 {cash_ratio:.0%}）",
@@ -262,61 +275,61 @@ def build_risk_factor_breakdown(
     else:
         _extreme_factor = [
             _make_factor(
-                "现金缓冲", cash_score, 18, "家里短期用钱是否有余地",
+                "现金缓冲", cash_score, RISK_FACTOR_WEIGHTS["现金缓冲"], "家里短期用钱是否有余地",
                 "现金比例、半年内资金用途、家庭备用金是否够用",
-                cash_status, f"现金比例约 {cash_ratio:.1%}。", boost=8 if cash_ratio < 0.15 else 0,
+                cash_status, f"现金比例约 {cash_ratio:.1%}。", boost=6 if cash_ratio < 0.15 else 0,
             ),
             _make_factor(
-                "单只集中", single_score, 22, "钱是否过多集中在一只标的上",
+                "单只集中", single_score, RISK_FACTOR_WEIGHTS["单只集中"], "钱是否过多集中在一只标的上",
                 "最大单只占比是否继续升高，波动时家里是否能接受",
-                single_status, f"最大单只占比约 {max_single:.1%}。", boost=12 if max_single >= 0.30 else 0,
+                single_status, f"最大单只占比约 {max_single:.1%}。", boost=8 if max_single >= 0.30 else 0,
             ),
         ]
 
     factors = [
         *_extreme_factor,
         _make_factor(
-            "行业集中", industry_score, 12, "股票部分是否集中在同一行业",
+            "行业集中", industry_score, RISK_FACTOR_WEIGHTS["行业集中"], "股票部分是否集中在同一行业",
             "行业政策、经营环境和家庭是否理解该行业波动",
-            industry_status, f"行业集中度约 {industry_conc:.1%}。", boost=8 if industry_conc >= 0.60 else 0,
+            industry_status, f"行业集中度约 {industry_conc:.1%}。", boost=6 if industry_conc >= 0.60 else 0,
         ),
         _make_factor(
-            "估值完整性", valuation_score, 10, "PE/PB 等估值数据是否足够完整",
+            "估值完整性", valuation_score, RISK_FACTOR_WEIGHTS["估值完整性"], "PE/PB 等估值数据是否足够完整",
             "估值数据缺失时，不评价便宜或贵，只提示数据不完整",
             valuation_status, "估值完整性决定这次能不能讨论估值高低。",
-            boost=12 if valuation_missing_n else 0,
+            boost=8 if valuation_missing_n else 0,
         ),
         _make_factor(
-            "财务质量", finance_score, 14, "持仓公司的经营底子是否稳",
+            "财务质量", finance_score, RISK_FACTOR_WEIGHTS["财务质量"], "持仓公司的经营底子是否稳",
             "ROE、利润率、负债压力、现金流质量",
             "财务数据需要关注" if finance_score < 70 else "财务质量压力较小",
             "财务质量只说明公司经营底子，不代表未来涨跌。",
-            boost=8 if finance_score < 70 else 0,
+            boost=16 if (finance_score < 70 or finance_missing_n) else 4,
         ),
         _make_factor(
-            "交易热度", heat_score, 10, "短期交易是否太热、波动是否偏大",
+            "交易热度", heat_score, RISK_FACTOR_WEIGHTS["交易热度"], "短期交易是否太热、波动是否偏大",
             "换手率、量比、振幅、涨跌幅和成交活跃度",
             "短期交易热度需要关注" if heat_score < 70 else "短期交易热度不算突出",
             "交易热度只反映短期活跃程度，不能作为买卖依据。",
-            boost=8 if heat_score < 70 else 0,
+            boost=5 if heat_score < 70 else 0,
         ),
         _make_factor(
-            "家庭分歧", family_score, 18, "家人对同一风险点是否看法不一致",
+            "家庭分歧", family_score, RISK_FACTOR_WEIGHTS["家庭分歧"], "家人对同一风险点是否看法不一致",
             "先沟通现金安排、风险承受和观察重点，不评判谁对谁错",
             family_status, "家庭风险有时不只来自市场，也来自理解不一致。",
             boost=family_boost,
         ),
         _make_factor(
-            "数据可信度", data_score, 16, "这次结论的数据基础是否扎实",
+            "数据可信度", data_score, RISK_FACTOR_WEIGHTS["数据可信度"], "这次结论的数据基础是否扎实",
             "行情、估值、财务数据是否完整，缓存是否足够新",
             data_status, data_confidence.get("summary") or "数据越完整，结论越有参考价值。",
             boost=data_boost,
         ),
         _make_factor(
-            "风险承受匹配", match_score, 12, "当前仓位是否匹配家庭能承受的波动",
+            "风险承受匹配", match_score, RISK_FACTOR_WEIGHTS["风险承受匹配"], "当前仓位是否匹配家庭能承受的波动",
             "选择的风险承受能力、股票仓位和单只集中度",
             match_status, "风险偏好不是口号，要和仓位、现金、集中度一起看。",
-            boost=6 if match_score < 65 else 0,
+            boost=4 if match_score < 65 else 0,
         ),
     ]
 

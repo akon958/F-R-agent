@@ -4402,7 +4402,6 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
     }
 
     cards = []
-    detail_rows: list[tuple[str, str, str, str]] = []
     for item in factors:
         name = str(item.get("name", ""))
         score = float(item.get("score", 0) or 0)
@@ -4411,8 +4410,6 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
         color = color_by_tone.get(str(item.get("tone", "")), "#b97a1a")
         status = str(item.get("status", "") or "需要继续观察")
         plain = str(item.get("plain", "") or name)
-        watch = str(item.get("watch", "") or "结合本次体检结果继续观察")
-        detail_rows.append((name, color, plain, watch))
         cards.append(
             f"""
             <article style="border:1px solid var(--border);border-radius:12px;background:var(--surface);
@@ -4433,6 +4430,9 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
                 </div>
                 <div style="font-size:0.72rem;color:{color};font-weight:600;">
                     {html_escape(status)} · 权重 {weight:.0f}%
+                </div>
+                <div style="font-size:0.72rem;color:var(--text-3);line-height:1.45;margin-top:0.28rem;">
+                    {html_escape(plain)}
                 </div>
             </article>
             """
@@ -4470,22 +4470,6 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
         </section>
         """
     )
-    if detail_rows:
-        with st.expander("各因子详细说明", expanded=False):
-            for d_name, d_color, d_plain, d_watch in detail_rows:
-                render_html(
-                    f'<div style="border-left:3px solid {d_color};'
-                    f'padding:0.35rem 0.75rem;margin-bottom:0.55rem;">'
-                    f'<div style="font-size:0.86rem;font-weight:700;color:var(--text);'
-                    f'margin-bottom:0.18rem;">{html_escape(d_name)}</div>'
-                    f'<p style="font-size:0.8rem;color:var(--text-2);line-height:1.5;margin:0 0 0.15rem;">'
-                    f'{html_escape(d_plain)}</p>'
-                    f'<p style="font-size:0.74rem;color:var(--text-3);line-height:1.45;margin:0;">'
-                    f'关注：{html_escape(d_watch)}</p>'
-                    f'</div>'
-                )
-
-
 def _cross_validation_html(cv: dict[str, Any]) -> str:
     """多重交叉验证结果的紧凑 HTML 片段。"""
     if not cv or not cv.get("checks_run"):
