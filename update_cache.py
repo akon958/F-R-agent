@@ -27,12 +27,17 @@ SLEEP_MIN, SLEEP_MAX = 0.5, 2.0
 CONSEC_FAIL_LIMIT  = 20
 CONSEC_FAIL_PAUSE  = 60   # 暂停秒数
 
+HISTORY_PERIOD_LABELS = ("近1期", "近2期", "近3期")
+CASHFLOW_HISTORY_COLUMNS = [f"经营现金流/净利润_{label}" for label in HISTORY_PERIOD_LABELS]
+DIVIDEND_HISTORY_COLUMNS = [f"股息率_{label}" for label in HISTORY_PERIOD_LABELS]
+
 CACHE_COLUMNS = [
     "代码", "名称", "最新价", "涨跌幅", "成交额",
     "市盈率-动态", "市净率", "换手率", "总市值", "流通市值",
     "所属行业", "量比", "振幅", "内外盘比例",
     "ROE", "净利率", "毛利率", "营收增长率", "净利润增长率",
-    "资产负债率", "经营现金流/净利润",
+    "资产负债率", "经营现金流/净利润", *CASHFLOW_HISTORY_COLUMNS,
+    "股息率", *DIVIDEND_HISTORY_COLUMNS,
     "数据来源", "更新时间",
 ]
 
@@ -40,6 +45,24 @@ FINANCIAL_COLUMNS = [
     "ROE", "净利率", "毛利率", "营收增长率", "净利润增长率",
     "资产负债率", "经营现金流/净利润",
 ]
+
+ENRICH_COLUMNS = FINANCIAL_COLUMNS + ["股息率", *CASHFLOW_HISTORY_COLUMNS, *DIVIDEND_HISTORY_COLUMNS]
+
+COLUMN_FALLBACKS = {
+    "经营现金流/净利润_近1期": ["经营现金流/净利润"],
+    "股息率_近1期": ["股息率"],
+}
+
+FILL_FIELD_GROUPS = {
+    column: ["经营现金流/净利润", *CASHFLOW_HISTORY_COLUMNS]
+    for column in ["经营现金流/净利润", *CASHFLOW_HISTORY_COLUMNS]
+}
+FILL_FIELD_GROUPS.update(
+    {
+        column: ["股息率", *DIVIDEND_HISTORY_COLUMNS]
+        for column in ["股息率", *DIVIDEND_HISTORY_COLUMNS]
+    }
+)
 
 COLUMN_ALIASES = {
     "代码":      ["代码", "股票代码", "证券代码", "symbol"],
@@ -104,6 +127,8 @@ FINANCIAL_ROW_NAMES: dict[str, list[str]] = {
 #   经营现金流/净利润 → 比率形式（0.988），直接使用，不 /100
 PERCENT_FIELDS = {"ROE", "净利率", "毛利率", "资产负债率", "营收增长率", "净利润增长率"}
 
+BSE_PREFIXES = ("43", "83", "87", "88", "92")
+
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
 
@@ -127,8 +152,8 @@ def market_paper_code(code: Any) -> tuple[str | None, str]:
         return f"sz{normalized}", ""
     if normalized.startswith(("600", "601", "603", "605", "688", "689")):
         return f"sh{normalized}", ""
-    if normalized.startswith(("8", "4")):
-        return None, "北交所 8/4 开头股票，当前财务接口暂不支持，已跳过"
+    if normalized.startswith(BSE_PREFIXES):
+        return None, f"北交所代码（{normalized[:2]} 开头），当前财务接口暂不支持，已跳过"
     return None, "无法判断市场前缀，已跳过"
 
 
@@ -219,6 +244,43 @@ def is_valid_frame(df: Any) -> bool:
 
 # ── 缓存读写 ──────────────────────────────────────────────────────────────────
 
+def _coalesce_numeric_columns(df: Any, target: str, fallbacks: list[str]) -> None:
+    if target not in df.columns:
+        df[target] = None
+    for fallback in fallbacks:
+        if fallback not in df.columns:
+            continue
+        mask = df[target].map(to_float).isna()
+        if mask.any():
+            df.loc[mask, target] = df.loc[mask, fallback]
+
+
+def ensure_cache_schema(df: Any) -> Any:
+    df = df.copy()
+    for col in CACHE_COLUMNS:
+        if col not in df.columns:
+            fallback = next((name for name in COLUMN_FALLBACKS.get(col, []) if name in df.columns), None)
+            df[col] = df[fallback] if fallback else None
+
+    _coalesce_numeric_columns(df, "经营现金流/净利润_近1期", ["经营现金流/净利润"])
+    _coalesce_numeric_columns(df, "股息率_近1期", ["股息率"])
+    _coalesce_numeric_columns(df, "经营现金流/净利润", ["经营现金流/净利润_近1期"])
+    _coalesce_numeric_columns(df, "股息率", ["股息率_近1期"])
+    return df
+
+
+def split_finance_supported_codes(codes: list[str]) -> tuple[list[str], list[str]]:
+    supported: list[str] = []
+    skipped: list[str] = []
+    for code in codes:
+        normalized = normalize_code(code)
+        paper_code, _ = market_paper_code(normalized)
+        if paper_code is None:
+            skipped.append(normalized)
+        else:
+            supported.append(normalized)
+    return supported, skipped
+
 def read_existing_cache() -> Any:
     if not CACHE_FILE.exists():
         return pd.DataFrame(columns=CACHE_COLUMNS)
@@ -229,18 +291,14 @@ def read_existing_cache() -> Any:
         return pd.DataFrame(columns=CACHE_COLUMNS)
     if "代码" not in df.columns and "股票代码" in df.columns:
         df["代码"] = df["股票代码"]
-    for col in CACHE_COLUMNS:
-        if col not in df.columns:
-            df[col] = None
+    df = ensure_cache_schema(df)
     df["代码"] = df["代码"].map(normalize_code)
     return df[df["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
 
 
 def save_cache(df: Any, path: Path | None = None) -> None:
     target = path or CACHE_FILE
-    for col in CACHE_COLUMNS:
-        if col not in df.columns:
-            df[col] = None
+    df = ensure_cache_schema(df)
     df = df[CACHE_COLUMNS].copy()
     df["代码"] = df["代码"].map(normalize_code)
     df = df[df["代码"] != ""].drop_duplicates(subset=["代码"], keep="last")
@@ -371,12 +429,12 @@ def print_spot_valuation_summary(spot_df: Any) -> None:
 
 
 def fetch_eastmoney_valuation_pages() -> Any | None:
-    """补抓 PE/PB/市值/换手率。
+    """补抓 PE/PB/市值/换手率等实时行情字段。
 
     AkShare 备用接口 stock_zh_a_spot 不包含估值字段；这里直接请求东财分页行情接口，
-    只用于补全缓存里的估值和交易字段，不改变财务抓取逻辑。
+    只用于补全缓存里的估值和交易字段，不承担股息率历史抓取。
     """
-    print("正在尝试补抓 PE/PB/市值/换手率字段...", flush=True)
+    print("正在尝试补抓 PE/PB/市值/换手率等行情字段...", flush=True)
     try:
         import requests
     except Exception as exc:  # noqa: BLE001
@@ -846,10 +904,82 @@ def build_cache_rows(spot_df: Any, old_cache: Any) -> Any:
 
 # ── 财务数据抓取 ──────────────────────────────────────────────────────────────
 
+def _report_period_sort_key(value: Any) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return int(text.replace("-", ""))
+    match = re.search(r"(20\d{2})", text)
+    if not match:
+        return 0
+    year = int(match.group(1))
+    if "年报" in text or "1231" in text:
+        suffix = 1231
+    elif "三季" in text or "0930" in text:
+        suffix = 930
+    elif "中报" in text or "半年" in text or "0630" in text:
+        suffix = 630
+    elif "一季" in text or "0331" in text:
+        suffix = 331
+    else:
+        suffix = 0
+    return year * 10000 + suffix
+
+
+def _extract_history_values(row: Any, date_cols: list[str], target: str, limit: int = 1) -> list[float]:
+    values: list[float] = []
+    for col in date_cols:
+        value = to_float(row.get(col))
+        if value is None:
+            continue
+        if target in PERCENT_FIELDS:
+            value = value / 100.0
+        values.append(value)
+        if len(values) >= limit:
+            break
+    return values
+
+
+def _extract_dividend_history(df: Any) -> dict[str, float]:
+    if not is_valid_frame(df):
+        return {}
+
+    yield_column = None
+    for column in ("现金分红-股息率", "税前分红率"):
+        if column in df.columns:
+            yield_column = column
+            break
+    if yield_column is None or "报告期" not in df.columns:
+        return {}
+
+    working = df.copy()
+    working["_sort_key"] = working["报告期"].map(_report_period_sort_key)
+    working = working.sort_values("_sort_key", ascending=False)
+
+    values: list[float] = []
+    for _, row in working.iterrows():
+        value = to_float(row.get(yield_column))
+        if value is None:
+            continue
+        values.append(value / 100.0)
+        if len(values) >= len(DIVIDEND_HISTORY_COLUMNS):
+            break
+
+    if not values:
+        return {}
+
+    result = {"股息率": values[0]}
+    for column, value in zip(DIVIDEND_HISTORY_COLUMNS, values):
+        result[column] = value
+    return result
+
+
 def _extract_wide_table(df: Any) -> dict[str, float]:
     """解析 stock_financial_abstract 的宽表格式。
     表结构：行 = 指标名（'指标'列），列 = ['选项','指标', '20260331', '20251231', ...]
     取最新日期列的值，按 FINANCIAL_ROW_NAMES 映射到目标字段。
+    对经营现金流/净利润额外保留最近 3 期，供横向/纵向分析使用。
     """
     result: dict[str, float] = {}
     if not is_valid_frame(df) or "指标" not in df.columns:
@@ -876,16 +1006,13 @@ def _extract_wide_table(df: Any) -> dict[str, float]:
             if row_name not in indicator_index:
                 continue
             row = indicator_index[row_name]
-            # 从最新日期列找第一个有效值
-            for col in date_cols:
-                val = to_float(row.get(col))
-                if val is not None:
-                    # 百分比字段除以 100 转为小数
-                    if target in PERCENT_FIELDS:
-                        val = val / 100.0
-                    result[target] = val
-                    break
-            if target in result:
+            limit = len(CASHFLOW_HISTORY_COLUMNS) if target == "经营现金流/净利润" else 1
+            values = _extract_history_values(row, date_cols, target, limit=limit)
+            if values:
+                result[target] = values[0]
+                if target == "经营现金流/净利润":
+                    for column, value in zip(CASHFLOW_HISTORY_COLUMNS, values):
+                        result[column] = value
                 break   # 找到这个字段就停止尝试备用行名
 
     return result
@@ -896,22 +1023,42 @@ def _fetch_one_financial(ak: Any, code: str, paper_code: str) -> tuple[dict[str,
     错误信息为空字符串表示成功。
     在子线程中运行，由外部 timeout 控制最长等待时间。
     """
+    result: dict[str, float] = {}
+    errors: list[str] = []
+
     try:
         df = ak.stock_financial_abstract(symbol=paper_code)
+        if not is_valid_frame(df):
+            errors.append("stock_financial_abstract 返回空表")
+        elif "指标" not in df.columns:
+            errors.append(f"stock_financial_abstract 缺少'指标'列: {list(df.columns[:5])}")
+        else:
+            result.update(_extract_wide_table(df))
     except Exception as exc:  # noqa: BLE001
-        return {}, f"{paper_code} {type(exc).__name__}: {exc}"
+        errors.append(f"{paper_code} stock_financial_abstract {type(exc).__name__}: {exc}")
 
-    if not is_valid_frame(df):
-        return {}, "接口返回空表"
+    dividend_result: dict[str, float] = {}
+    dividend_errors: list[str] = []
+    for fetcher_name in ("stock_fhps_detail_em", "stock_fhps_detail_ths"):
+        try:
+            fetcher = getattr(ak, fetcher_name, None)
+            if fetcher is None:
+                continue
+            dividend_df = fetcher(symbol=code)
+            dividend_result = _extract_dividend_history(dividend_df)
+            if dividend_result:
+                break
+        except Exception as exc:  # noqa: BLE001
+            dividend_errors.append(f"{fetcher_name} {type(exc).__name__}: {exc}")
 
-    if "指标" not in df.columns:
-        return {}, f"返回表无'指标'列，实际列名: {list(df.columns[:5])}"
+    if dividend_result:
+        result.update(dividend_result)
+    elif dividend_errors:
+        errors.append(" / ".join(dividend_errors))
 
-    result = _extract_wide_table(df)
     if not result:
-        return {}, "宽表解析后未匹配到任何目标字段"
-
-    return result, ""
+        return {}, "；".join(errors) if errors else "财务接口未返回有效数据"
+    return result, "；".join(errors)
 
 
 def fetch_financial_with_timeout(
@@ -1016,10 +1163,16 @@ def enrich_with_financial(ak: Any, df: Any, limit: int = 0) -> Any:
     already_done = _load_already_done(df)
     codes = [c for c in all_codes if c not in already_done]
     skipped = len(all_codes) - len(codes)
+    codes, unsupported_codes = split_finance_supported_codes(codes)
     if skipped:
         print(f"  跳过已有财务数据的股票：{skipped} 只，待抓取：{len(codes)} 只。", flush=True)
+    if unsupported_codes:
+        print(f"  跳过当前财务接口不支持的代码：{len(unsupported_codes)} 只（如北交所 92/83/87/88/43 开头）。", flush=True)
     if not codes:
-        print("  所有股票已有财务数据，无需重新抓取。", flush=True)
+        if unsupported_codes:
+            print("  剩余待抓股票均为当前财务接口不支持的代码，本轮不再继续请求。", flush=True)
+        else:
+            print("  所有股票已有财务数据，无需重新抓取。", flush=True)
         return df
 
     total         = len(codes)
@@ -1030,7 +1183,7 @@ def enrich_with_financial(ak: Any, df: Any, limit: int = 0) -> Any:
     failed_list: list[tuple[str, str]] = []  # (代码, 原因)
 
     # 用列表缓存新财务值，最后批量写回
-    new_fin: dict[str, list[Any]] = {col: [None] * len(df) for col in FINANCIAL_COLUMNS}
+    new_fin: dict[str, list[Any]] = {col: [None] * len(df) for col in ENRICH_COLUMNS}
     code_to_idx: dict[str, int]   = {c: i for i, c in enumerate(df["代码"].tolist())}
 
     print(
@@ -1046,7 +1199,7 @@ def enrich_with_financial(ak: Any, df: Any, limit: int = 0) -> Any:
 
         idx = code_to_idx.get(code)
         if fin and idx is not None:
-            for col in FINANCIAL_COLUMNS:
+            for col in ENRICH_COLUMNS:
                 if col in fin:
                     new_fin[col][idx] = fin[col]
             success   += 1
@@ -1112,13 +1265,14 @@ def enrich_with_financial(ak: Any, df: Any, limit: int = 0) -> Any:
 
 def _apply_fin_to_df(df: Any, new_fin: dict[str, list[Any]]) -> None:
     """将 new_fin 里非 None 的值合并回 df（已有旧值的字段不覆盖为 None）。"""
-    for col in FINANCIAL_COLUMNS:
+    for col in ENRICH_COLUMNS:
         existing = df[col].tolist()
         merged = [
             nv if nv is not None else ev
             for nv, ev in zip(new_fin[col], existing)
         ]
         df[col] = merged
+    ensure_cache_schema(df)
 
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
@@ -1153,6 +1307,13 @@ def parse_args() -> argparse.Namespace:
         "--retry-empty-finance",
         action="store_true",
         help="从 stock_metrics.csv 找出财务字段全空的股票并重新抓取，不重新拉取行情",
+    )
+    parser.add_argument(
+        "--fill-field",
+        type=str,
+        default="",
+        metavar="列名",
+        help="对指定列为空的所有股票重新抓取财务数据（例：--fill-field 股息率）",
     )
     parser.add_argument(
         "--no-baidu",
@@ -1288,6 +1449,94 @@ def main() -> None:
         print(
             f"\n完成！stock_metrics.csv 共 {len(output)} 只 A 股，"
             f"其中 {fin_count} 只含财务数据。",
+            flush=True,
+        )
+        return
+
+    # ── --fill-field 模式：对指定列为空的股票逐只补抓单个财务字段 ──────────────
+    if args.fill_field:
+        col = args.fill_field.strip()
+        target_columns = FILL_FIELD_GROUPS.get(col, [col])
+        output = read_existing_cache()
+        if output.empty:
+            print("stock_metrics.csv 为空，请先完整运行一次。", flush=True)
+            return
+        if col not in output.columns:
+            print(f'列 [{col}] 不在 stock_metrics.csv 中，可补抓列：{ENRICH_COLUMNS}', flush=True)
+            return
+
+        missing_mask = output[col].map(to_float).isna()
+        fill_codes = output.loc[missing_mask, "代码"].tolist()
+        if args.limit > 0:
+            fill_codes = fill_codes[:args.limit]
+        if not fill_codes:
+            print(f'所有股票已有 [{col}] 数据，无需补抓。', flush=True)
+            return
+
+        limit_note = f"（仅处理前 {args.limit} 只）" if args.limit > 0 else ""
+        print(
+            f'  模式：--fill-field {col}\n'
+            f'  共 {len(output)} 只，[{col}] 为空 {len(fill_codes)} 只{limit_note}，开始补抓...',
+            flush=True,
+        )
+
+        total = len(fill_codes)
+        success = fail = timeout_count = 0
+        code_to_idx = {c: i for i, c in enumerate(output["代码"].tolist())}
+        t_start = time.time()
+
+        for seq, code in enumerate(fill_codes, 1):
+            fin, err = fetch_financial_with_timeout(ak, code)
+            idx = code_to_idx.get(code)
+            if fin and idx is not None:
+                updated_any = False
+                for target_col in target_columns:
+                    if target_col in fin:
+                        output.at[idx, target_col] = fin[target_col]
+                        updated_any = True
+                if updated_any:
+                    output = ensure_cache_schema(output)
+                    success += 1
+                    continue
+            if fin and idx is not None:
+                label = "失败或无该字段"
+                fail += 1
+            else:
+                label = "超时" if err == "TIMEOUT" else "失败或无该字段"
+                if err == "TIMEOUT":
+                    timeout_count += 1
+                else:
+                    fail += 1
+            if err and err != "TIMEOUT":
+                print(f"  [{code}] {label}：{err}", flush=True)
+
+            if seq % 10 == 0 or seq == total:
+                elapsed = time.time() - t_start
+                rate = seq / elapsed if elapsed > 0 else 0
+                eta = (total - seq) / rate if rate > 0 else 0
+                print(
+                    f"  [{seq:5d}/{total}] 成功 {success}  超时 {timeout_count}"
+                    f"  失败 {fail}  {rate:.2f}只/s  剩余≈{eta/60:.1f}min",
+                    flush=True,
+                )
+            if seq % 100 == 0:
+                save_cache(output, CHECKPOINT_FILE)
+                print(f"  ✓ 检查点 {seq}/{total}", flush=True)
+
+            time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
+
+        if CHECKPOINT_FILE.exists():
+            CHECKPOINT_FILE.unlink()
+        try:
+            save_cache(output)
+        except Exception as exc:  # noqa: BLE001
+            print(f"保存 stock_metrics.csv 失败：{exc}", flush=True)
+            return
+
+        filled = int(output[col].map(to_float).notna().sum())
+        print(
+            f'\n完成！[{col}] 现已覆盖 {filled}/{len(output)} 只股票'
+            f'（成功 {success} / 超时 {timeout_count} / 失败 {fail}）。',
             flush=True,
         )
         return

@@ -28,29 +28,30 @@ FINANCIAL_FIELD_ALIASES = {
 }
 
 STOCK_FIELD_ALIASES = {
-    "code": "股票代码",
-    "name": "股票名称",
-    "industry": "所属行业",
-    "price": "最新收盘价",
-    "pct_change": "涨跌幅",
-    "turnover": "成交额",
-    "pe": "市盈率-动态",
-    "pb": "市净率",
-    "turnover_rate": "换手率",
-    "market_cap": "总市值",
-    "float_market_cap": "流通市值",
-    "volume_ratio": "量比",
-    "amplitude": "振幅",
-    "in_out_ratio": "内外盘比例",
-    "roe": "ROE",
-    "net_margin": "净利率",
-    "gross_margin": "毛利率",
-    "revenue_growth": "营收增长率",
-    "profit_growth": "净利润增长率",
-    "debt_ratio": "资产负债率",
-    "cashflow_profit_ratio": "经营现金流/净利润",
-    "data_source": "数据来源",
-    "updated_at": "更新时间",
+    "code": ["代码", "股票代码"],
+    "name": ["名称", "股票名称"],
+    "industry": ["所属行业"],
+    "price": ["最新价", "最新收盘价"],
+    "pct_change": ["涨跌幅"],
+    "turnover": ["成交额"],
+    "pe": ["市盈率-动态"],
+    "pb": ["市净率"],
+    "turnover_rate": ["换手率"],
+    "market_cap": ["总市值"],
+    "float_market_cap": ["流通市值"],
+    "volume_ratio": ["量比"],
+    "amplitude": ["振幅"],
+    "in_out_ratio": ["内外盘比例"],
+    "roe": ["ROE"],
+    "net_margin": ["净利率"],
+    "gross_margin": ["毛利率"],
+    "revenue_growth": ["营收增长率"],
+    "profit_growth": ["净利润增长率"],
+    "debt_ratio": ["资产负债率"],
+    "cashflow_profit_ratio": ["经营现金流/净利润", "经营现金流/净利润_近1期"],
+    "dividend_yield": ["股息率", "股息率_近1期"],
+    "data_source": ["数据来源"],
+    "updated_at": ["更新时间"],
 }
 
 FAMILY_FOCUS_LABELS = {
@@ -918,9 +919,13 @@ def stock_value(stock: dict[str, Any], field: str) -> Any:
     value = stock.get(field)
     if value is not None:
         return value
-    legacy_name = STOCK_FIELD_ALIASES.get(field)
-    if legacy_name:
-        return stock.get(legacy_name)
+    aliases = STOCK_FIELD_ALIASES.get(field) or []
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    for alias in aliases:
+        legacy_value = stock.get(alias)
+        if legacy_value is not None:
+            return legacy_value
     return None
 
 
@@ -984,6 +989,7 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     profit_growth = values["profit_growth"] or 0
     debt_ratio = values["debt_ratio"] if values["debt_ratio"] is not None else 0.7
     cash_profit = values["cashflow_profit_ratio"] if values["cashflow_profit_ratio"] is not None else 0.5
+    dividend_yield = to_float(stock_value(stock, "dividend_yield")) or 0
 
     # ── 财务评分（总满分 100 分）──────────────────────────────────────
     # 每项用 _score_linear 严格限制在 [0, max_pts]，防止高值溢出破坏权重。
@@ -1031,6 +1037,10 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     # 现金流质量是利润真实性的最重要验证，给最高权重
     score += _score_linear(cash_profit, poor=0.0, excellent=1.0, max_pts=19)
 
+    # 股息率（11 分）：0% → 0 分，≥4% → 满分
+    # 稳定分红佐证现金流充裕；无分红不扣分（成长型公司常见）
+    score += _score_linear(dividend_yield, poor=0.0, excellent=0.04, max_pts=11)
+
     score -= missing_count * 4
     score = clamp(score)
 
@@ -1064,6 +1074,11 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
 
     if cash_profit < 0.8:
         notes.append(f"{name} 经营现金流/净利润（账面利润有多少真正变成了现金）不够理想。")
+
+    if dividend_yield >= 0.03:
+        notes.append(f"{name} 股息率（{dividend_yield:.1%}），有一定分红回报，现金流相对充裕。")
+    elif dividend_yield > 0:
+        notes.append(f"{name} 有少量分红（股息率 {dividend_yield:.1%}）。")
 
     if not notes:
         notes.append(f"{name} 的公司底子没有特别刺眼的问题。")
@@ -1374,6 +1389,7 @@ def analyze_portfolio(
                 "profit_growth": stock_value(stock, "profit_growth"),
                 "debt_ratio": stock_value(stock, "debt_ratio"),
                 "cashflow_profit_ratio": stock_value(stock, "cashflow_profit_ratio"),
+                "dividend_yield": stock_value(stock, "dividend_yield"),
                 "updated_at": stock_value(stock, "updated_at"),
                 "level": item_level[0],
                 "color": item_level[1],

@@ -71,6 +71,10 @@ CACHE_CANDIDATES = [
     Path.cwd() / "stock_metrics.csv",
 ]
 
+HISTORY_PERIOD_LABELS = ("近1期", "近2期", "近3期")
+CASHFLOW_HISTORY_COLUMNS = [f"经营现金流/净利润_{label}" for label in HISTORY_PERIOD_LABELS]
+DIVIDEND_HISTORY_COLUMNS = [f"股息率_{label}" for label in HISTORY_PERIOD_LABELS]
+
 CACHE_COLUMNS = [
     "代码",
     "名称",
@@ -93,6 +97,9 @@ CACHE_COLUMNS = [
     "净利润增长率",
     "资产负债率",
     "经营现金流/净利润",
+    *CASHFLOW_HISTORY_COLUMNS,
+    "股息率",
+    *DIVIDEND_HISTORY_COLUMNS,
     "数据来源",
     "更新时间",
 ]
@@ -119,6 +126,7 @@ FIELD_MAP = {
     "profit_growth": "净利润增长率",
     "debt_ratio": "资产负债率",
     "cashflow_profit_ratio": "经营现金流/净利润",
+    "dividend_yield": "股息率",
     "data_source": "数据来源",
     "updated_at": "更新时间",
 }
@@ -132,6 +140,11 @@ FINANCIAL_COLUMNS = [
     "资产负债率",
     "经营现金流/净利润",
 ]
+
+COLUMN_FALLBACKS = {
+    "经营现金流/净利润_近1期": ["经营现金流/净利润"],
+    "股息率_近1期": ["股息率"],
+}
 
 ALIASES = {
     "代码": ["代码", "股票代码", "code"],
@@ -155,6 +168,13 @@ ALIASES = {
     "净利润增长率": ["净利润增长率", "profit_growth"],
     "资产负债率": ["资产负债率", "debt_ratio"],
     "经营现金流/净利润": ["经营现金流/净利润", "cashflow_profit_ratio"],
+    "经营现金流/净利润_近1期": ["经营现金流/净利润_近1期", "经营现金流/净利润"],
+    "经营现金流/净利润_近2期": ["经营现金流/净利润_近2期"],
+    "经营现金流/净利润_近3期": ["经营现金流/净利润_近3期"],
+    "股息率": ["股息率", "dividend_yield"],
+    "股息率_近1期": ["股息率_近1期", "股息率", "dividend_yield"],
+    "股息率_近2期": ["股息率_近2期"],
+    "股息率_近3期": ["股息率_近3期"],
     "数据来源": ["数据来源", "data_source"],
     "更新时间": ["更新时间", "updated_at"],
 }
@@ -352,25 +372,46 @@ def _first_present(row: pd.Series | dict[str, Any], names: list[str]) -> Any:
     return None
 
 
+def _coalesce_numeric_columns(df: pd.DataFrame, target: str, fallbacks: list[str]) -> None:
+    if target not in df.columns:
+        df[target] = None
+    for fallback in fallbacks:
+        if fallback not in df.columns:
+            continue
+        mask = df[target].map(_to_float).isna()
+        if mask.any():
+            df.loc[mask, target] = df.loc[mask, fallback]
+
+
+def _ensure_cache_schema(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    for column in CACHE_COLUMNS:
+        aliases = ALIASES.get(column, [column])
+        source = next((alias for alias in aliases if alias in normalized.columns), None)
+        if source is None:
+            fallback = next((name for name in COLUMN_FALLBACKS.get(column, []) if name in normalized.columns), None)
+            normalized[column] = normalized[fallback] if fallback else None
+        elif source != column:
+            normalized[column] = normalized[source]
+
+    _coalesce_numeric_columns(normalized, "经营现金流/净利润_近1期", ["经营现金流/净利润"])
+    _coalesce_numeric_columns(normalized, "股息率_近1期", ["股息率"])
+    _coalesce_numeric_columns(normalized, "经营现金流/净利润", ["经营现金流/净利润_近1期"])
+    _coalesce_numeric_columns(normalized, "股息率", ["股息率_近1期"])
+    return normalized
+
+
 def _read_cache() -> pd.DataFrame:
     cache_file = _resolve_cache_file()
     df = pd.read_csv(cache_file, dtype={"代码": str, "股票代码": str})
-    normalized = pd.DataFrame()
-    for column in CACHE_COLUMNS:
-        aliases = ALIASES.get(column, [column])
-        source = next((alias for alias in aliases if alias in df.columns), None)
-        normalized[column] = df[source] if source else None
-
+    normalized = _ensure_cache_schema(df)
     normalized["代码"] = normalized["代码"].map(normalize_code)
     normalized = normalized[normalized["代码"] != ""]
     return normalized
 
 
 def _write_cache(df: pd.DataFrame) -> None:
-    for column in CACHE_COLUMNS:
-        if column not in df.columns:
-            df[column] = None
-    output = df[CACHE_COLUMNS].copy()
+    output = _ensure_cache_schema(df)[CACHE_COLUMNS].copy()
     output["代码"] = output["代码"].map(normalize_code)
     output = output[output["代码"] != ""]
     output = output.drop_duplicates(subset=["代码"], keep="last")
@@ -455,6 +496,13 @@ def _cache_to_analyzer_row(row: dict[str, Any] | None, code: str) -> dict[str, A
             "profit_growth": None,
             "debt_ratio": None,
             "cashflow_profit_ratio": None,
+            "cashflow_profit_ratio_p1": None,
+            "cashflow_profit_ratio_p2": None,
+            "cashflow_profit_ratio_p3": None,
+            "dividend_yield": None,
+            "dividend_yield_p1": None,
+            "dividend_yield_p2": None,
+            "dividend_yield_p3": None,
             "data_source": "数据缺失",
             "updated_at": _now_text(),
             "股票代码": normalize_code(code),
@@ -478,6 +526,13 @@ def _cache_to_analyzer_row(row: dict[str, Any] | None, code: str) -> dict[str, A
             "净利润增长率": None,
             "资产负债率": None,
             "经营现金流/净利润": None,
+            "经营现金流/净利润_近1期": None,
+            "经营现金流/净利润_近2期": None,
+            "经营现金流/净利润_近3期": None,
+            "股息率": None,
+            "股息率_近1期": None,
+            "股息率_近2期": None,
+            "股息率_近3期": None,
             "数据来源": "数据缺失",
             "市场数据来源": "数据缺失",
             "财务数据来源": "数据缺失",
@@ -487,6 +542,18 @@ def _cache_to_analyzer_row(row: dict[str, Any] | None, code: str) -> dict[str, A
 
     has_finance = any(_to_float(row.get(column)) is not None for column in FINANCIAL_COLUMNS)
     source = row.get("数据来源") or "本地缓存"
+    cashflow_latest = _to_float(row.get("经营现金流/净利润"))
+    if cashflow_latest is None:
+        cashflow_latest = _to_float(row.get("经营现金流/净利润_近1期"))
+    dividend_latest = _to_float(row.get("股息率"))
+    if dividend_latest is None:
+        dividend_latest = _to_float(row.get("股息率_近1期"))
+    cashflow_p1 = _to_float(row.get("经营现金流/净利润_近1期"))
+    if cashflow_p1 is None:
+        cashflow_p1 = cashflow_latest
+    dividend_p1 = _to_float(row.get("股息率_近1期"))
+    if dividend_p1 is None:
+        dividend_p1 = dividend_latest
     standard = {
         "code": normalize_code(row.get("代码")),
         "name": row.get("名称") or normalize_code(code),
@@ -508,7 +575,14 @@ def _cache_to_analyzer_row(row: dict[str, Any] | None, code: str) -> dict[str, A
         "revenue_growth": _to_float(row.get("营收增长率")),
         "profit_growth": _to_float(row.get("净利润增长率")),
         "debt_ratio": _to_float(row.get("资产负债率")),
-        "cashflow_profit_ratio": _to_float(row.get("经营现金流/净利润")),
+        "cashflow_profit_ratio": cashflow_latest,
+        "cashflow_profit_ratio_p1": cashflow_p1,
+        "cashflow_profit_ratio_p2": _to_float(row.get("经营现金流/净利润_近2期")),
+        "cashflow_profit_ratio_p3": _to_float(row.get("经营现金流/净利润_近3期")),
+        "dividend_yield": dividend_latest,
+        "dividend_yield_p1": dividend_p1,
+        "dividend_yield_p2": _to_float(row.get("股息率_近2期")),
+        "dividend_yield_p3": _to_float(row.get("股息率_近3期")),
         "data_source": source,
         "updated_at": row.get("更新时间") or _now_text(),
     }
@@ -535,6 +609,13 @@ def _cache_to_analyzer_row(row: dict[str, Any] | None, code: str) -> dict[str, A
         "净利润增长率": standard["profit_growth"],
         "资产负债率": standard["debt_ratio"],
         "经营现金流/净利润": standard["cashflow_profit_ratio"],
+        "经营现金流/净利润_近1期": standard["cashflow_profit_ratio_p1"],
+        "经营现金流/净利润_近2期": standard["cashflow_profit_ratio_p2"],
+        "经营现金流/净利润_近3期": standard["cashflow_profit_ratio_p3"],
+        "股息率": standard["dividend_yield"],
+        "股息率_近1期": standard["dividend_yield_p1"],
+        "股息率_近2期": standard["dividend_yield_p2"],
+        "股息率_近3期": standard["dividend_yield_p3"],
         "数据来源": standard["data_source"],
         "市场数据来源": source,
         "财务数据来源": source if has_finance else "数据缺失",
