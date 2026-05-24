@@ -22,13 +22,13 @@ jobs:
           pip install akshare pandas requests urllib3
 
       - name: Build industry map
-        working-directory: Family_Investment_Agent
+        
         run: python build_industry_map.py
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Family_Investment_Agent/industry_map.csv
+          git add industry_map.csv
           git diff --cached --quiet || git commit -m "chore: update industry_map.csv"
           git push
