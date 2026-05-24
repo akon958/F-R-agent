@@ -3140,6 +3140,7 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
     risk_factors = agent_result.get("risk_factors") or {}
     top_focus = [item for item in list(risk_factors.get("top_focus") or []) if isinstance(item, dict)]
     confidence = agent_result.get("data_confidence") or {}
+    missing_data = agent_result.get("missing_data") or {}
     if not top_focus and not confidence:
         return
 
@@ -3162,6 +3163,38 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
         for item in top_focus[:2]
     )
     conf_text = str(confidence.get("summary") or "")
+    missing_sections: list[str] = []
+    for title, items in missing_data.items():
+        valid_items = [str(item).strip() for item in list(items or []) if str(item).strip()]
+        if not valid_items:
+            continue
+        preview = "、".join(html_escape(item) for item in valid_items[:3])
+        remainder = len(valid_items) - 3
+        if remainder > 0:
+            preview = f"{preview} 等 {len(valid_items)} 只"
+        note = "本次不评价估值高低" if "估值" in str(title) else "已按保守口径处理"
+        missing_sections.append(
+            f"""
+            <li style="margin:0.18rem 0;line-height:1.5;">
+                <strong style="color:var(--text);">{html_escape(str(title))}</strong>
+                <span style="color:var(--text-2);">：{preview}</span>
+                <span style="color:var(--text-3);">（{html_escape(note)}）</span>
+            </li>
+            """
+        )
+    missing_html = (
+        f"""
+        <div style="margin-top:0.55rem;padding:0.58rem 0.7rem;border-radius:10px;
+                    border:1px solid rgba(185,122,26,0.22);background:rgba(185,122,26,0.07);">
+            <div style="font-size:0.73rem;font-weight:700;color:var(--text);margin-bottom:0.16rem;">
+                这次缺失的数据
+            </div>
+            <ul style="margin:0;padding-left:1rem;font-size:0.74rem;color:var(--text-2);">
+                {''.join(missing_sections)}
+            </ul>
+        </div>
+        """
+    ) if missing_sections else ""
     # 外层 expander 标题已包含 "Agent 主动判断" 和数据可信度，此处不再重复显示
     _conf_inline_html = (
         f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.5rem 0 0;">'
@@ -3176,6 +3209,7 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
                 {chips}
             </div>
             {_conf_inline_html}
+            {missing_html}
         </section>
         """
     )
@@ -4680,10 +4714,14 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             st.markdown("**数据缺失说明**")
             for title, items in missing_data.items():
                 if items:
+                    labels = [str(item).strip() for item in items if str(item).strip()]
+                    names = "、".join(labels)
                     if "估值" in title:
-                        st.caption("· 估值数据暂缺，本次不评价估值高低。")
+                        st.caption(f"· {title}：{names}")
+                        st.caption("  影响：估值数据暂缺，本次不评价估值高低。")
                     else:
-                        st.caption(f"· {title}：{len(items)} 只数据缺失")
+                        st.caption(f"· {title}：{names}")
+                        st.caption("  影响：这部分已按保守口径处理。")
 
 
 def history_replay_block(agent_result: dict[str, Any] | None) -> None:
