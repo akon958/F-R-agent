@@ -25,6 +25,7 @@ FAMILY_COMMENTS_FILE = BASE_DIR / "family_comments.csv"
 FAMILY_ACCOUNTS_FILE = BASE_DIR / "family_accounts.csv"
 NOTES_FILE = BASE_DIR / "family_notes.json"
 MAX_NOTES = 200
+GUEST_FAMILY_ID_PREFIX = "guest_"
 COMMENT_FOCUS_MAP = {
     "现金比例": "cash",
     "持仓集中": "concentration",
@@ -81,6 +82,11 @@ def get_family_id() -> str:
     except Exception:  # noqa: BLE001
         pass
     return "default_family"
+
+
+def is_guest_family_id(family_id: str | None = None) -> bool:
+    current = str(family_id or get_family_id() or "").strip().lower()
+    return current.startswith(GUEST_FAMILY_ID_PREFIX)
 
 
 def _now_iso() -> str:
@@ -385,6 +391,12 @@ def get_supabase_client() -> Any | None:
 
 
 def get_storage_status() -> dict[str, Any]:
+    if is_guest_family_id():
+        return {
+            "backend": "guest_local",
+            "connected": False,
+            "message": "当前为游客模式：只保存在本地，不上传云端。",
+        }
     client = get_supabase_client()
     if client is None:
         return {
@@ -447,7 +459,9 @@ def _analysis_payload(record: dict[str, Any]) -> dict[str, Any]:
 def save_analysis_history(record: dict[str, Any]) -> bool:
     global _LAST_ANALYSIS_SAVE_STATUS
     payload = _analysis_payload(record)
-    client = get_supabase_client()
+    family_id = str(payload.get("family_id") or get_family_id())
+    guest_mode = is_guest_family_id(family_id)
+    client = None if guest_mode else get_supabase_client()
     if client is not None:
         try:
             client.table("analysis_history").insert(payload).execute()
@@ -467,7 +481,7 @@ def save_analysis_history(record: dict[str, Any]) -> bool:
         local_row[key] = _json_text(local_row.get(key))
     saved = _append_csv_row(ANALYSIS_HISTORY_FILE, local_row)
     _LAST_ANALYSIS_SAVE_STATUS = {
-        "backend": "local_csv",
+        "backend": "guest_local" if guest_mode else "local_csv",
         "connected": False,
         "saved": saved,
         "message": (
@@ -499,7 +513,7 @@ def _normalize_analysis_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def load_recent_analysis_history(limit: int = 5, family_id: str | None = None) -> list[dict[str, Any]]:
     _fid = family_id or get_family_id()
-    client = get_supabase_client()
+    client = None if is_guest_family_id(_fid) else get_supabase_client()
     if client is not None:
         try:
             result = (
@@ -543,7 +557,9 @@ def save_followup_history(
         "answer": str(answer),
         "related_analysis_id": related_analysis_id,
     }
-    client = get_supabase_client()
+    family_id = str(payload.get("family_id") or get_family_id())
+    guest_mode = is_guest_family_id(family_id)
+    client = None if guest_mode else get_supabase_client()
     if client is not None:
         try:
             client.table("followup_history").insert(payload).execute()
@@ -566,7 +582,7 @@ def save_followup_history(
     local_row["error"] = error
     saved = _append_csv_row(FOLLOWUP_HISTORY_FILE, local_row)
     _LAST_FOLLOWUP_SAVE_STATUS = {
-        "backend": "local_csv",
+        "backend": "guest_local" if guest_mode else "local_csv",
         "connected": False,
         "saved": saved,
         "message": "追问记录已保存到本地" if saved else "追问记录保存失败",
@@ -577,7 +593,7 @@ def save_followup_history(
 
 def load_recent_followup_history(limit: int = 10, family_id: str | None = None) -> list[dict[str, Any]]:
     _fid = family_id or get_family_id()
-    client = get_supabase_client()
+    client = None if is_guest_family_id(_fid) else get_supabase_client()
     if client is not None:
         try:
             result = (
@@ -608,7 +624,8 @@ def save_feedback_history(
         "feedback_text": feedback_text,
         "selected_followup_question": selected_followup_question,
     }
-    client = get_supabase_client()
+    family_id = str(payload.get("family_id") or get_family_id())
+    client = None if is_guest_family_id(family_id) else get_supabase_client()
     if client is not None:
         try:
             client.table("feedback_history").insert(payload).execute()
@@ -663,7 +680,9 @@ def save_family_comment(comment: dict[str, Any]) -> dict[str, Any]:
     """Save one family observation comment. Supabase first, local CSV fallback."""
     global _LAST_COMMENT_SAVE_STATUS, _LAST_FAMILY_COMMENT_SAVE_STATUS
     payload = _comment_payload(comment)
-    client = get_supabase_client()
+    family_id = str(payload.get("family_id") or get_family_id())
+    guest_mode = is_guest_family_id(family_id)
+    client = None if guest_mode else get_supabase_client()
     if client is not None:
         minimal_payload = {
             "family_id": payload["family_id"],
@@ -717,8 +736,8 @@ def save_family_comment(comment: dict[str, Any]) -> dict[str, Any]:
         local_row["related_analysis_id"] = ""
     saved = _append_csv_row(FAMILY_COMMENTS_FILE, local_row)
     _LAST_COMMENT_SAVE_STATUS = _LAST_FAMILY_COMMENT_SAVE_STATUS = {
-        "success": False,
-        "backend": "local_csv",
+        "success": bool(saved and guest_mode),
+        "backend": "guest_local" if guest_mode else "local_csv",
         "connected": False,
         "saved": saved,
         "message": (
@@ -729,8 +748,8 @@ def save_family_comment(comment: dict[str, Any]) -> dict[str, Any]:
         "error": "" if saved and client is None else cloud_error,
     }
     return {
-        "success": False,
-        "backend": "local_csv",
+        "success": bool(saved and guest_mode),
+        "backend": "guest_local" if guest_mode else "local_csv",
         "error": "" if saved and client is None else cloud_error,
     }
 
@@ -757,7 +776,8 @@ def load_recent_family_comments(limit: int = 20, family_id: str | None = None) -
     """Return recent family comments, newest first."""
     global _LAST_FAMILY_COMMENT_READ_STATUS
     _fid = family_id or get_family_id()
-    client = get_supabase_client()
+    guest_mode = is_guest_family_id(_fid)
+    client = None if guest_mode else get_supabase_client()
     if client is not None:
         try:
             result = (
@@ -789,7 +809,7 @@ def load_recent_family_comments(limit: int = 20, family_id: str | None = None) -
     rows = [row for row in reversed(_read_csv_rows(FAMILY_COMMENTS_FILE)) if _same_family(row, _fid)]
     normalized = [_normalize_comment_row(r) for r in rows[:limit]]
     _LAST_FAMILY_COMMENT_READ_STATUS = {
-        "backend": "local_csv",
+        "backend": "guest_local" if guest_mode else "local_csv",
         "connected": False,
         "count": len(normalized),
         "message": "已从本地 CSV 读取家庭观察记录",
@@ -821,7 +841,7 @@ def load_comments_by_run_id(run_id: str) -> list[dict[str, Any]]:
     """Return all comments associated with a specific run_id."""
     if not run_id:
         return []
-    client = get_supabase_client()
+    client = None if is_guest_family_id() else get_supabase_client()
     if client is not None:
         try:
             result = (
@@ -846,7 +866,7 @@ def load_comments_by_analysis(analysis_id: Any) -> list[dict[str, Any]]:
     if not analysis_id:
         return []
     aid = str(analysis_id)
-    client = get_supabase_client()
+    client = None if is_guest_family_id() else get_supabase_client()
     if client is not None:
         try:
             result = (
@@ -879,7 +899,8 @@ def save_family_profile(profile: dict[str, Any]) -> bool:
         "explanation_level": str(profile.get("explanation_level", "")),
         "updated_at": _now_iso(),
     }
-    client = get_supabase_client()
+    family_id = str(payload.get("family_id") or get_family_id())
+    client = None if is_guest_family_id(family_id) else get_supabase_client()
     if client is not None:
         try:
             client.table("family_profile").upsert(payload, on_conflict="family_id").execute()
@@ -898,7 +919,7 @@ def load_family_profile(family_id: str | None = None) -> dict[str, Any] | None:
         return item
 
     _fid = family_id or get_family_id()
-    client = get_supabase_client()
+    client = None if is_guest_family_id(_fid) else get_supabase_client()
     if client is not None:
         try:
             result = (
@@ -992,7 +1013,7 @@ class SupabaseStorage(StorageBackend):
 
 
 def get_storage() -> StorageBackend:
-    client = get_supabase_client()
+    client = None if is_guest_family_id() else get_supabase_client()
     if client is not None:
         return SupabaseStorage(client)
     return LocalStorage()

@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import os
+import secrets
 from html import escape
 from math import pi
 from typing import Any
@@ -233,6 +234,14 @@ def _apply_family_login(result: dict[str, Any]) -> None:
     st.session_state["family_account_backend"] = str(result.get("backend") or "")
 
 
+def _apply_guest_login() -> None:
+    _clear_user_runtime_state()
+    st.session_state["family_logged_in"] = True
+    st.session_state["family_id"] = f"guest_{secrets.token_hex(6)}"
+    st.session_state["family_account_name"] = "游客模式"
+    st.session_state["family_account_backend"] = "guest_local"
+
+
 def _logout_family() -> None:
     for key in ("family_logged_in", "family_id", "family_account_name", "family_account_backend"):
         st.session_state.pop(key, None)
@@ -242,13 +251,18 @@ def _logout_family() -> None:
 def auth_gate() -> bool:
     """Small account gate so each family reads and writes its own records."""
     if st.session_state.get("family_logged_in") and st.session_state.get("family_id"):
+        is_guest_mode = st.session_state.get("family_account_backend") == "guest_local"
         c1, c2 = st.columns([4, 1])
         with c1:
-            st.caption(
-                f"当前家庭账号：{st.session_state.get('family_account_name') or get_family_id()}"
-            )
+            if is_guest_mode:
+                st.caption("当前模式：游客入口（仅本地保存，不上传云端）")
+            else:
+                st.caption(
+                    f"当前家庭账号：{st.session_state.get('family_account_name') or get_family_id()}"
+                )
         with c2:
-            if st.button("退出", key="family_logout_btn", use_container_width=True):
+            button_label = "退出游客模式" if is_guest_mode else "退出"
+            if st.button(button_label, key="family_logout_btn", use_container_width=True):
                 _logout_family()
                 st.rerun()
         return True
@@ -259,12 +273,12 @@ def auth_gate() -> bool:
             <div class="fr-eyebrow">Family Account</div>
             <h2 style="margin:0.15rem 0 0.35rem;">进入 FamilyReader</h2>
             <p style="margin:0;color:var(--text-2);">
-                创建一个家庭账号后，体检记录、AI 追问和家人看法会按账号分开保存。
+                可以登录家庭账号，也可以先用游客入口收集意见。游客模式只保存在本地，不上传云端。
             </p>
         </div>
         """
     )
-    tab_login, tab_create = st.tabs(["登录", "创建账号"])
+    tab_login, tab_create, tab_guest = st.tabs(["登录", "创建账号", "游客入口"])
     with tab_login:
         login_name = st.text_input("家庭账号", key="login_family_name")
         login_password = st.text_input("密码", key="login_family_password", type="password")
@@ -295,6 +309,11 @@ def auth_gate() -> bool:
                         st.error(f"账号创建成功但无法登录：{exc}")
                 else:
                     st.warning(result.get("message") or "账号创建失败，请稍后再试。")
+    with tab_guest:
+        st.caption("适合临时体验或收集家人意见。游客模式只写本地文件，不写入 Supabase 云端。")
+        if st.button("以游客身份进入", key="family_guest_btn", use_container_width=True):
+            _apply_guest_login()
+            st.rerun()
     st.caption("密码只用于区分家庭数据；不要使用银行卡、支付软件等重要密码。")
     return False
 
@@ -3781,6 +3800,9 @@ def discussion_block(run_id: str = "") -> None:
         if result.get("success") and result.get("backend") == "supabase":
             st.session_state["family_comment_notice"] = "观察记录已保存到云端"
             st.session_state["family_comment_notice_detail"] = ""
+        elif result.get("success") and result.get("backend") == "guest_local":
+            st.session_state["family_comment_notice"] = "观察记录已保存到本地（游客模式）"
+            st.session_state["family_comment_notice_detail"] = ""
         elif result.get("backend") == "local_csv" and save_status.get("saved"):
             st.session_state["family_comment_notice"] = "观察记录已保存到本地，云端同步失败"
             st.session_state["family_comment_notice_detail"] = str(save_status.get("error", "") or result.get("error", ""))
@@ -3792,7 +3814,9 @@ def discussion_block(run_id: str = "") -> None:
     notice = st.session_state.pop("family_comment_notice", "")
     notice_detail = st.session_state.pop("family_comment_notice_detail", "")
     if notice:
-        if "失败" in notice or "本地" in notice:
+        if "游客模式" in notice:
+            st.success(notice)
+        elif "失败" in notice or "本地" in notice:
             st.warning(notice)
             if notice_detail:
                 with st.expander("查看云端同步失败原因", expanded=False):
@@ -3896,7 +3920,11 @@ def followup_source_label(source: str) -> str:
 def followup_save_label(item: dict[str, Any]) -> str:
     if item.get("saved") == "true":
         backend = item.get("save_backend", "local_csv")
-        return "已保存到云端" if backend == "supabase" else "已保存到本地"
+        if backend == "supabase":
+            return "已保存到云端"
+        if backend == "guest_local":
+            return "仅游客本地保存"
+        return "已保存到本地"
     if item.get("saved") == "false":
         return "保存失败"
     return "保存状态未知"
@@ -5153,7 +5181,13 @@ def followup_page(agent_result: dict[str, Any]) -> None:
     with st.expander("追问历史保存情况", expanded=False):
         latest_status = st.session_state.get("last_followup_save") or get_last_followup_save_status()
         backend = latest_status.get("backend", "local_csv")
-        backend_label = "Supabase 云数据库" if backend == "supabase" else "本地 CSV"
+        backend_label = (
+            "Supabase 云数据库"
+            if backend == "supabase"
+            else "游客本地模式"
+            if backend == "guest_local"
+            else "本地 CSV"
+        )
         saved_label = "已保存" if latest_status.get("saved") else "未保存"
         st.write(f"- 最近一次保存状态：{saved_label}")
         st.write(f"- 保存位置：{backend_label}")
