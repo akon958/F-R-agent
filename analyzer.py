@@ -645,8 +645,12 @@ def assess_data_confidence(
         level, level_code = "中等", "medium"
         if missing_value_n and not missing_finance_n:
             summary = "估值数据不完整，本次不评价估值高低"
+        elif missing_finance_n > 0:
+            summary = "部分财务数据不完整，已按保守口径处理"
         elif stale_count:
             summary = "部分缓存时间偏旧，已保守处理"
+        elif cap_reasons:
+            summary = "数据基本完整，但本次评分按风险规则保守限制"
         else:
             summary = "部分数据不完整，已保守处理"
     else:

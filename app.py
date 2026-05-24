@@ -3163,6 +3163,11 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
         for item in top_focus[:2]
     )
     conf_text = str(confidence.get("summary") or "")
+    confidence_issues = [
+        str(item).strip()
+        for item in list(confidence.get("issues") or [])
+        if str(item).strip()
+    ]
     missing_sections: list[str] = []
     for title, items in missing_data.items():
         valid_items = [str(item).strip() for item in list(items or []) if str(item).strip()]
@@ -3200,6 +3205,13 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
         f'<p style="font-size:0.74rem;color:var(--text-3);margin:0.5rem 0 0;">'
         f'{html_escape(conf_text)}</p>'
     ) if conf_text else ""
+    issue_html = (
+        f"""
+        <ul style="margin:0.42rem 0 0;padding-left:1rem;font-size:0.73rem;color:var(--text-3);">
+            {''.join(f'<li style="margin:0.14rem 0;">{html_escape(item)}</li>' for item in confidence_issues[:3])}
+        </ul>
+        """
+    ) if confidence_issues else ""
     render_html(
         f"""
         <section style="margin:0 0 0.55rem;border:1.5px solid var(--border);
@@ -3209,6 +3221,7 @@ def agent_focus_block(agent_result: dict[str, Any]) -> None:
                 {chips}
             </div>
             {_conf_inline_html}
+            {issue_html}
             {missing_html}
         </section>
         """
