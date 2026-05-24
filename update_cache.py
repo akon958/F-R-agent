@@ -281,6 +281,16 @@ def split_finance_supported_codes(codes: list[str]) -> tuple[list[str], list[str
             supported.append(normalized)
     return supported, skipped
 
+
+def _field_coverage(df: Any, columns: list[str]) -> tuple[int, int]:
+    if df is None or df.empty:
+        return 0, 0
+    present = 0
+    for _, row in df.iterrows():
+        if any(to_float(row.get(column)) is not None for column in columns):
+            present += 1
+    return present, len(df)
+
 def read_existing_cache() -> Any:
     if not CACHE_FILE.exists():
         return pd.DataFrame(columns=CACHE_COLUMNS)
@@ -962,7 +972,9 @@ def _extract_dividend_history(df: Any) -> dict[str, float]:
         value = to_float(row.get(yield_column))
         if value is None:
             continue
-        values.append(value / 100.0)
+        # AkShare dividend fields are not perfectly consistent across sources:
+        # some return percent values like 3.2, others decimal rates like 0.032.
+        values.append(value / 100.0 if value > 1 else value)
         if len(values) >= len(DIVIDEND_HISTORY_COLUMNS):
             break
 
@@ -1465,11 +1477,17 @@ def main() -> None:
             print(f'列 [{col}] 不在 stock_metrics.csv 中，可补抓列：{ENRICH_COLUMNS}', flush=True)
             return
 
-        missing_mask = output[col].map(to_float).isna()
+        already_filled, total_rows = _field_coverage(output, target_columns)
+        print(f"  当前 [{col}] 相关列覆盖：{already_filled}/{total_rows}。", flush=True)
+
+        missing_mask = output[target_columns].apply(
+            lambda row: all(to_float(value) is None for value in row),
+            axis=1,
+        )
         fill_codes = output.loc[missing_mask, "代码"].tolist()
+        fill_codes, unsupported_codes = split_finance_supported_codes(fill_codes)
         if args.limit > 0:
             fill_codes = fill_codes[:args.limit]
-        fill_codes, unsupported_codes = split_finance_supported_codes(fill_codes)
         if not fill_codes:
             if unsupported_codes:
                 print(f'[{col}] 当前为空的标的大多属于当前财务接口不支持的市场（如北交所），本轮不再继续请求。', flush=True)
@@ -1503,6 +1521,8 @@ def main() -> None:
                 if updated_any:
                     output = ensure_cache_schema(output)
                     success += 1
+                    filled_now, _ = _field_coverage(output, target_columns)
+                    print(f"  [{code}] 已补到 {', '.join([c for c in target_columns if c in fin])}；当前覆盖 {filled_now}/{len(output)}", flush=True)
                     continue
             if fin and idx is not None:
                 label = "失败或无该字段"
@@ -1528,6 +1548,9 @@ def main() -> None:
             if seq % 100 == 0:
                 save_cache(output, CHECKPOINT_FILE)
                 print(f"  ✓ 检查点 {seq}/{total}", flush=True)
+            elif success > 0 and success % 20 == 0:
+                save_cache(output, CHECKPOINT_FILE)
+                print(f"  ✓ 成功 {success} 只，已保存临时检查点。", flush=True)
 
             time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
 
