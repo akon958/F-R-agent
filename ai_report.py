@@ -7,7 +7,7 @@ from typing import Any
 
 from config import DEFAULT_FOLLOWUP_QUESTIONS, FIXED_DISCLAIMER as DISCLAIMER
 from question_router import route_slash_command
-from validator import sanitize_compliance_text
+from validator import sanitize_compliance_text, scan_financial_claims
 
 
 FOLLOWUP_QUESTIONS = list(DEFAULT_FOLLOWUP_QUESTIONS)
@@ -222,7 +222,8 @@ def _sanitize_report_text(text: str) -> str:
     }
     for old, new in replacements.items():
         safe = safe.replace(old, new)
-    return safe.replace(disclaimer_token, DISCLAIMER)
+    safe = safe.replace(disclaimer_token, DISCLAIMER)
+    return scan_financial_claims(safe)["text"]
 
 
 DINNER_TALK_FALLBACK = "这次结果主要提醒我们一起看看风险分布，不急着做决定，先把家里对风险的看法聊清楚。"
@@ -660,8 +661,31 @@ def _agent_context_for_prompt(agent_context: dict[str, Any]) -> dict[str, Any]:
         "watch_tasks",
         "task_review",
         "data_confidence",
+        "stock_results",
     ]
     context = {key: agent_context.get(key) for key in allowed_keys}
+
+    stock_results = context.get("stock_results")
+    if isinstance(stock_results, list):
+        compact_stocks = []
+        for item in stock_results[:5]:
+            if not isinstance(item, dict):
+                continue
+            compact_stocks.append(
+                {
+                    "code": item.get("code"),
+                    "name": item.get("name"),
+                    "industry": item.get("industry"),
+                    "financial_score": item.get("financial_score"),
+                    "cashflow_profit_ratio": item.get("cashflow_profit_ratio"),
+                    "dividend_yield": item.get("dividend_yield"),
+                    "industry_rank": item.get("industry_rank"),
+                    "financial_trend": item.get("financial_trend"),
+                    "financial_consistency": item.get("financial_consistency"),
+                    "financial_notes": list(item.get("financial_notes") or [])[:2],
+                }
+            )
+        context["stock_results"] = compact_stocks
 
     risk_factors = context.get("risk_factors")
     if isinstance(risk_factors, dict):
@@ -897,6 +921,10 @@ def _call_deepseek_agent_report(agent_context: dict[str, Any], mode: str) -> str
 12. 如果 watch_tasks 有内容，可以把它们理解为"后续观察重点"，但不能写成交易动作。
 13. {reverse_rule}
 14. 如果 agent_context 里有 data_confidence，【数据缺失说明】段落必须严格依据 data_confidence.summary 的措辞写数据质量结论，不能自己推断。如果 data_confidence.level_code 是 "medium" 或 "low"，绝对不能在报告里写"没有数据缺失"或"数据完整"。
+15. 财务解读硬约束：只允许依据 stock_results 里的 financial_notes、industry_rank、financial_trend、financial_consistency 解释 ROE、经营现金流/净利润、股息率；没有这些字段或 available=false 时，必须写"该项数据不足，先不下结论"。
+16. 财务指标必须用通俗括号解释：经营现金流/净利润（账面利润有多少真正变成现金）、股息率（分红相对股价的比例）、同业排名（只和同一行业样本粗略比较）。
+17. 同业排名只用于风险观察，不能写成"行业第一所以值得买"、"排名靠后所以应该卖"这类交易含义。
+18. 三期趋势只能描述改善、稳定或走弱，不能据此预测未来涨跌或未来分红。
 {_mode_rules}
 """.strip()
 

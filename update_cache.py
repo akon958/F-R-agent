@@ -1469,8 +1469,12 @@ def main() -> None:
         fill_codes = output.loc[missing_mask, "代码"].tolist()
         if args.limit > 0:
             fill_codes = fill_codes[:args.limit]
+        fill_codes, unsupported_codes = split_finance_supported_codes(fill_codes)
         if not fill_codes:
-            print(f'所有股票已有 [{col}] 数据，无需补抓。', flush=True)
+            if unsupported_codes:
+                print(f'[{col}] 当前为空的标的大多属于当前财务接口不支持的市场（如北交所），本轮不再继续请求。', flush=True)
+            else:
+                print(f'所有股票已有 [{col}] 数据，无需补抓。', flush=True)
             return
 
         limit_note = f"（仅处理前 {args.limit} 只）" if args.limit > 0 else ""
@@ -1479,6 +1483,8 @@ def main() -> None:
             f'  共 {len(output)} 只，[{col}] 为空 {len(fill_codes)} 只{limit_note}，开始补抓...',
             flush=True,
         )
+        if unsupported_codes:
+            print(f"  其中已提前跳过不支持的代码 {len(unsupported_codes)} 只（如北交所 92/83/87/88/43 开头）。", flush=True)
 
         total = len(fill_codes)
         success = fail = timeout_count = 0

@@ -12,6 +12,33 @@ def sanitize_compliance_text(text: str) -> str:
     return safe
 
 
+RISKY_REPORT_TERMS = {
+    "行业第一所以可以买": "同业排名靠前，只能作为观察点",
+    "排名靠后所以卖": "同业排名靠后，需要继续观察",
+    "股息率高所以买": "股息率较高，只能说明分红回报这一项值得观察",
+    "股息率高所以稳赚": "股息率较高不代表收益确定",
+    "现金流好所以买": "现金流质量较好，只能作为公司质量观察点",
+    "趋势改善所以会上涨": "趋势改善不代表未来股价会上涨",
+    "分红会越来越高": "不能预测未来分红",
+}
+
+
+def scan_financial_claims(text: str) -> dict[str, Any]:
+    """Scan report text for financial over-claims after model generation."""
+    safe = str(text or "")
+    issues: list[str] = []
+    sanitized = safe
+    for phrase, replacement in RISKY_REPORT_TERMS.items():
+        if phrase in sanitized:
+            issues.append(phrase)
+            sanitized = sanitized.replace(phrase, replacement)
+    return {
+        "passed": len(issues) == 0,
+        "issues": issues,
+        "text": sanitized,
+    }
+
+
 def cross_validate(
     risk_score: int,
     risk_level: str,

@@ -948,6 +948,153 @@ def _score_linear(value: float, poor: float, excellent: float, max_pts: float) -
     return float(clamp(raw, 0.0, max_pts))
 
 
+def get_industry_mean(
+    stocks: list[dict[str, Any]],
+    industry: str,
+    field: str,
+) -> float | None:
+    """Return the mean value for a field among available stocks in one industry."""
+    if not industry or industry == "未知":
+        return None
+    values = [
+        value
+        for stock in stocks
+        if (stock_value(stock, "industry") or "未知") == industry
+        for value in [to_float(stock_value(stock, field))]
+        if value is not None
+    ]
+    if len(values) < 2:
+        return None
+    return round(float(sum(values) / len(values)), 6)
+
+
+def get_industry_rank(
+    stocks: list[dict[str, Any]],
+    stock: dict[str, Any],
+    field: str,
+    higher_is_better: bool = True,
+) -> dict[str, Any]:
+    """Rank a stock's metric within its industry using the loaded peer sample."""
+    industry = stock_value(stock, "industry") or "未知"
+    value = to_float(stock_value(stock, field))
+    if value is None or not industry or industry == "未知":
+        return {"available": False, "reason": "缺少指标或行业数据"}
+
+    peers: list[tuple[str, float]] = []
+    for peer in stocks:
+        if (stock_value(peer, "industry") or "未知") != industry:
+            continue
+        peer_value = to_float(stock_value(peer, field))
+        if peer_value is None:
+            continue
+        peers.append((str(stock_value(peer, "code") or ""), peer_value))
+
+    if len(peers) < 2:
+        return {"available": False, "reason": "同业样本不足"}
+
+    ordered = sorted(peers, key=lambda item: item[1], reverse=higher_is_better)
+    code = str(stock_value(stock, "code") or "")
+    rank = next((idx + 1 for idx, (peer_code, _) in enumerate(ordered) if peer_code == code), None)
+    if rank is None:
+        return {"available": False, "reason": "样本中未找到该股票"}
+
+    total = len(ordered)
+    percentile = 1.0 - (rank - 1) / max(1, total - 1)
+    if not higher_is_better:
+        percentile = (rank - 1) / max(1, total - 1)
+    return {
+        "available": True,
+        "industry": industry,
+        "field": field,
+        "value": value,
+        "mean": get_industry_mean(stocks, industry, field),
+        "rank": rank,
+        "total": total,
+        "percentile": round(percentile, 3),
+        "summary": f"同业样本 {total} 只，排名 {rank}/{total}",
+    }
+
+
+def _metric_history(stock: dict[str, Any], prefix: str) -> list[float]:
+    values: list[float] = []
+    for suffix in ("p1", "p2", "p3"):
+        value = to_float(stock.get(f"{prefix}_{suffix}"))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def compute_trend(values: list[float] | tuple[float, ...]) -> dict[str, Any]:
+    """Compute a simple three-period trend, newest value first."""
+    clean = [float(value) for value in values if value is not None]
+    if len(clean) < 2:
+        return {"available": False, "direction": "unknown", "summary": "历史期数不足"}
+
+    latest, previous = clean[0], clean[1]
+    delta = latest - previous
+    if abs(delta) < 0.02:
+        direction = "stable"
+        summary = "最近两期基本稳定"
+    elif delta > 0:
+        direction = "up"
+        summary = "最近一期较上一期改善"
+    else:
+        direction = "down"
+        summary = "最近一期较上一期走弱"
+
+    if len(clean) >= 3:
+        if clean[0] > clean[1] > clean[2]:
+            summary = "连续三期改善"
+            direction = "up"
+        elif clean[0] < clean[1] < clean[2]:
+            summary = "连续三期走弱"
+            direction = "down"
+
+    return {
+        "available": True,
+        "direction": direction,
+        "latest": latest,
+        "previous": previous,
+        "delta": round(delta, 6),
+        "values": clean[:3],
+        "summary": summary,
+    }
+
+
+def check_consistency(stock: dict[str, Any]) -> dict[str, Any]:
+    """Check whether cash-flow quality and dividend data tell a coherent story."""
+    cash_profit = to_float(stock_value(stock, "cashflow_profit_ratio"))
+    dividend = to_float(stock_value(stock, "dividend_yield"))
+    issues: list[str] = []
+    notes: list[str] = []
+
+    if cash_profit is None and dividend is None:
+        return {"available": False, "status": "unknown", "issues": [], "notes": ["现金流和股息率数据都不足"]}
+
+    if cash_profit is not None:
+        if cash_profit < 0.8:
+            issues.append("经营现金流/净利润偏低，利润变成现金的质量需要观察")
+        elif cash_profit >= 1.0:
+            notes.append("经营现金流/净利润不低，现金流对利润有支撑")
+
+    if dividend is not None:
+        if dividend >= 0.04 and (cash_profit is not None and cash_profit < 0.8):
+            issues.append("股息率较高但现金流质量偏弱，需要确认分红可持续性")
+        elif dividend >= 0.03:
+            notes.append("股息率较高，分红回报有一定支撑")
+        elif dividend == 0:
+            notes.append("暂无股息率数据或当前不分红，不能单靠分红判断公司质量")
+
+    status = "watch" if issues else "ok"
+    return {
+        "available": True,
+        "status": status,
+        "issues": issues,
+        "notes": notes,
+        "summary": issues[0] if issues else (notes[0] if notes else "现金流和股息率没有明显矛盾"),
+    }
+
+
 def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
     name = stock_value(stock, "name") or stock_value(stock, "code")
     source = stock.get("财务数据来源") or stock_value(stock, "data_source")
@@ -1343,6 +1490,16 @@ def analyze_portfolio(
     for holding in holdings:
         stock = stock_by_code.get(holding["code"], {})
         finance = financial_quality(stock)
+        industry_rank = {
+            "roe": get_industry_rank(stocks, stock, "roe"),
+            "cashflow_profit_ratio": get_industry_rank(stocks, stock, "cashflow_profit_ratio"),
+            "dividend_yield": get_industry_rank(stocks, stock, "dividend_yield"),
+        }
+        trend = {
+            "cashflow_profit_ratio": compute_trend(_metric_history(stock, "cashflow_profit_ratio")),
+            "dividend_yield": compute_trend(_metric_history(stock, "dividend_yield")),
+        }
+        consistency = check_consistency(stock)
         heat = trading_heat(stock)
         pos = position_safety(holding["amount"], total_assets, stock_total, risk_profile)
 
@@ -1389,7 +1546,16 @@ def analyze_portfolio(
                 "profit_growth": stock_value(stock, "profit_growth"),
                 "debt_ratio": stock_value(stock, "debt_ratio"),
                 "cashflow_profit_ratio": stock_value(stock, "cashflow_profit_ratio"),
+                "cashflow_profit_ratio_p1": stock.get("cashflow_profit_ratio_p1"),
+                "cashflow_profit_ratio_p2": stock.get("cashflow_profit_ratio_p2"),
+                "cashflow_profit_ratio_p3": stock.get("cashflow_profit_ratio_p3"),
                 "dividend_yield": stock_value(stock, "dividend_yield"),
+                "dividend_yield_p1": stock.get("dividend_yield_p1"),
+                "dividend_yield_p2": stock.get("dividend_yield_p2"),
+                "dividend_yield_p3": stock.get("dividend_yield_p3"),
+                "industry_rank": industry_rank,
+                "financial_trend": trend,
+                "financial_consistency": consistency,
                 "updated_at": stock_value(stock, "updated_at"),
                 "level": item_level[0],
                 "color": item_level[1],
