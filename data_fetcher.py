@@ -233,6 +233,69 @@ def resolve_code_or_name(text: str) -> str:
     return normalised if normalised.isdigit() else ""
 
 
+# ── 申万一级行业映射 ──────────────────────────────────────────────────────
+
+_INDUSTRY_MAP_FILE = BASE_DIR / "industry_map.csv"
+_industry_cache: dict[str, str] | None = None   # None = 未加载, {} = 加载成功但文件空
+_industry_meta: dict[str, Any] = {}
+_industry_warn_printed = False
+
+
+def _load_industry_map() -> dict[str, str]:
+    """读取 industry_map.csv 到内存，进程生命周期内只读一次。"""
+    global _industry_cache, _industry_meta, _industry_warn_printed
+    if _industry_cache is not None:
+        return _industry_cache
+
+    if not _INDUSTRY_MAP_FILE.exists():
+        if not _industry_warn_printed:
+            print(f"[industry] 警告：{_INDUSTRY_MAP_FILE} 不存在，get_industry() 将始终返回 None。"
+                  "请先运行 build_industry_map.py 生成该文件。")
+            _industry_warn_printed = True
+        _industry_cache = {}
+        return _industry_cache
+
+    try:
+        import pandas as _pd
+        df = _pd.read_csv(_INDUSTRY_MAP_FILE, encoding="utf-8-sig", dtype=str)
+        mapping: dict[str, str] = {}
+        last_updated = ""
+        for _, row in df.iterrows():
+            code = str(row.get("code") or "").strip().zfill(6)
+            industry = str(row.get("sw_industry") or "").strip()
+            if code and industry and industry.lower() != "nan" and industry.lower() != "none":
+                mapping[code] = industry
+            if not last_updated:
+                last_updated = str(row.get("last_updated") or "").strip()
+        _industry_meta = {
+            "total_stocks": len(df),
+            "with_industry": len(mapping),
+            "last_updated": last_updated,
+        }
+        _industry_cache = mapping
+        return _industry_cache
+    except Exception as exc:  # noqa: BLE001
+        if not _industry_warn_printed:
+            print(f"[industry] 警告：读取 {_INDUSTRY_MAP_FILE} 失败（{exc}），get_industry() 将始终返回 None。")
+            _industry_warn_printed = True
+        _industry_cache = {}
+        return _industry_cache
+
+
+def get_industry(stock_code: str) -> str | None:
+    """返回股票的申万一级行业名称，找不到或文件缺失则返回 None。"""
+    code = normalize_code(str(stock_code or "").strip())
+    if not code:
+        return None
+    return _load_industry_map().get(code)
+
+
+def get_industry_meta() -> dict[str, Any]:
+    """返回 industry_map.csv 的元信息，供调试和监控使用。"""
+    _load_industry_map()   # 确保已加载
+    return dict(_industry_meta)
+
+
 def _now_text() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
