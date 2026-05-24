@@ -2363,7 +2363,7 @@ def agent_intake_block() -> None:
     if cash_value <= 0:
         cash_value = float(st.session_state.get("agent_intake_cash_override") or 0)
         cash_value = st.number_input(
-            "没有识别到现金，请补充家庭可用于投资的现金金额（元）",
+            "没有识别到现金，请补充账户现金余额（元）",
             min_value=0.0,
             step=1000.0,
             key="agent_intake_cash_override",
@@ -2411,7 +2411,7 @@ def agent_intake_block() -> None:
             st.error("还没有识别到有效持仓。可以改写一句话，或展开下方手动填写。")
             return
         if float(cash_value or 0) <= 0:
-            st.error("请补充家庭可用于投资的现金金额。")
+            st.error("请补充账户现金余额（股票以外的钱）。")
             return
         reverse_qa = _normalize_reverse_qa(st.session_state.get("reverse_qa"))
         reverse_qa["money_need_6m"] = _MONEY_NEED_MAP.get(money_label, "uncertain")
@@ -2492,7 +2492,7 @@ def portfolio_form() -> None:
             st.session_state.holding_rows += 1
             st.rerun()
 
-    cash = st.number_input("家庭可用于投资的现金金额（元）", min_value=0.0, value=0.0, step=1000.0)
+    cash = st.number_input("账户现金余额（元）", min_value=0.0, value=0.0, step=1000.0)
     current_risk = str(st.session_state.get("risk_profile", "平衡") or "平衡")
     if current_risk not in RISK_PROFILE_OPTIONS:
         current_risk = "平衡"

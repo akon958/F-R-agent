@@ -109,11 +109,10 @@ RISK_FACTOR_WEIGHTS = {
     "现金缓冲": 14,
     "单只集中": 14,
     "行业集中": 10,
-    "估值完整性": 8,
     "财务质量": 26,
     "交易热度": 8,
     "家庭分歧": 4,
-    "数据可信度": 10,
+    "数据可信度": 18,
     "风险承受匹配": 6,
     "极端集中": 28,
 }
@@ -201,32 +200,42 @@ def build_risk_factor_breakdown(
     industry_conc = float(analysis.get("industry_concentration", 0) or 0)
     top_industry = str(analysis.get("top_industry") or "")
 
+    # 现金缓冲：0%→20, 25%+→92，连续评分避免阈值跳变
+    cash_score = round(clamp(_score_linear(cash_ratio, poor=0.0, excellent=0.25, max_pts=72) + 20), 1)
     if cash_ratio < 0.05:
-        cash_score, cash_status = 25, "现金垫很薄"
+        cash_status = "现金垫很薄"
     elif cash_ratio < 0.10:
-        cash_score, cash_status = 45, "备用金偏少"
+        cash_status = "备用金偏少"
     elif cash_ratio < 0.20:
-        cash_score, cash_status = 68, "现金需要继续观察"
+        cash_status = "现金需要继续观察"
     else:
-        cash_score, cash_status = 88, "现金缓冲较充足"
+        cash_status = "现金缓冲较充足"
 
+    # 单只集中：50%+→5, 8%以下→95，连续评分
+    single_score = round(clamp(_score_linear(-max_single, poor=-0.50, excellent=-0.08, max_pts=90) + 5), 1)
     if max_single >= 0.40:
-        single_score, single_status = 25, "单只占比偏高"
+        single_status = "单只占比偏高"
     elif max_single >= 0.30:
-        single_score, single_status = 52, "单只占比需要关注"
+        single_status = "单只占比需要关注"
     elif max_single >= 0.20:
-        single_score, single_status = 70, "单只占比略集中"
+        single_status = "单只占比略集中"
     else:
-        single_score, single_status = 90, "单只集中压力较小"
+        single_status = "单只集中压力较小"
 
-    if industry_conc >= 0.80:
-        industry_score, industry_status = 40, f"股票部分集中在{top_industry or '同一行业'}"
-    elif industry_conc >= 0.60:
-        industry_score, industry_status = 58, "行业集中度偏高"
-    elif industry_conc >= 0.40:
-        industry_score, industry_status = 72, "行业分布需要观察"
+    # 行业集中：行业数据缺失时给中性分，不因数据问题惩罚用户
+    if not top_industry or top_industry == "未知":
+        industry_score, industry_status = 75, "行业信息不完整，暂不评价"
     else:
-        industry_score, industry_status = 88, "行业集中压力较小"
+        # 90%+→35, 30%以下→90，连续评分
+        industry_score = round(clamp(_score_linear(-industry_conc, poor=-0.90, excellent=-0.30, max_pts=55) + 35), 1)
+        if industry_conc >= 0.80:
+            industry_status = f"股票部分集中在{top_industry}"
+        elif industry_conc >= 0.60:
+            industry_status = "行业集中度偏高"
+        elif industry_conc >= 0.40:
+            industry_status = "行业分布需要观察"
+        else:
+            industry_status = "行业集中压力较小"
 
     valuation_missing_n = len(missing_data.get("估值数据缺失") or [])
     if not valuation_missing_n:
@@ -294,12 +303,6 @@ def build_risk_factor_breakdown(
             industry_status, f"行业集中度约 {industry_conc:.1%}。", boost=6 if industry_conc >= 0.60 else 0,
         ),
         _make_factor(
-            "估值完整性", valuation_score, RISK_FACTOR_WEIGHTS["估值完整性"], "PE/PB 等估值数据是否足够完整",
-            "估值数据缺失时，不评价便宜或贵，只提示数据不完整",
-            valuation_status, "估值完整性决定这次能不能讨论估值高低。",
-            boost=8 if valuation_missing_n else 0,
-        ),
-        _make_factor(
             "财务质量", finance_score, RISK_FACTOR_WEIGHTS["财务质量"], "持仓公司的经营底子是否稳",
             "ROE、利润率、负债压力、现金流质量",
             "财务数据需要关注" if finance_score < 70 else "财务质量压力较小",
@@ -320,10 +323,12 @@ def build_risk_factor_breakdown(
             boost=family_boost,
         ),
         _make_factor(
-            "数据可信度", data_score, RISK_FACTOR_WEIGHTS["数据可信度"], "这次结论的数据基础是否扎实",
+            "数据可信度", round(data_score * 0.6 + valuation_score * 0.4, 1),
+            RISK_FACTOR_WEIGHTS["数据可信度"], "这次结论的数据基础是否扎实，PE/PB 估值数据是否完整",
             "行情、估值、财务数据是否完整，缓存是否足够新",
-            data_status, data_confidence.get("summary") or "数据越完整，结论越有参考价值。",
-            boost=data_boost,
+            f"{data_status}，{valuation_missing_n} 只估值数据暂缺" if valuation_missing_n else data_status,
+            data_confidence.get("summary") or "数据越完整，结论越有参考价值。",
+            boost=data_boost + (6 if valuation_missing_n else 0),
         ),
         _make_factor(
             "风险承受匹配", match_score, RISK_FACTOR_WEIGHTS["风险承受匹配"], "当前仓位是否匹配家庭能承受的波动",
@@ -1082,49 +1087,48 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
     amount = to_float(stock_value(stock, "turnover"))
     bid_ask_ratio = to_float(stock_value(stock, "in_out_ratio"))
 
-    score = 100.0
+    # ── 分项评分（各项满分之和 = 100，缺数据给中性分）────────────────
+    # 换手率（30分）：≤2% → 满分，7%+ → 0分
+    t_sub   = _score_linear(-turnover,     poor=-7.0, excellent=-2.0, max_pts=30) if turnover     is not None else 22.0
+    # 量比（25分）：≤1.2 → 满分，2.5+ → 0分
+    vr_sub  = _score_linear(-volume_ratio, poor=-2.5, excellent=-1.2, max_pts=25) if volume_ratio is not None else 18.0
+    # 振幅（25分）：≤2% → 满分，7%+ → 0分
+    amp_sub = _score_linear(-amplitude,    poor=-7.0, excellent=-2.0, max_pts=25) if amplitude    is not None else 18.0
+    # 涨跌幅绝对值（15分）：≤2% → 满分，6%+ → 0分
+    chg_sub = _score_linear(-abs(change),  poor=-6.0, excellent=-2.0, max_pts=15) if change       is not None else 11.0
+    # 内外盘偏差（5分）：偏差 < 0.5 → 满分，≥ 0.5 → 0分
+    _dev    = abs(bid_ask_ratio - 1.0) if bid_ask_ratio is not None else None
+    bsk_sub = _score_linear(-_dev,         poor=-0.5, excellent=0.0,  max_pts=5)  if _dev         is not None else 4.0
+    score   = clamp(t_sub + vr_sub + amp_sub + chg_sub + bsk_sub)
+
+    # ── 预警标记与通俗注释（阈值独立于评分，专用于友好提示）──────────
     notes: list[str] = []
     overheated = False
 
-    if turnover is not None and turnover > 5:
-        score -= 28
+    if turnover is not None and turnover > 6:
         overheated = True
         notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）很高，价格容易上上下下。")
-    elif turnover is not None and turnover > 3:
-        score -= 18
+    elif turnover is not None and turnover > 4:
         notes.append(f"{name} 换手率（今天有多少人在买卖这只股票）偏高，别被短期气氛带着做决定。")
-    elif turnover is not None and turnover > 1.5:
-        score -= 8
 
     if volume_ratio is not None and volume_ratio > 2:
-        score -= 20
         overheated = True
         notes.append(f"{name} 量比（今天成交量比平时多多少）明显放大，容易让人冲动。")
-    elif volume_ratio is not None and volume_ratio > 1.4:
-        score -= 9
 
     if amplitude is not None and amplitude > 7:
-        score -= 22
         overheated = True
         notes.append(f"{name} 振幅（今天股价最高最低相差多少）较大，持有时心理压力会更大。")
-    elif amplitude is not None and amplitude > 4:
-        score -= 12
 
     if change is not None and abs(change) > 5:
-        score -= 18
         notes.append(f"{name} 涨跌幅（今天整体涨或跌的幅度）较大，不建议被一天走势带着做决定。")
-    elif change is not None and abs(change) > 3:
-        score -= 8
 
-    if change is not None and change > 4 and turnover is not None and turnover > 3:
+    if change is not None and change > 4 and turnover is not None and turnover > 4:
         overheated = True
         notes.append(f"{name} 涨跌幅和换手率同时偏高，不建议被短期热度带着走。")
 
     if bid_ask_ratio is not None and (bid_ask_ratio > 1.4 or bid_ask_ratio < 0.7):
-        score -= 8
         notes.append(f"{name} 内外盘比例（短期主动成交力量对比）不太平衡，只能当作短期情绪参考。")
 
-    score = clamp(score)
     if not notes:
         notes.append(f"{name} 短期交易热度不算夸张。")
 
@@ -1223,18 +1227,17 @@ def portfolio_position_score(
     if stock_total > 0 and industry_amounts:
         top_industry, top_amount = max(industry_amounts.items(), key=lambda item: item[1])
         industry_concentration = top_amount / stock_total
-        if industry_concentration > 0.80 and top_industry != "未知":
+        if top_industry == "未知":
+            pass  # 行业数据缺失是数据问题，不在此处扣分
+        elif industry_concentration > 0.80:
             score -= 22
             notes.append(f"股票/基金部分高度集中在{top_industry}，行业风险需要放在前面看。")
-        elif industry_concentration > 0.60 and top_industry != "未知":
+        elif industry_concentration > 0.60:
             score -= 16
             notes.append(f"持仓较集中在{top_industry}，行业风险需要留心。")
-        elif industry_concentration > 0.45 and top_industry != "未知":
+        elif industry_concentration > 0.45:
             score -= 8
             notes.append(f"股票/基金部分有一定{top_industry}集中度，建议持续观察行业风险。")
-        elif industry_concentration > 0.60:
-            score -= 10
-            notes.append("部分持仓行业信息不完整，行业集中度只能保守判断。")
 
     if not notes:
         notes.append("家庭仓位没有明显刺眼的问题。")

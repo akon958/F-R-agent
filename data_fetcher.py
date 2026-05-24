@@ -219,6 +219,13 @@ def resolve_code_or_name(text: str) -> str:
         if name.lower().replace(" ", "").replace("　", "") == raw_lower:
             return code
 
+    # Partial / nickname match: input is a substring of exactly one stock name
+    # e.g. "茅台" → "贵州茅台"；若匹配多只则视为歧义，不自动解析
+    partial = [code for name, code in lookup.items()
+               if raw_lower in name.lower().replace(" ", "").replace("　", "")]
+    if len(partial) == 1:
+        return partial[0]
+
     # Last resort: only accept if normalised result is purely numeric (e.g. fund
     # codes entered without prefix).  Non-numeric strings that didn't match any
     # name should return "" so the caller can flag it as invalid input.
