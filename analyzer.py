@@ -106,16 +106,22 @@ RISK_FACTOR_META = {
     },
 }
 
+# 权重设计（合并单只/行业集中后总计 100）：
+#   - 财务质量 32：占大头，公司基本面是长期投资最根本的护城河
+#   - 持仓集中度 22：合并自单只+行业，决定家庭波动承受能力
+#   - 现金缓冲 18：家庭短期安全的基石（CLAUDE.md 强调"父母用钱"）
+#   - 交易热度 8 / 风险承受匹配 8：辅助维度
+#   - 家庭分歧 6 / 数据可信度 6：沟通与元信息
+# 极端集中 40 = 现金18 + 持仓集中22（触发时替代两者）
 RISK_FACTOR_WEIGHTS = {
-    "现金缓冲": 14,
-    "单只集中": 14,
-    "行业集中": 10,
-    "财务质量": 26,
+    "财务质量": 32,
+    "持仓集中度": 22,
+    "现金缓冲": 18,
     "交易热度": 8,
-    "家庭分歧": 4,
-    "数据可信度": 18,
-    "风险承受匹配": 6,
-    "极端集中": 28,
+    "风险承受匹配": 8,
+    "家庭分歧": 6,
+    "数据可信度": 6,
+    "极端集中": 40,
 }
 
 
@@ -125,6 +131,17 @@ def _factor_tone(score: float) -> tuple[str, str, str]:
     if score >= 60:
         return "watch", "看", "需要继续观察"
     return "tight", "紧", "需要优先看"
+
+
+def _data_confidence_status(final_score: float, valuation_missing_n: int) -> str:
+    """数据可信度的展示状态：跟最终混合分走，避免分数与文案脱节。"""
+    if final_score >= 80:
+        base = "数据可信度较高"
+    elif final_score >= 60:
+        base = "数据可信度中等"
+    else:
+        base = "数据可信度偏低"
+    return f"{base}，{valuation_missing_n} 只估值数据暂缺" if valuation_missing_n else base
 
 
 def _factor_priority(score: float, weight: float = 10, boost: float = 0) -> tuple[float, str]:
@@ -201,42 +218,68 @@ def build_risk_factor_breakdown(
     industry_conc = float(analysis.get("industry_concentration", 0) or 0)
     top_industry = str(analysis.get("top_industry") or "")
 
-    # 现金缓冲：0%→20, 25%+→92，连续评分避免阈值跳变
-    cash_score = round(clamp(_score_linear(cash_ratio, poor=0.0, excellent=0.25, max_pts=72) + 20), 1)
+    # 现金缓冲：倒U曲线，理想区间 8%-30%。过低（用钱告急）和过高（机会成本）都扣分
+    if cash_ratio < 0.08:
+        # 0%→20，8%→92 线性上升
+        cash_score = round(clamp(_score_linear(cash_ratio, poor=0.0, excellent=0.08, max_pts=72) + 20), 1)
+    elif cash_ratio <= 0.30:
+        cash_score = 92.0
+    else:
+        # 30%→92，70%+→50 线性下降（现金过多视为长期机会成本）
+        cash_score = round(clamp(92 - (cash_ratio - 0.30) / 0.40 * 42), 1)
+
     if cash_ratio < 0.05:
         cash_status = "现金垫很薄"
     elif cash_ratio < 0.10:
         cash_status = "备用金偏少"
-    elif cash_ratio < 0.20:
-        cash_status = "现金需要继续观察"
-    else:
+    elif cash_ratio <= 0.30:
         cash_status = "现金缓冲较充足"
-
-    # 单只集中：50%+→5, 8%以下→95，连续评分
-    single_score = round(clamp(_score_linear(-max_single, poor=-0.50, excellent=-0.08, max_pts=90) + 5), 1)
-    if max_single >= 0.40:
-        single_status = "单只占比偏高"
-    elif max_single >= 0.30:
-        single_status = "单只占比需要关注"
-    elif max_single >= 0.20:
-        single_status = "单只占比略集中"
+    elif cash_ratio <= 0.50:
+        cash_status = "现金偏多，可关注配置效率"
     else:
-        single_status = "单只集中压力较小"
+        cash_status = "现金占比过高，可能影响长期收益"
 
-    # 行业集中：行业数据缺失时给中性分，不因数据问题惩罚用户
-    if not top_industry or top_industry == "未知":
-        industry_score, industry_status = 75, "行业信息不完整，暂不评价"
+    # 单只集中：50%+→0, 8%以下→100，连续评分（0-100 同基准）
+    single_score = round(clamp(_score_linear(-max_single, poor=-0.50, excellent=-0.08, max_pts=100)), 1)
+    if max_single >= 0.40:
+        single_label = f"最大单只 {max_single:.0%} 占比偏高"
+    elif max_single >= 0.30:
+        single_label = f"最大单只 {max_single:.0%} 需要关注"
+    elif max_single >= 0.20:
+        single_label = f"最大单只 {max_single:.0%} 略集中"
+    else:
+        single_label = ""
+
+    # 行业集中：数据缺失给"稳"档分（85），不因数据问题拉进看档
+    industry_missing = not top_industry or top_industry == "未知"
+    if industry_missing:
+        industry_score, industry_label = 85.0, "（行业信息不完整）"
     else:
         # 90%+→35, 30%以下→90，连续评分
         industry_score = round(clamp(_score_linear(-industry_conc, poor=-0.90, excellent=-0.30, max_pts=55) + 35), 1)
         if industry_conc >= 0.80:
-            industry_status = f"股票部分集中在{top_industry}"
+            industry_label = f"集中在{top_industry}（{industry_conc:.0%}）"
         elif industry_conc >= 0.60:
-            industry_status = "行业集中度偏高"
+            industry_label = f"行业集中度偏高（{industry_conc:.0%}）"
         elif industry_conc >= 0.40:
-            industry_status = "行业分布需要观察"
+            industry_label = f"行业分布需观察（{industry_conc:.0%}）"
         else:
-            industry_status = "行业集中压力较小"
+            industry_label = ""
+
+    # ── 合并为"持仓集中度"：min*0.55 + 均值*0.45 ──
+    # 设计意图：让"短板"主导（任一维度差就显著拉低总分），同时保留另一维度的修正作用。
+    # 例：single=19 / industry=46 → min*0.55 + avg*0.45 = 10.45 + 14.625 = 25.08（足以触发"紧"档）
+    concentration_score = round(
+        min(single_score, industry_score) * 0.55
+        + (single_score + industry_score) / 2 * 0.45,
+        1,
+    )
+    # 状态文字：拼接非空 label；都正常时给绿色文案
+    _parts = [p for p in (single_label, industry_label) if p]
+    if _parts:
+        concentration_status = "；".join(_parts)
+    else:
+        concentration_status = "持仓在单只与行业上都较分散"
 
     valuation_missing_n = len(missing_data.get("估值数据缺失") or [])
     if not valuation_missing_n:
@@ -249,40 +292,60 @@ def build_risk_factor_breakdown(
     valuation_status = "估值数据完整" if valuation_missing_n == 0 else f"{valuation_missing_n} 只估值数据暂缺"
 
     finance_missing_n = len(missing_data.get("财务数据缺失") or [])
+    # 个股层 _score_linear 缺失项已给 0 分 + score -= missing*4 已惩罚，组合层不再二次压制
     finance_score = float(module_scores.get("公司财务质量", 75) or 75)
-    if finance_missing_n:
-        finance_score = min(finance_score, max(35.0, 100.0 - finance_missing_n / holding_count * 60.0))
 
-    heat_score = float(module_scores.get("交易热度风险", 75) or 75)
-    match_score = float(module_scores.get("风险承受匹配", 75) or 75)
+    heat_score = float(module_scores.get("交易热度风险", 80) or 80)
+    # 默认值 80 对齐"稳"档，避免文案"大体匹配"配橙色看档造成冲突
+    match_score = float(module_scores.get("风险承受匹配", 80) or 80)
     if stock_ratio >= 0.8:
         match_status = "整体仓位偏高，需要看是否匹配家里承受能力"
+    elif match_score >= 80:
+        match_status = "仓位和风险偏好匹配良好"
+    elif match_score >= 70:
+        match_status = "仓位和风险偏好大体匹配"
     else:
-        match_status = "仓位和风险偏好大体匹配" if match_score >= 70 else "仓位和风险偏好需要再确认"
+        match_status = "仓位和风险偏好需要再确认"
 
-    if family_disagreement.get("has_conflict"):
-        family_score, family_status, family_boost = 48, "家人看法不一致，需要先沟通", 6
+    # 家庭分歧：按冲突数量连续扣分，避免 1 处 = 5 处的断崖
+    conflicts_list = family_disagreement.get("conflicts") or []
+    conflict_count = len(conflicts_list)
+    if not conflict_count and family_disagreement.get("has_conflict"):
+        conflict_count = 1
+    if conflict_count <= 0:
+        family_score, family_status, family_boost = 90, "暂未发现明显家庭分歧", 0
     else:
-        family_score, family_status, family_boost = 88, "暂未发现明显家庭分歧", 0
+        # 1处→70, 2处→58, 3处→48, 4+处→40（下限 40）
+        family_score = float(max(40, 82 - conflict_count * 12))
+        family_status = (
+            "家人看法不一致，需要先沟通"
+            if conflict_count == 1
+            else f"发现 {conflict_count} 处家庭分歧，需要先沟通"
+        )
+        family_boost = float(min(10, 4 + conflict_count * 2))
 
+    # 数据可信度：基础分按级别 + 估值缺失插值，状态档跟最终分走（避免分数与状态文案脱节）
     conf_code = str(data_confidence.get("level_code") or "")
     if conf_code == "low":
-        data_score, data_status, data_boost = 35, "数据可信度偏低", 10
+        data_base, data_boost = 35.0, 10.0
     elif conf_code == "medium":
-        data_score, data_status, data_boost = 65, "数据可信度中等", 6
+        data_base, data_boost = 65.0, 6.0
     else:
-        data_score, data_status, data_boost = 88, "数据可信度较高", 0
+        data_base, data_boost = 88.0, 0.0
+    data_score = data_base  # 用于后续混合计算
 
-    _is_extreme = max_single >= 0.95 or cash_ratio <= 0.05
+    _is_extreme = max_single >= 0.95 and cash_ratio <= 0.05
     if _is_extreme:
         _extreme_factor = [_make_factor(
-            "极端集中", min(cash_score, single_score), RISK_FACTOR_WEIGHTS["极端集中"],
+            "极端集中", min(cash_score, concentration_score), RISK_FACTOR_WEIGHTS["极端集中"],
             "资产高度集中在单只标的，且现金缓冲极薄",
             "单只占比是否继续升高，家里是否能承受极端波动",
             f"极端集中：资产几乎全部在一只股票上，没有现金缓冲（单只 {max_single:.0%} / 现金 {cash_ratio:.0%}）",
             f"单只 {max_single:.1%}，现金 {cash_ratio:.1%}。", boost=20,
         )]
     else:
+        # 集中度 boost：单只 >=30% 或行业 >=60% 任一触发就提高优先级
+        _concentration_boost = 8 if (max_single >= 0.30 or industry_conc >= 0.60) else 0
         _extreme_factor = [
             _make_factor(
                 "现金缓冲", cash_score, RISK_FACTOR_WEIGHTS["现金缓冲"], "家里短期用钱是否有余地",
@@ -290,19 +353,19 @@ def build_risk_factor_breakdown(
                 cash_status, f"现金比例约 {cash_ratio:.1%}。", boost=6 if cash_ratio < 0.15 else 0,
             ),
             _make_factor(
-                "单只集中", single_score, RISK_FACTOR_WEIGHTS["单只集中"], "钱是否过多集中在一只标的上",
-                "最大单只占比是否继续升高，波动时家里是否能接受",
-                single_status, f"最大单只占比约 {max_single:.1%}。", boost=8 if max_single >= 0.30 else 0,
+                "持仓集中度", concentration_score, RISK_FACTOR_WEIGHTS["持仓集中度"],
+                "持仓是否过于集中在单一标的或单一行业",
+                "最大单只占比、行业集中度、家人对集中度的看法",
+                concentration_status,
+                f"最大单只 {max_single:.1%}"
+                + (f"，行业集中度 {industry_conc:.1%}" if not industry_missing else "，行业数据暂缺")
+                + "。波动时这两个维度任一突出都会放大家庭压力。",
+                boost=_concentration_boost,
             ),
         ]
 
     factors = [
         *_extreme_factor,
-        _make_factor(
-            "行业集中", industry_score, RISK_FACTOR_WEIGHTS["行业集中"], "股票部分是否集中在同一行业",
-            "行业政策、经营环境和家庭是否理解该行业波动",
-            industry_status, f"行业集中度约 {industry_conc:.1%}。", boost=6 if industry_conc >= 0.60 else 0,
-        ),
         _make_factor(
             "财务质量", finance_score, RISK_FACTOR_WEIGHTS["财务质量"], "持仓公司的经营底子是否稳",
             "ROE、利润率、负债压力、现金流质量",
@@ -327,7 +390,8 @@ def build_risk_factor_breakdown(
             "数据可信度", round(data_score * 0.6 + valuation_score * 0.4, 1),
             RISK_FACTOR_WEIGHTS["数据可信度"], "这次结论的数据基础是否扎实，PE/PB 估值数据是否完整",
             "行情、估值、财务数据是否完整，缓存是否足够新",
-            f"{data_status}，{valuation_missing_n} 只估值数据暂缺" if valuation_missing_n else data_status,
+            # 状态档跟最终混合分走，避免"79 分"显示"中等"这种冲突
+            _data_confidence_status(round(data_score * 0.6 + valuation_score * 0.4, 1), valuation_missing_n),
             data_confidence.get("summary") or "数据越完整，结论越有参考价值。",
             boost=data_boost + (6 if valuation_missing_n else 0),
         ),
@@ -1254,14 +1318,15 @@ def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
     bid_ask_ratio = to_float(stock_value(stock, "in_out_ratio"))
 
     # ── 分项评分（各项满分之和 = 100，缺数据给中性分）────────────────
-    # 换手率（30分）：≤2% → 满分，7%+ → 0分
-    t_sub   = _score_linear(-turnover,     poor=-7.0, excellent=-2.0, max_pts=30) if turnover     is not None else 22.0
-    # 量比（25分）：≤1.2 → 满分，2.5+ → 0分
-    vr_sub  = _score_linear(-volume_ratio, poor=-2.5, excellent=-1.2, max_pts=25) if volume_ratio is not None else 18.0
-    # 振幅（25分）：≤2% → 满分，7%+ → 0分
-    amp_sub = _score_linear(-amplitude,    poor=-7.0, excellent=-2.0, max_pts=25) if amplitude    is not None else 18.0
-    # 涨跌幅绝对值（15分）：≤2% → 满分，6%+ → 0分
-    chg_sub = _score_linear(-abs(change),  poor=-6.0, excellent=-2.0, max_pts=15) if change       is not None else 11.0
+    # 阈值按 A 股活跃成长股实际分布校准，避免科技/创业板日常水位被强行打入红档
+    # 换手率（30分）：≤3% → 满分，10%+ → 0分
+    t_sub   = _score_linear(-turnover,     poor=-10.0, excellent=-3.0, max_pts=30) if turnover     is not None else 22.0
+    # 量比（25分）：≤1.5 → 满分，3.0+ → 0分
+    vr_sub  = _score_linear(-volume_ratio, poor=-3.0,  excellent=-1.5, max_pts=25) if volume_ratio is not None else 18.0
+    # 振幅（25分）：≤3% → 满分，9%+ → 0分
+    amp_sub = _score_linear(-amplitude,    poor=-9.0,  excellent=-3.0, max_pts=25) if amplitude    is not None else 18.0
+    # 涨跌幅绝对值（15分）：≤3% → 满分，7%+ → 0分
+    chg_sub = _score_linear(-abs(change),  poor=-7.0,  excellent=-3.0, max_pts=15) if change       is not None else 11.0
     # 内外盘偏差（5分）：偏差 < 0.5 → 满分，≥ 0.5 → 0分
     _dev    = abs(bid_ask_ratio - 1.0) if bid_ask_ratio is not None else None
     bsk_sub = _score_linear(-_dev,         poor=-0.5, excellent=0.0,  max_pts=5)  if _dev         is not None else 4.0
