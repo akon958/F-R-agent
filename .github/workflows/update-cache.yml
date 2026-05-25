@@ -39,7 +39,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("stock_metrics.csv")
+          path = Path("data/stock_metrics.csv")
           Path(".stock_metrics_mtime_before").write_text(
               str(path.stat().st_mtime if path.exists() else 0),
               encoding="utf-8",
@@ -57,26 +57,30 @@ jobs:
           from pathlib import Path
           import os
 
-          path = Path("stock_metrics.csv")
+          path = Path("data/stock_metrics.csv")
           if not path.exists():
-              raise SystemExit("stock_metrics.csv does not exist")
+              raise SystemExit("data/stock_metrics.csv does not exist")
 
           before = float(Path(".stock_metrics_mtime_before").read_text(encoding="utf-8"))
           after = path.stat().st_mtime
           rewritten = after > before
 
           df = pd.read_csv(path, dtype={"代码": str})
-          print("stock_metrics.csv rows:", len(df))
+          print("data/stock_metrics.csv rows:", len(df))
           print("columns:", list(df.columns))
           print(df.head())
 
           if len(df) < 1000:
-              raise SystemExit("stock_metrics.csv has too few rows")
+              raise SystemExit("data/stock_metrics.csv has too few rows")
 
-          required = ["代码", "名称", "最新价", "涨跌幅", "成交额"]
+          required = [
+              "代码", "名称", "最新价", "涨跌幅", "成交额",
+              "经营现金流/净利润", "经营现金流/净利润_近1期", "经营现金流/净利润_近2期", "经营现金流/净利润_近3期",
+              "股息率", "股息率_近1期", "股息率_近2期", "股息率_近3期",
+          ]
           missing = [col for col in required if col not in df.columns]
           if missing:
-              raise SystemExit(f"stock_metrics.csv missing required columns: {missing}")
+              raise SystemExit(f"data/stock_metrics.csv missing required columns: {missing}")
 
           status = "已更新" if rewritten else "未更新，继续使用仓库里的有效缓存"
           print(f"cache status: {status}")
@@ -91,6 +95,10 @@ jobs:
                   f.write("- 说明：如果接口本次没有拿到新数据，工作流会保留旧缓存，不影响 Streamlit 读取。\n")
           PY
 
+      - name: Validate new finance fields
+        run: |
+          python tests/test_new_fields.py
+
       - name: Commit updated cache
         run: |
           BRANCH="${GITHUB_REF_NAME:-main}"
@@ -102,9 +110,9 @@ jobs:
           # our cache commit on top of the latest branch tip.
           git pull --rebase --autostash origin "$BRANCH"
 
-          git add stock_metrics.csv
+          git add data/stock_metrics.csv
           if git diff --cached --quiet; then
-            echo "stock_metrics.csv has no changes to commit."
+            echo "data/stock_metrics.csv has no changes to commit."
             exit 0
           fi
 
