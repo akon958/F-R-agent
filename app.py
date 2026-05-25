@@ -3331,9 +3331,10 @@ def _portfolio_fin_metrics(stock_results: list[dict]) -> dict[str, Any]:
         return sum(v * w for v, w in pairs) / total_w if total_w > 0 else None
 
     return {
-        "pe":  _harm("pe"),
-        "pb":  _harm("pb"),
-        "roe": _wt("roe"),
+        "pe":            _harm("pe"),
+        "pb":            _harm("pb"),
+        "roe":           _wt("roe"),
+        "dividend_yield": _wt("dividend_yield"),
         # 净利率 / 毛利率 / 资产负债率 跨行业平均无意义，不在概览卡展示
     }
 
@@ -3361,7 +3362,7 @@ def portfolio_metrics_block(summary: dict[str, Any], analysis: dict[str, Any]) -
     rows = [
         ("家庭总资产",   money(float(summary.get("total_assets", 0) or 0)),                      "现金 + 持仓合计"),
         ("现金比例",     percent(cash_ratio),                                                      "备用金厚度"),
-        ("股票/基金仓位", percent(stock_ratio),                                                    "资金暴露比例"),
+        ("股息率",        fmt_ratio(fin.get("dividend_yield"), default="暂缺"),                   "持仓加权分红回报率"),
         ("单只最大占比", percent(float(summary.get("max_single_ratio", 0) or 0)),                 "集中度风险参考"),
         ("行业集中度",   f"{html_escape(top_industry)}&nbsp;{percent(ind_conc)}" if top_industry else "暂无", "行业分布是否过于集中"),
         ("PE 市盈率",    fmt_optional(fin.get("pe"),  default="暂缺"),  fin_note_pe),
