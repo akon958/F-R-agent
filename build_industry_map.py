@@ -98,7 +98,7 @@ def _progress_bar(current: int, total: int, width: int = 40) -> None:
     bar = "█" * filled + "░" * (width - filled)
     print(f"\r  [{bar}] {current}/{total} ({pct:.1%})", end="", flush=True)
 
-OUTPUT_FILE = Path("industry_map.csv")
+OUTPUT_FILE = Path(__file__).resolve().parent / "data" / "industry_map.csv"
 
 
 def normalize_code(raw: str) -> str:

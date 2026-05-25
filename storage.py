@@ -17,13 +17,15 @@ except ImportError:
 
 
 BASE_DIR = Path(__file__).resolve().parent
-ANALYSIS_HISTORY_FILE = BASE_DIR / "analysis_history.csv"
-FOLLOWUP_HISTORY_FILE = BASE_DIR / "followup_history.csv"
-FEEDBACK_HISTORY_FILE = BASE_DIR / "feedback_history.csv"
-FAMILY_PROFILE_FILE = BASE_DIR / "family_profile.csv"
-FAMILY_COMMENTS_FILE = BASE_DIR / "family_comments.csv"
-FAMILY_ACCOUNTS_FILE = BASE_DIR / "family_accounts.csv"
-NOTES_FILE = BASE_DIR / "family_notes.json"
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+ANALYSIS_HISTORY_FILE = DATA_DIR / "analysis_history.csv"
+FOLLOWUP_HISTORY_FILE = DATA_DIR / "followup_history.csv"
+FEEDBACK_HISTORY_FILE = DATA_DIR / "feedback_history.csv"
+FAMILY_PROFILE_FILE   = DATA_DIR / "family_profile.csv"
+FAMILY_COMMENTS_FILE  = DATA_DIR / "family_comments.csv"
+FAMILY_ACCOUNTS_FILE  = DATA_DIR / "family_accounts.csv"
+NOTES_FILE            = DATA_DIR / "family_notes.json"
 MAX_NOTES = 200
 GUEST_FAMILY_ID_PREFIX = "guest_"
 COMMENT_FOCUS_MAP = {

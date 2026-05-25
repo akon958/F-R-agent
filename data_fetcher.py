@@ -64,11 +64,12 @@ def _retry(func: Callable[[], Any], retries: int = 3, wait: float = 3.0) -> Any:
 
 
 BASE_DIR = Path(__file__).resolve().parent
-CACHE_FILE = BASE_DIR / "stock_metrics.csv"
+CACHE_FILE = BASE_DIR / "data" / "stock_metrics.csv"
 CACHE_CANDIDATES = [
-    BASE_DIR / "stock_metrics.csv",
     BASE_DIR / "data" / "stock_metrics.csv",
-    Path.cwd() / "stock_metrics.csv",
+    BASE_DIR / "stock_metrics.csv",          # backwards compat
+    Path.cwd() / "data" / "stock_metrics.csv",
+    Path.cwd() / "stock_metrics.csv",         # backwards compat
 ]
 
 HISTORY_PERIOD_LABELS = ("近1期", "近2期", "近3期")
@@ -255,7 +256,7 @@ def resolve_code_or_name(text: str) -> str:
 
 # ── 申万一级行业映射 ──────────────────────────────────────────────────────
 
-_INDUSTRY_MAP_FILE = BASE_DIR / "industry_map.csv"
+_INDUSTRY_MAP_FILE = BASE_DIR / "data" / "industry_map.csv"
 _industry_cache: dict[str, str] | None = None   # None = 未加载, {} = 加载成功但文件空
 _industry_meta: dict[str, Any] = {}
 _industry_warn_printed = False

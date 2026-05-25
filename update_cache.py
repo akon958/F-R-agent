@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CACHE_FILE      = Path(__file__).with_name("stock_metrics.csv")
+CACHE_FILE      = Path(__file__).resolve().parent / "data" / "stock_metrics.csv"
 CHECKPOINT_FILE = CACHE_FILE.with_suffix(".csv.ckpt")
-FAILED_FILE     = Path(__file__).with_name("failed_codes.csv")
+FAILED_FILE     = Path(__file__).resolve().parent / "data" / "failed_codes.csv"
 
 pd: Any = None
 
