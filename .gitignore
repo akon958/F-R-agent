@@ -29,6 +29,11 @@ family_profile.csv
 family_accounts.csv
 family_comments.csv
 
+# AI 协作工具本地缓存与生成产物（个人环境，不应进仓库）
+.claude/
+.scratch/
+outputs/
+
 .DS_Store
 Thumbs.db
 .idea/
