@@ -17,7 +17,7 @@ import pandas as pd
 
 from data_fetcher import get_industry, get_industry_meta
 
-INDUSTRY_MAP = Path(__file__).resolve().parent / "industry_map.csv"
+INDUSTRY_MAP = Path(__file__).resolve().parent.parent / "data" / "industry_map.csv"
 
 REQUIRED_COLUMNS = {"code", "name", "sw_industry", "last_updated"}
 

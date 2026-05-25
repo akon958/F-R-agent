@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-CSV = Path(__file__).resolve().parent / "stock_metrics.csv"
+CSV = Path(__file__).resolve().parent.parent / "data" / "stock_metrics.csv"
 
 CASHFLOW_HISTORY_COLUMNS = [
     "经营现金流/净利润_近1期",
