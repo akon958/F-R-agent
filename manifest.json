@@ -1,0 +1,26 @@
+{
+  "name": "FamilyReader · 家庭持仓读懂器",
+  "short_name": "FamilyReader",
+  "description": "给父母用的家庭持仓风险体检与沟通工具。只做风险体检和学习参考，不构成任何投资建议。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f1ea",
+  "theme_color": "#7a3e2e",
+  "icons": [
+    {
+      "src": "/app/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/app/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
