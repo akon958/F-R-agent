@@ -603,6 +603,30 @@ def _css_block(dark_mode: bool, font_size: int) -> str:
             font-family: var(--font-display);
             font-weight: 600;
         }}
+        /* ── 结果页标签：替代多层折叠，需贴合温润主题 ───────────────── */
+        div[data-testid="stTabs"] div[data-baseweb="tab-list"] {{
+            gap: 0.4rem;
+            border-bottom: 1px solid var(--border);
+            background: transparent;
+        }}
+        div[data-testid="stTabs"] button[data-baseweb="tab"] {{
+            background: transparent;
+            color: var(--text-2);
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 0.94rem;
+            padding: 0.45rem 0.2rem;
+        }}
+        div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {{
+            color: var(--accent);
+        }}
+        div[data-testid="stTabs"] div[data-baseweb="tab-highlight"] {{
+            background: var(--accent);
+            height: 2.5px;
+        }}
+        div[data-testid="stTabs"] div[data-baseweb="tab-panel"] {{
+            padding-top: 1rem;
+        }}
         div[data-testid="stMetric"] {{
             background: var(--surface);
             border: 1px solid var(--border);
@@ -3222,6 +3246,80 @@ def stress_test_block(agent_result: dict[str, Any]) -> None:
         st.caption(summary)
 
 
+def history_replay_block(agent_result: dict[str, Any]) -> None:
+    """历史风险回放卡：把当前持仓放回 A 股历史真实下跌区间，看账面会回撤多少。
+
+    纯展示 agent 已算好的结构化区间，不做任何预测，不给交易建议。
+    与压力测试的区别：这里用的是历史上真实发生过的区间，用大盘同期回撤做近似。
+    """
+    replay = agent_result.get("history_replay") or {}
+    if not replay.get("available"):
+        return
+    scenarios = list(replay.get("scenarios") or [])
+    if not scenarios:
+        return
+
+    _SEV_STYLE = {
+        "severe":  ("影响重大", "#b91c1c", "#fef2f2"),
+        "notable": ("影响明显", "#92400e", "#fffbeb"),
+        "mild":    ("影响有限", "#15803d", "#f0fdf4"),
+    }
+
+    rows_html = ""
+    for sc in scenarios:
+        sev = str(sc.get("severity") or "mild")
+        sev_label, fg, bg = _SEV_STYLE.get(sev, _SEV_STYLE["mild"])
+        title = html_escape(str(sc.get("title", "")))
+        period = html_escape(str(sc.get("period", "")))
+        drawdown = float(sc.get("drawdown_pct", 0) or 0)
+        plain = html_escape(str(sc.get("plain", "")))
+        cushion = html_escape(str(sc.get("cushion_note", "")))
+        context = html_escape(str(sc.get("context", "")))
+        rows_html += f"""
+        <li style="padding:0.6rem 0.9rem;border-bottom:1px solid var(--border);
+                   border-left:4px solid {fg};">
+            <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.25rem;
+                        flex-wrap:wrap;">
+                <span style="font-size:0.84rem;font-weight:700;color:var(--text);">{title}</span>
+                <span style="font-size:0.65rem;font-weight:700;color:var(--text-3);
+                             white-space:nowrap;">{period}</span>
+                <span style="font-size:0.65rem;font-weight:700;color:#fff;background:{fg};
+                             padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">
+                    大盘约跌 {drawdown:.0%}
+                </span>
+                <span style="font-size:0.65rem;font-weight:700;color:{fg};background:{bg};
+                             padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">{sev_label}</span>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text);margin:0 0 0.2rem;line-height:1.55;">{plain}</p>
+            <p style="font-size:0.74rem;color:var(--text-2);margin:0 0 0.2rem;line-height:1.5;">{cushion}</p>
+            <p style="font-size:0.7rem;color:var(--text-3);margin:0;line-height:1.5;">{context}</p>
+        </li>"""
+
+    worst = replay.get("worst_case") or {}
+    worst_loss = float(worst.get("loss", 0) or 0)
+    worst_loss_text = f"{worst_loss / 10000:.1f} 万元" if abs(worst_loss) >= 10000 else f"{worst_loss:.0f} 元"
+    summary = html_escape(str(replay.get("summary", "")))
+    disclaimer = html_escape(str(replay.get("disclaimer", "")))
+
+    render_html(f"""
+    <section style="margin:0.8rem 0;border-radius:12px;
+                    border:1px solid var(--border);background:var(--surface);overflow:hidden;">
+        <div style="padding:0.55rem 0.9rem;display:flex;align-items:center;
+                    justify-content:space-between;border-bottom:1px solid var(--border);
+                    gap:0.6rem;flex-wrap:wrap;">
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">📅&nbsp;历史风险回放</span>
+            <span style="font-size:0.72rem;color:var(--text-3);">最深约缩水 {html_escape(worst_loss_text)}</span>
+        </div>
+        <ul style="margin:0;padding:0;list-style:none;">{rows_html}</ul>
+        <div style="padding:0.5rem 0.9rem;border-top:1px solid var(--border);">
+            <p style="font-size:0.72rem;color:var(--text-3);margin:0;line-height:1.5;">{disclaimer}</p>
+        </div>
+    </section>
+    """)
+    if summary:
+        st.caption(summary)
+
+
 def agent_focus_block(agent_result: dict[str, Any]) -> None:
     """Agent 主动选择本次最值得先看的 1-2 个重点。"""
     risk_factors = agent_result.get("risk_factors") or {}
@@ -3350,6 +3448,51 @@ def task_review_block(agent_result: dict[str, Any]) -> None:
         </section>
         """
     )
+
+
+def longitudinal_story_block(story: dict[str, Any]) -> None:
+    """纵向洞察卡：把多次体检连成 1-3 句家庭投资小故事。"""
+    if not isinstance(story, dict) or not story.get("available"):
+        return
+    stories = [s for s in (story.get("stories") or []) if isinstance(s, dict)]
+    if not stories:
+        return
+
+    _TONE = {
+        "good":    ("#15803d", "#f0fdf4"),
+        "watch":   ("#92400e", "#fffbeb"),
+        "neutral": ("var(--text-2)", "var(--surface-2)"),
+    }
+    rows_html = ""
+    for s in stories:
+        fg, bg = _TONE.get(str(s.get("tone") or "neutral"), _TONE["neutral"])
+        icon = html_escape(str(s.get("icon") or "·"))
+        text = html_escape(str(s.get("text") or ""))
+        rows_html += (
+            f'<li style="display:flex;gap:0.55rem;padding:0.5rem 0.9rem;'
+            f'border-bottom:1px solid var(--border);align-items:flex-start;">'
+            f'<span style="flex-shrink:0;font-size:0.95rem;line-height:1.5;'
+            f'background:{bg};border-radius:8px;padding:0.05rem 0.3rem;">{icon}</span>'
+            f'<p style="font-size:0.82rem;color:var(--text);line-height:1.6;margin:0;">{text}</p>'
+            f'</li>'
+        )
+
+    headline = html_escape(str(story.get("headline") or "把这几次体检连起来看"))
+    disclaimer = html_escape(str(story.get("disclaimer") or ""))
+    render_html(f"""
+    <section style="margin:0.4rem 0 0.6rem;border-radius:12px;
+                    border:1px solid var(--border);background:var(--surface);overflow:hidden;">
+        <div style="padding:0.55rem 0.9rem;border-bottom:1px solid var(--border);
+                    display:flex;align-items:center;gap:0.45rem;">
+            <span style="font-size:0.95rem;">🕰️</span>
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">{headline}</span>
+        </div>
+        <ul style="margin:0;padding:0;list-style:none;">{rows_html}</ul>
+        <div style="padding:0.45rem 0.9rem;border-top:1px solid var(--border);">
+            <p style="font-size:0.7rem;color:var(--text-3);margin:0;line-height:1.5;">{disclaimer}</p>
+        </div>
+    </section>
+    """)
 
 
 def _portfolio_fin_metrics(stock_results: list[dict]) -> dict[str, Any]:
@@ -4367,6 +4510,86 @@ def family_disagreement_block(disagreement: dict[str, Any]) -> None:
     )
 
 
+def family_dialogue_block(dialogue: dict[str, Any]) -> None:
+    """家庭沟通卡：检测到分歧/明显差距时，给出可照着说的中立沟通脚本。"""
+    if not isinstance(dialogue, dict) or not dialogue.get("available"):
+        return
+
+    opening = html_escape(str(dialogue.get("opening", "")))
+    closing = html_escape(str(dialogue.get("closing", "")))
+    disclaimer = html_escape(str(dialogue.get("disclaimer", "")))
+
+    # 各方关注点
+    persp_html = ""
+    for p in (dialogue.get("perspectives") or []):
+        member = html_escape(str(p.get("member", "")))
+        stance = html_escape(str(p.get("stance_label", "")))
+        focus = html_escape(str(p.get("focus_label", "")))
+        voice = html_escape(str(p.get("voice", "")))
+        tag = "／".join([t for t in (focus, stance) if t])
+        persp_html += (
+            f'<li style="padding:0.3rem 0;border-bottom:1px solid var(--border);'
+            f'display:flex;gap:0.45rem;align-items:flex-start;">'
+            f'<span style="flex-shrink:0;font-size:0.72rem;font-weight:700;color:var(--accent);'
+            f'background:var(--accent-soft);border-radius:999px;padding:0.1rem 0.5rem;'
+            f'white-space:nowrap;">{member}</span>'
+            f'<span style="font-size:0.8rem;color:var(--text);line-height:1.5;min-width:0;">'
+            f'{voice or "在这个问题上有自己的看法"}'
+            f'<span style="font-size:0.68rem;color:var(--text-3);margin-left:0.3rem;">{tag}</span>'
+            f'</span></li>'
+        )
+
+    facts_html = "".join(
+        f'<li style="font-size:0.78rem;color:var(--text-2);line-height:1.5;'
+        f'padding:0.12rem 0;">· {html_escape(str(f))}</li>'
+        for f in (dialogue.get("facts") or [])
+    )
+
+    questions_html = "".join(
+        f'<li style="font-size:0.82rem;color:var(--text);line-height:1.55;'
+        f'padding:0.2rem 0;display:flex;gap:0.4rem;">'
+        f'<span style="color:var(--accent);font-weight:700;flex-shrink:0;">{i}.</span>'
+        f'<span>{html_escape(str(q))}</span></li>'
+        for i, q in enumerate(dialogue.get("questions") or [], 1)
+    )
+
+    def _sub(title: str, body_html: str, *, ordered: bool = False) -> str:
+        if not body_html:
+            return ""
+        tag = "ol" if ordered else "ul"
+        return (
+            f'<div style="margin:0.55rem 0 0;">'
+            f'<p style="font-size:0.7rem;font-weight:700;letter-spacing:.04em;'
+            f'color:var(--accent);text-transform:uppercase;margin:0 0 0.2rem;">{title}</p>'
+            f'<{tag} style="margin:0;padding:0;list-style:none;">{body_html}</{tag}></div>'
+        )
+
+    render_html(f"""
+    <section style="margin:0.4rem 0 0.6rem;border-radius:12px;
+                    border:1.5px solid color-mix(in srgb,var(--accent) 35%,transparent);
+                    background:color-mix(in srgb,var(--surface) 90%,var(--accent-soft));
+                    overflow:hidden;">
+        <div style="padding:0.55rem 0.9rem;border-bottom:1px solid var(--border);
+                    display:flex;align-items:center;gap:0.45rem;">
+            <span style="font-size:0.95rem;">🗣️</span>
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">家庭沟通卡</span>
+            <span style="font-size:0.7rem;color:var(--text-3);margin-left:auto;">照着聊，先对齐再说</span>
+        </div>
+        <div style="padding:0.6rem 0.9rem;">
+            <p style="font-size:0.84rem;color:var(--text);line-height:1.6;margin:0;">{opening}</p>
+            {_sub("各方在意的点", persp_html)}
+            {_sub("先摆在桌面上的事实", facts_html)}
+            {_sub("可以一起聊这几个问题", questions_html, ordered=True)}
+            <p style="font-size:0.8rem;color:var(--text-2);line-height:1.55;
+                      margin:0.6rem 0 0;padding-top:0.5rem;border-top:1px dashed var(--border);">
+                {closing}
+            </p>
+            <p style="font-size:0.7rem;color:var(--text-3);line-height:1.5;margin:0.45rem 0 0;">{disclaimer}</p>
+        </div>
+    </section>
+    """)
+
+
 def intent_action_gap_block(gap_data: dict[str, Any]) -> None:
     """意图-行动差距镜：把家人立场记录和当前持仓数据对比，提示明显差距。"""
     if not isinstance(gap_data, dict) or not gap_data.get("has_gap"):
@@ -4695,9 +4918,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # ── Part 1：核心结果卡片 ─────────────────────────────────
-
-    # 1a. 综合评分 + 风险等级（verdict-card 保留原样式）
+    # ── 始终可见：综合评分 + 风险等级（headline，不进标签页）──────────
     risk_score = int(agent_result.get("risk_score", 0) or 0)
     risk_info = risk_signal_info(risk_score, str(agent_result.get("risk_level", "") or ""))
     render_html(
@@ -4719,26 +4940,31 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    # 1b. 与上次体检相比（主动预警）
-    _delta = agent_result.get("delta_alert") or {}
-    if _delta.get("has_alert"):
-        _dlevel = str(_delta.get("level") or "caution")
-        _dbg, _dfg = {
-            "warning":  ("#fef2f2", "#b91c1c"),
-            "caution":  ("#fffbeb", "#92400e"),
-            "improved": ("#f0fdf4", "#15803d"),
-        }.get(_dlevel, ("#f8fafc", "#475569"))
-        _dicon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(_dlevel, "△")
-        _dlabel = {"warning": "风险上升", "caution": "有变化", "improved": "有改善"}.get(_dlevel, "有变化")
-        _changes_html = "".join(
-            f'<span style="display:block;font-size:0.78rem;color:{_dfg};'
-            f'padding:0.1rem 0;">{html_escape(c)}</span>'
-            for c in (_delta.get("changes") or [])
-        )
-        with st.expander(f"综合评分变化：{_dlabel}", expanded=(_dlevel == "warning")):
+    # ── 三个标签页替代原来的多层并列折叠 ───────────────────────────
+    #   结论与沟通：父母真正要看的结论、沟通卡、压力测试、纵向洞察（全部平铺）
+    #   分析详情：Agent 记忆/交叉验证/风险因子等技术细节（标签本身即收纳，无需再折叠）
+    #   持仓明细：组合指标 + 逐只持仓 + 数据来源
+    tab_conclusion, tab_detail, tab_holdings = st.tabs(["结论与沟通", "分析详情", "持仓明细"])
+
+    with tab_conclusion:
+        # 与上次体检相比（有预警才显示，平铺成卡片，不再折叠）
+        _delta = agent_result.get("delta_alert") or {}
+        if _delta.get("has_alert"):
+            _dlevel = str(_delta.get("level") or "caution")
+            _dbg, _dfg = {
+                "warning":  ("#fef2f2", "#b91c1c"),
+                "caution":  ("#fffbeb", "#92400e"),
+                "improved": ("#f0fdf4", "#15803d"),
+            }.get(_dlevel, ("#f8fafc", "#475569"))
+            _dicon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(_dlevel, "△")
+            _changes_html = "".join(
+                f'<span style="display:block;font-size:0.78rem;color:{_dfg};'
+                f'padding:0.1rem 0;">{html_escape(c)}</span>'
+                for c in (_delta.get("changes") or [])
+            )
             render_html(
                 f"""
-                <div style="margin:0 0 0.4rem;padding:0.5rem 0.85rem;
+                <div style="margin:0 0 0.5rem;padding:0.5rem 0.85rem;
                             background:{_dbg};border-radius:10px;
                             border:1.5px solid color-mix(in srgb,{_dfg} 30%,transparent);">
                     <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.15rem;">
@@ -4750,54 +4976,62 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 """
             )
 
-    # 1c. 给家人的一句话（dinner_talk，有才显示）
-    _dinner = str(agent_result.get("dinner_talk") or agent_context.get("dinner_talk") or "")
-    if _dinner:
+        # 给家人的一句话（dinner_talk，有才显示）
+        _dinner = str(agent_result.get("dinner_talk") or agent_context.get("dinner_talk") or "")
+        if _dinner:
+            render_html(
+                f"""
+                <div style="padding:0.55rem 0.85rem;margin:0 0 0.4rem;
+                            background:var(--gold-soft);border-radius:10px;
+                            border:1.5px solid color-mix(in srgb,var(--gold) 30%,transparent);">
+                    <p style="font-size:0.68rem;font-weight:700;letter-spacing:.06em;
+                              color:var(--gold);text-transform:uppercase;margin:0 0 0.18rem;">
+                        给家人的一句话
+                    </p>
+                    <p style="font-size:0.87rem;color:var(--text);margin:0;line-height:1.55;">
+                        {html_escape(_dinner)}
+                    </p>
+                </div>
+                """
+            )
+
+        # 家庭分歧 → 家庭沟通卡（有则显示）
+        family_disagreement_block(agent_result.get("family_disagreement", {}))
+        family_dialogue_block(agent_result.get("family_dialogue", {}))
+
+        # 极端情景压力测试（平铺，block 自带 available 判空）
+        stress_test_block(agent_result)
+
+        # 历史风险回放（较重，保留为单个可选深读折叠，不抢压力测试的位置）
+        _replay = agent_result.get("history_replay") or {}
+        if _replay.get("available") and _replay.get("scenarios"):
+            with st.expander("放回历史那几次大跌，会回撤多少？", expanded=False):
+                history_replay_block(agent_result)
+
+        # 纵向洞察（≥2 次体检才有）
+        longitudinal_story_block(agent_result.get("longitudinal_story", {}))
+
+        # Agent 主动抓重点（原来默认就展开，这里直接平铺）
         render_html(
-            f"""
-            <div style="padding:0.55rem 0.85rem;margin:0 0 0.4rem;
-                        background:var(--gold-soft);border-radius:10px;
-                        border:1.5px solid color-mix(in srgb,var(--gold) 30%,transparent);">
-                <p style="font-size:0.68rem;font-weight:700;letter-spacing:.06em;
-                          color:var(--gold);text-transform:uppercase;margin:0 0 0.18rem;">
-                    给家人的一句话
-                </p>
-                <p style="font-size:0.87rem;color:var(--text);margin:0;line-height:1.55;">
-                    {html_escape(_dinner)}
-                </p>
-            </div>
-            """
+            f'<p style="font-size:0.72rem;color:var(--text-3);margin:0.25rem 0 0.35rem;">'
+            f'Agent 主动判断 · 数据可信度：{html_escape(_conf_level or "未知")}</p>'
         )
-
-    # 1d. 家庭分歧（有则显示）
-    family_disagreement_block(agent_result.get("family_disagreement", {}))
-
-    # 1d-2. 极端情景压力测试（最坏情况演练；重大影响时自动展开）
-    _stress = agent_result.get("stress_test") or {}
-    if _stress.get("available") and _stress.get("scenarios"):
-        _worst_sev = str((_stress.get("worst_case") or {}).get("severity") or "mild")
-        with st.expander("最坏情况下，全家会缩水多少？", expanded=(_worst_sev == "severe")):
-            stress_test_block(agent_result)
-
-    # 1e. Agent 主动抓重点（结果页唯一的重点风险入口）
-    with st.expander(f"Agent 主动判断 · 数据可信度：{_conf_level or '未知'}", expanded=True):
         agent_focus_block(agent_result)
 
-    # 1f. 下一步 CTA：查看 AI 风险说明
-    render_html("""
-    <div class="fr-step-card">
-        <p class="fr-step-kicker">Next</p>
-        <p class="fr-step-title">让 AI 把风险讲给家人听</p>
-        <p class="fr-step-sub">基于本次体检数据生成，重点解释为什么要关注这些风险。</p>
-    </div>
-    """)
-    if st.button("查看 AI 风险说明 →", use_container_width=True,
-                 key="goto_ai_report_btn", type="primary"):
-        st.session_state["active_view"] = "ai_report"
-        st.rerun()
+        # 下一步 CTA：查看 AI 风险说明
+        render_html("""
+        <div class="fr-step-card">
+            <p class="fr-step-kicker">Next</p>
+            <p class="fr-step-title">让 AI 把风险讲给家人听</p>
+            <p class="fr-step-sub">基于本次体检数据生成，重点解释为什么要关注这些风险。</p>
+        </div>
+        """)
+        if st.button("查看 AI 风险说明 →", use_container_width=True,
+                     key="goto_ai_report_btn", type="primary"):
+            st.session_state["active_view"] = "ai_report"
+            st.rerun()
 
-    # ── Part 2：Agent 智能分析详情（默认折叠）────────────────
-    with st.expander("Agent 智能分析详情", expanded=False):
+    with tab_detail:
         render_html(_confidence_badge_html(_conf_level, _conf_code, _conf_summary))
         render_html(_cross_validation_html(_cross_val))
         if _behavior_note:
@@ -4818,13 +5052,9 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         if _analysis:
             risk_factor_breakdown_block(_analysis, agent_result.get("risk_factors"))
 
-    # ── Part 3：体检数据一览（直接展示，核心指标不折叠）─────────────
-    if _analysis:
-        portfolio_metrics_block(summary, _analysis)
-
-    # ── Part 4：持仓明细与数据来源（折叠）────────────────────────────
-    with st.expander("持仓明细 · 数据来源", expanded=False):
+    with tab_holdings:
         if _analysis:
+            portfolio_metrics_block(summary, _analysis)
             holdings_detail(_analysis)
         has_missing = any(bool(v) for v in missing_data.values())
         if has_missing:

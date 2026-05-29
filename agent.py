@@ -42,6 +42,30 @@ try:
 except ImportError:
     def run_stress_test(analysis: dict) -> dict:  # type: ignore[misc]
         return {"available": False, "reason": "", "scenarios": [], "worst_case": None, "summary": "", "disclaimer": ""}
+try:
+    from history_replay import run_history_replay  # type: ignore
+except ImportError:
+    def run_history_replay(analysis: dict) -> dict:  # type: ignore[misc]
+        return {"available": False, "reason": "", "scenarios": [], "worst_case": None, "summary": "", "disclaimer": ""}
+try:
+    from family_dialogue import build_family_dialogue  # type: ignore
+except ImportError:
+    def build_family_dialogue(  # type: ignore[misc]
+        family_disagreement: dict,
+        intent_action_gap: dict | None = None,
+        portfolio_summary: dict | None = None,
+        reverse_qa: dict | None = None,
+    ) -> dict:
+        return {"available": False, "trigger": "", "topics": [], "opening": "",
+                "perspectives": [], "facts": [], "questions": [], "closing": "", "disclaimer": ""}
+try:
+    from longitudinal_story import build_longitudinal_story  # type: ignore
+except ImportError:
+    def build_longitudinal_story(  # type: ignore[misc]
+        history_analysis: dict | None,
+        task_review: dict | None = None,
+    ) -> dict:
+        return {"available": False, "records_count": 0, "headline": "", "stories": [], "disclaimer": ""}
 from memory_agent import (
     build_agent_memory_summary,
     build_family_profile_snapshot,
@@ -1027,6 +1051,9 @@ def run_family_risk_agent(
             "data_confidence": {"level": "低", "level_code": "low", "summary": "输入不完整", "issues": []},
             "cross_validation": {"passed": True, "issues": [], "notes": [], "checks_run": 0},
             "stress_test": {"available": False, "reason": "输入不完整，未做压力测试。", "scenarios": [], "worst_case": None, "summary": "", "disclaimer": ""},
+            "history_replay": {"available": False, "reason": "输入不完整，未做历史回放。", "scenarios": [], "worst_case": None, "summary": "", "disclaimer": ""},
+            "family_dialogue": {"available": False, "trigger": "", "topics": [], "opening": "", "perspectives": [], "facts": [], "questions": [], "closing": "", "disclaimer": ""},
+            "longitudinal_story": {"available": False, "records_count": 0, "headline": "", "stories": [], "disclaimer": ""},
             "saved_history": False,
             "storage_status": {
                 "backend": "local_csv",
@@ -1093,6 +1120,23 @@ def run_family_risk_agent(
     stress_test = run_stress_test(analysis)
     agent_context["stress_test"] = stress_test
 
+    # ── History Replay：把当前持仓放回历史下跌区间回放（纯查表，不改评分，不预测）──
+    history_replay = run_history_replay(analysis)
+    agent_context["history_replay"] = history_replay
+
+    # ── Family Dialogue：有分歧/明显差距时，生成中立的家庭沟通卡 ──────
+    family_dialogue = build_family_dialogue(
+        family_disagreement=family_disagreement,
+        intent_action_gap=intent_action_gap,
+        portfolio_summary=portfolio_summary,
+        reverse_qa=reverse_qa_data,
+    )
+    agent_context["family_dialogue"] = family_dialogue
+
+    # ── Longitudinal Story：把多次体检连成故事（读 history_analysis + task_review）──
+    longitudinal_story = build_longitudinal_story(history_analysis, task_review)
+    agent_context["longitudinal_story"] = longitudinal_story
+
     # ── Report Agent ────────────────────────────────────────────
     ai_report, dinner_talk, report_source = _run_report_agent(
         agent_context, analysis, missing_data, emit, debug_steps,
@@ -1133,6 +1177,9 @@ def run_family_risk_agent(
         "task_review": task_review,
         "watch_tasks": watch_tasks,
         "stress_test": stress_test,
+        "history_replay": history_replay,
+        "family_dialogue": family_dialogue,
+        "longitudinal_story": longitudinal_story,
         "industry_conc": analysis.get("industry_concentration"),
         "data_credit": round(
             (len(clean_holdings) - len(missing_data.get("行情数据缺失", [])))

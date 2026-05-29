@@ -390,14 +390,20 @@ Supabase 写入失败时：
 2. 输入区
 3. 一键智能体检按钮
 4. 智能体检完成状态
-5. 家庭分歧提示（如果有）
-6. 本次智能体检结论
-7. 本次 AI 风险说明
-8. 继续追问这次体检
-9. 家庭观察记录
-10. 历史体检记录
-11. 体检过程详情
-12. 开发者信息 / 调试详情
+5. 家庭观察记录
+6. 历史体检记录
+7. 开发者信息 / 调试详情
+
+**体检结果页（`app.py` 的 `agent_result_block`）已改为标签结构**（2026-05 重构，原本是 5 个并列折叠，父母不知点哪个）：
+
+- 顶部常驻（不进标签）：完成横条 + 综合评分/风险灯 verdict-card
+- `st.tabs(["结论与沟通", "分析详情", "持仓明细"])`
+  1. **结论与沟通**：与上次相比预警 → 给家人一句话 → 家庭分歧 → 家庭沟通卡 → 极端情景压力测试 → 历史风险回放（单个折叠）→ 纵向洞察 → Agent 主动判断 → 查看 AI 风险说明 CTA
+  2. **分析详情**：数据置信度 / 交叉验证 / Agent 记忆 / 长期画像 / 意图差距 / 任务回看 / 待办 / 风险因子拆解
+  3. **持仓明细**：组合指标 + 逐只持仓 + 数据缺失说明
+
+改这个标签结构或其内部顺序，仍属"改页面主流程顺序"，需先向 akon958 说明再动（见 §10）。
+AI 风险说明、追问等是独立 view（`active_view`），不在结果页标签内。
 
 不要让技术词出现在主界面，比如：
 
@@ -570,6 +576,22 @@ stock_metrics_backup.csv
 - 如果主报告能调用 DeepSeek、追问却走本地兜底，优先检查是否共用 `_call_deepseek()`。
 - 如果页面刷新后回首页，优先检查 `st.session_state["agent_result"]`。
 - 如果出现 ImportError，优先检查被 import 文件里是否有 SyntaxError。
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+This repo uses local markdown files under `.scratch/` as the default issue tracker for agent workflows. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+This repo uses the default mattpocock/skills triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Treat this repo as a single-context codebase. Read `CLAUDE.md` first for project constraints, then read `CONTEXT.md` and `docs/adr/` if they exist. See `docs/agents/domain.md`.
 
 ---
 
