@@ -4753,8 +4753,12 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
         "tight": "#b94040",
     }
 
+    # 只展示需要关注（watch/tight）的因子，"稳"档收起，避免 8 张卡里多数全绿的噪音。
+    # factors 已按 priority_score 降序，取前 4 张即最值得看的。
+    _attention = [f for f in factors if str(f.get("tone")) in ("watch", "tight")]
+    _steady_n = len(factors) - len(_attention)
     cards = []
-    for item in factors:
+    for item in _attention[:4]:
         name = str(item.get("name", ""))
         score = float(item.get("score", 0) or 0)
         weight = float(item.get("weight", 0) or 0)
@@ -4799,13 +4803,29 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
     if len(top_focus) > 1:
         focus_extra = "；另一个重点是：" + "、".join(html_escape(str(item.get("name") or "")) for item in top_focus[1:2])
 
+    if cards:
+        _grid_html = (
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">'
+            + "".join(cards) + "</div>"
+        )
+        if _steady_n > 0:
+            _grid_html += (
+                f'<p style="font-size:0.72rem;color:var(--text-3);margin:0.5rem 0 0;">'
+                f'其余 {_steady_n} 项目前较稳，已收起。</p>'
+            )
+    else:
+        _grid_html = (
+            '<p style="font-size:0.82rem;color:#3f7d55;margin:0;">'
+            '各项风险因子目前都在较稳区间，没有特别需要先看的项。</p>'
+        )
+
     render_html(
         f"""
         <section class="block" style="padding:1rem 1rem 0.95rem;">
             <div class="block-head" style="margin-bottom:0.65rem;">
                 <div>
                     <h2 class="block-title" style="font-size:1.15rem;">风险因子拆解</h2>
-                    <p class="block-subtitle">这不是额外预测，只是把综合评分拆开看清楚。</p>
+                    <p class="block-subtitle">只列出需要关注的因子，其余较稳的已收起。</p>
                 </div>
             </div>
             <div style="border:1px solid #e8c4b2;background:#fff9f6;border-radius:12px;
@@ -4816,9 +4836,7 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
                     简单说，就是{html_escape(focus_plain)}{focus_extra}。
                 </p>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
-                {''.join(cards)}
-            </div>
+            {_grid_html}
         </section>
         """
     )
@@ -4879,6 +4897,33 @@ def _confidence_badge_html(level: str, level_code: str, summary: str) -> str:
         f'<span style="font-size:0.68rem;color:var(--text-3);margin-left:0.4rem;">'
         f'{html_escape(summary)}</span>'
         f'</p>'
+    )
+
+
+def _delta_alert_html(delta: dict[str, Any]) -> str:
+    """与上次体检相比的预警卡 HTML 片段。无预警返回空串。"""
+    if not isinstance(delta, dict) or not delta.get("has_alert"):
+        return ""
+    level = str(delta.get("level") or "caution")
+    bg, fg = {
+        "warning":  ("#fef2f2", "#b91c1c"),
+        "caution":  ("#fffbeb", "#92400e"),
+        "improved": ("#f0fdf4", "#15803d"),
+    }.get(level, ("#f8fafc", "#475569"))
+    icon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(level, "△")
+    changes_html = "".join(
+        f'<span style="display:block;font-size:0.78rem;color:{fg};'
+        f'padding:0.1rem 0;">{html_escape(c)}</span>'
+        for c in (delta.get("changes") or [])
+    )
+    return (
+        f'<div style="margin:0 0 0.5rem;padding:0.5rem 0.85rem;'
+        f'background:{bg};border-radius:10px;'
+        f'border:1.5px solid color-mix(in srgb,{fg} 30%,transparent);">'
+        f'<div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.15rem;">'
+        f'<span style="font-size:0.8rem;">{icon}</span>'
+        f'<span style="font-size:0.83rem;font-weight:700;color:{fg};">与上次体检相比</span>'
+        f'</div>{changes_html}</div>'
     )
 
 
@@ -4947,34 +4992,11 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     tab_conclusion, tab_detail, tab_holdings = st.tabs(["结论与沟通", "分析详情", "持仓明细"])
 
     with tab_conclusion:
-        # 与上次体检相比（有预警才显示，平铺成卡片，不再折叠）
+        # 与上次体检相比：仅"风险上升(warning)"留在结论页做主动预警；
+        # 一般变化/有改善下沉到"分析详情"，避免与纵向洞察在首屏重复讲历史。
         _delta = agent_result.get("delta_alert") or {}
-        if _delta.get("has_alert"):
-            _dlevel = str(_delta.get("level") or "caution")
-            _dbg, _dfg = {
-                "warning":  ("#fef2f2", "#b91c1c"),
-                "caution":  ("#fffbeb", "#92400e"),
-                "improved": ("#f0fdf4", "#15803d"),
-            }.get(_dlevel, ("#f8fafc", "#475569"))
-            _dicon = {"warning": "⬇️", "caution": "⚠️", "improved": "⬆️"}.get(_dlevel, "△")
-            _changes_html = "".join(
-                f'<span style="display:block;font-size:0.78rem;color:{_dfg};'
-                f'padding:0.1rem 0;">{html_escape(c)}</span>'
-                for c in (_delta.get("changes") or [])
-            )
-            render_html(
-                f"""
-                <div style="margin:0 0 0.5rem;padding:0.5rem 0.85rem;
-                            background:{_dbg};border-radius:10px;
-                            border:1.5px solid color-mix(in srgb,{_dfg} 30%,transparent);">
-                    <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.15rem;">
-                        <span style="font-size:0.8rem;">{_dicon}</span>
-                        <span style="font-size:0.83rem;font-weight:700;color:{_dfg};">与上次体检相比</span>
-                    </div>
-                    {_changes_html}
-                </div>
-                """
-            )
+        if _delta.get("has_alert") and str(_delta.get("level")) == "warning":
+            render_html(_delta_alert_html(_delta))
 
         # 给家人的一句话（dinner_talk，有才显示）
         _dinner = str(agent_result.get("dinner_talk") or agent_context.get("dinner_talk") or "")
@@ -4995,9 +5017,14 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                 """
             )
 
-        # 家庭分歧 → 家庭沟通卡（有则显示）
-        family_disagreement_block(agent_result.get("family_disagreement", {}))
-        family_dialogue_block(agent_result.get("family_dialogue", {}))
+        # 家庭分歧 → 家庭沟通卡。沟通卡开场已复述分歧，故沟通卡可用时不再单独显示
+        # "你们不一致"那行一句话提示，避免重复；仅当沟通卡因异常兜底不可用时，
+        # 回退显示分歧一句话，确保不丢失分歧信号。
+        _dialogue = agent_result.get("family_dialogue", {})
+        if isinstance(_dialogue, dict) and _dialogue.get("available"):
+            family_dialogue_block(_dialogue)
+        else:
+            family_disagreement_block(agent_result.get("family_disagreement", {}))
 
         # 极端情景压力测试（平铺，block 自带 available 判空）
         stress_test_block(agent_result)
@@ -5032,6 +5059,10 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
             st.rerun()
 
     with tab_detail:
+        # 与上次体检相比：一般变化/有改善放这里（风险上升已在结论页预警）
+        _delta = agent_result.get("delta_alert") or {}
+        if _delta.get("has_alert") and str(_delta.get("level")) != "warning":
+            render_html(_delta_alert_html(_delta))
         render_html(_confidence_badge_html(_conf_level, _conf_code, _conf_summary))
         render_html(_cross_validation_html(_cross_val))
         if _behavior_note:
