@@ -529,12 +529,26 @@ analyzer.py
 data_fetcher.py
 storage.py
 report_generator.py
+config.py
+memory_agent.py
+validator.py
+delta_alert.py
+stress_test.py
+history_replay.py
+family_dialogue.py
+longitudinal_story.py
 requirements.txt
 README.md
 stock_metrics.csv
 supabase_schema.sql
 CLAUDE.md
 ```
+
+> 上面 config / memory_agent / validator / delta_alert / stress_test / history_replay /
+> family_dialogue / longitudinal_story 都是 `agent.py` 模块级 import 的运行时依赖。
+> 它们虽有 ImportError 兜底（漏传不报错），但漏传会让对应功能在 Streamlit Cloud 上
+> **静默消失**。新增这类被 agent.py / app.py 直接 import 的模块时，记得同步加进本清单，
+> 部署后确认对应卡片仍然出现。
 
 通常不建议上传：
 
