@@ -71,7 +71,7 @@ from memory_agent import (
     build_family_profile_snapshot,
     build_followup_memory_summary,
 )
-from validator import cross_validate
+from validator import cross_validate, sanitize_structured
 from storage import (
     format_datetime_for_display,
     get_family_id,
@@ -1116,25 +1116,26 @@ def run_family_risk_agent(
     )
     agent_context["watch_tasks"] = watch_tasks
 
+    # 增量模块的结构化文案不经过 _safe_ai_text，统一用 sanitize_structured 兜底过滤禁词。
     # ── Stress Test：极端情景演练（纯计算，不改评分，不预测涨跌）──────
-    stress_test = run_stress_test(analysis)
+    stress_test = sanitize_structured(run_stress_test(analysis))
     agent_context["stress_test"] = stress_test
 
     # ── History Replay：把当前持仓放回历史下跌区间回放（纯查表，不改评分，不预测）──
-    history_replay = run_history_replay(analysis)
+    history_replay = sanitize_structured(run_history_replay(analysis))
     agent_context["history_replay"] = history_replay
 
     # ── Family Dialogue：有分歧/明显差距时，生成中立的家庭沟通卡 ──────
-    family_dialogue = build_family_dialogue(
+    family_dialogue = sanitize_structured(build_family_dialogue(
         family_disagreement=family_disagreement,
         intent_action_gap=intent_action_gap,
         portfolio_summary=portfolio_summary,
         reverse_qa=reverse_qa_data,
-    )
+    ))
     agent_context["family_dialogue"] = family_dialogue
 
     # ── Longitudinal Story：把多次体检连成故事（读 history_analysis + task_review）──
-    longitudinal_story = build_longitudinal_story(history_analysis, task_review)
+    longitudinal_story = sanitize_structured(build_longitudinal_story(history_analysis, task_review))
     agent_context["longitudinal_story"] = longitudinal_story
 
     # ── Report Agent ────────────────────────────────────────────

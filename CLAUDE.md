@@ -543,6 +543,7 @@ config.py
 memory_agent.py
 validator.py
 delta_alert.py
+scenario_common.py
 stress_test.py
 history_replay.py
 family_dialogue.py

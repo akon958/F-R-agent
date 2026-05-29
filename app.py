@@ -3222,54 +3222,75 @@ def watch_tasks_block(agent_result: dict[str, Any]) -> None:
     """)
 
 
-def stress_test_block(agent_result: dict[str, Any]) -> None:
-    """极端情景压力测试卡：让家人直观感受"最坏情况下全家会缩水多少"。
+_SCENARIO_SEV_STYLE = {
+    "severe":  ("影响重大", "#b91c1c", "#fef2f2"),
+    "notable": ("影响明显", "#92400e", "#fffbeb"),
+    "mild":    ("影响有限", "#15803d", "#f0fdf4"),
+}
 
-    纯展示 agent 已算好的结构化情景，不做任何预测，不给交易建议。
+
+def _render_scenario_cards(
+    payload: dict[str, Any],
+    *,
+    icon: str,
+    title: str,
+    worst_prefix: str,
+    pct_key: str,
+    pct_label: str,
+) -> None:
+    """压力测试 / 历史回放共用的情景卡渲染器（两者结构几乎一致，只差表头与跌幅口径）。
+
+    payload：run_stress_test / run_history_replay 的结构化输出。
+    pct_key/pct_label：压力测试用 shock_pct + "假设跌"，历史回放用 drawdown_pct + "大盘约跌"。
+    period / context 字段仅历史回放有，缺失时自动省略，压力测试不受影响。
     """
-    stress = agent_result.get("stress_test") or {}
-    if not stress.get("available"):
+    if not isinstance(payload, dict) or not payload.get("available"):
         return
-    scenarios = list(stress.get("scenarios") or [])
+    scenarios = list(payload.get("scenarios") or [])
     if not scenarios:
         return
 
-    _SEV_STYLE = {
-        "severe":  ("影响重大", "#b91c1c", "#fef2f2"),
-        "notable": ("影响明显", "#92400e", "#fffbeb"),
-        "mild":    ("影响有限", "#15803d", "#f0fdf4"),
-    }
-
     rows_html = ""
     for sc in scenarios:
-        sev = str(sc.get("severity") or "mild")
-        sev_label, fg, bg = _SEV_STYLE.get(sev, _SEV_STYLE["mild"])
-        title = html_escape(str(sc.get("title", "")))
-        shock = float(sc.get("shock_pct", 0) or 0)
+        sev_label, fg, bg = _SCENARIO_SEV_STYLE.get(str(sc.get("severity") or "mild"), _SCENARIO_SEV_STYLE["mild"])
+        sc_title = html_escape(str(sc.get("title", "")))
+        pct = float(sc.get(pct_key, 0) or 0)
         plain = html_escape(str(sc.get("plain", "")))
         cushion = html_escape(str(sc.get("cushion_note", "")))
+        period = html_escape(str(sc.get("period", "")))
+        context = html_escape(str(sc.get("context", "")))
+        period_html = (
+            f'<span style="font-size:0.65rem;font-weight:700;color:var(--text-3);'
+            f'white-space:nowrap;">{period}</span>' if period else ""
+        )
+        context_html = (
+            f'<p style="font-size:0.7rem;color:var(--text-3);margin:0.2rem 0 0;'
+            f'line-height:1.5;">{context}</p>' if context else ""
+        )
         rows_html += f"""
         <li style="padding:0.6rem 0.9rem;border-bottom:1px solid var(--border);
                    border-left:4px solid {fg};">
             <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.25rem;
                         flex-wrap:wrap;">
-                <span style="font-size:0.84rem;font-weight:700;color:var(--text);">{title}</span>
+                <span style="font-size:0.84rem;font-weight:700;color:var(--text);">{sc_title}</span>
+                {period_html}
                 <span style="font-size:0.65rem;font-weight:700;color:#fff;background:{fg};
                              padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">
-                    假设跌 {shock:.0%}
+                    {pct_label} {pct:.0%}
                 </span>
                 <span style="font-size:0.65rem;font-weight:700;color:{fg};background:{bg};
                              padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">{sev_label}</span>
             </div>
             <p style="font-size:0.8rem;color:var(--text);margin:0 0 0.2rem;line-height:1.55;">{plain}</p>
             <p style="font-size:0.74rem;color:var(--text-2);margin:0;line-height:1.5;">{cushion}</p>
+            {context_html}
         </li>"""
 
-    worst = stress.get("worst_case") or {}
+    worst = payload.get("worst_case") or {}
     worst_loss = float(worst.get("loss", 0) or 0)
     worst_loss_text = f"{worst_loss / 10000:.1f} 万元" if abs(worst_loss) >= 10000 else f"{worst_loss:.0f} 元"
-    summary = html_escape(str(stress.get("summary", "")))
-    disclaimer = html_escape(str(stress.get("disclaimer", "")))
+    summary = html_escape(str(payload.get("summary", "")))
+    disclaimer = html_escape(str(payload.get("disclaimer", "")))
 
     render_html(f"""
     <section style="margin:0.8rem 0;border-radius:12px;
@@ -3277,8 +3298,8 @@ def stress_test_block(agent_result: dict[str, Any]) -> None:
         <div style="padding:0.55rem 0.9rem;display:flex;align-items:center;
                     justify-content:space-between;border-bottom:1px solid var(--border);
                     gap:0.6rem;flex-wrap:wrap;">
-            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">🌧️&nbsp;极端情景压力测试</span>
-            <span style="font-size:0.72rem;color:var(--text-3);">最坏约缩水 {html_escape(worst_loss_text)}</span>
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">{icon}&nbsp;{html_escape(title)}</span>
+            <span style="font-size:0.72rem;color:var(--text-3);">{worst_prefix} {html_escape(worst_loss_text)}</span>
         </div>
         <ul style="margin:0;padding:0;list-style:none;">{rows_html}</ul>
         <div style="padding:0.5rem 0.9rem;border-top:1px solid var(--border);">
@@ -3288,80 +3309,27 @@ def stress_test_block(agent_result: dict[str, Any]) -> None:
     """)
     if summary:
         st.caption(summary)
+
+
+def stress_test_block(agent_result: dict[str, Any]) -> None:
+    """极端情景压力测试卡：让家人直观感受"最坏情况下全家会缩水多少"。"""
+    _render_scenario_cards(
+        agent_result.get("stress_test") or {},
+        icon="🌧️", title="极端情景压力测试", worst_prefix="最坏约缩水",
+        pct_key="shock_pct", pct_label="假设跌",
+    )
 
 
 def history_replay_block(agent_result: dict[str, Any]) -> None:
     """历史风险回放卡：把当前持仓放回 A 股历史真实下跌区间，看账面会回撤多少。
 
-    纯展示 agent 已算好的结构化区间，不做任何预测，不给交易建议。
-    与压力测试的区别：这里用的是历史上真实发生过的区间，用大盘同期回撤做近似。
+    与压力测试的区别：这里用历史真实区间，用大盘同期回撤做近似（带 period / context）。
     """
-    replay = agent_result.get("history_replay") or {}
-    if not replay.get("available"):
-        return
-    scenarios = list(replay.get("scenarios") or [])
-    if not scenarios:
-        return
-
-    _SEV_STYLE = {
-        "severe":  ("影响重大", "#b91c1c", "#fef2f2"),
-        "notable": ("影响明显", "#92400e", "#fffbeb"),
-        "mild":    ("影响有限", "#15803d", "#f0fdf4"),
-    }
-
-    rows_html = ""
-    for sc in scenarios:
-        sev = str(sc.get("severity") or "mild")
-        sev_label, fg, bg = _SEV_STYLE.get(sev, _SEV_STYLE["mild"])
-        title = html_escape(str(sc.get("title", "")))
-        period = html_escape(str(sc.get("period", "")))
-        drawdown = float(sc.get("drawdown_pct", 0) or 0)
-        plain = html_escape(str(sc.get("plain", "")))
-        cushion = html_escape(str(sc.get("cushion_note", "")))
-        context = html_escape(str(sc.get("context", "")))
-        rows_html += f"""
-        <li style="padding:0.6rem 0.9rem;border-bottom:1px solid var(--border);
-                   border-left:4px solid {fg};">
-            <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.25rem;
-                        flex-wrap:wrap;">
-                <span style="font-size:0.84rem;font-weight:700;color:var(--text);">{title}</span>
-                <span style="font-size:0.65rem;font-weight:700;color:var(--text-3);
-                             white-space:nowrap;">{period}</span>
-                <span style="font-size:0.65rem;font-weight:700;color:#fff;background:{fg};
-                             padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">
-                    大盘约跌 {drawdown:.0%}
-                </span>
-                <span style="font-size:0.65rem;font-weight:700;color:{fg};background:{bg};
-                             padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">{sev_label}</span>
-            </div>
-            <p style="font-size:0.8rem;color:var(--text);margin:0 0 0.2rem;line-height:1.55;">{plain}</p>
-            <p style="font-size:0.74rem;color:var(--text-2);margin:0 0 0.2rem;line-height:1.5;">{cushion}</p>
-            <p style="font-size:0.7rem;color:var(--text-3);margin:0;line-height:1.5;">{context}</p>
-        </li>"""
-
-    worst = replay.get("worst_case") or {}
-    worst_loss = float(worst.get("loss", 0) or 0)
-    worst_loss_text = f"{worst_loss / 10000:.1f} 万元" if abs(worst_loss) >= 10000 else f"{worst_loss:.0f} 元"
-    summary = html_escape(str(replay.get("summary", "")))
-    disclaimer = html_escape(str(replay.get("disclaimer", "")))
-
-    render_html(f"""
-    <section style="margin:0.8rem 0;border-radius:12px;
-                    border:1px solid var(--border);background:var(--surface);overflow:hidden;">
-        <div style="padding:0.55rem 0.9rem;display:flex;align-items:center;
-                    justify-content:space-between;border-bottom:1px solid var(--border);
-                    gap:0.6rem;flex-wrap:wrap;">
-            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">📅&nbsp;历史风险回放</span>
-            <span style="font-size:0.72rem;color:var(--text-3);">最深约缩水 {html_escape(worst_loss_text)}</span>
-        </div>
-        <ul style="margin:0;padding:0;list-style:none;">{rows_html}</ul>
-        <div style="padding:0.5rem 0.9rem;border-top:1px solid var(--border);">
-            <p style="font-size:0.72rem;color:var(--text-3);margin:0;line-height:1.5;">{disclaimer}</p>
-        </div>
-    </section>
-    """)
-    if summary:
-        st.caption(summary)
+    _render_scenario_cards(
+        agent_result.get("history_replay") or {},
+        icon="📅", title="历史风险回放", worst_prefix="最深约缩水",
+        pct_key="drawdown_pct", pct_label="大盘约跌",
+    )
 
 
 def agent_focus_block(agent_result: dict[str, Any]) -> None:

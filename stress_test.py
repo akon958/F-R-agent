@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from scenario_common import to_float as _f, money as _money, severity as _severity, cushion_note as _cushion_note
+
 
 # ── 情景跌幅（取历史上出现过的、可解释的整数档，便于父母理解）──────────────
 #   - 个股重挫 30%：A 股单只连续数个跌停即可达到，重仓股最直接的风险。
@@ -33,43 +35,6 @@ _DISCLAIMER = (
     "以上均为假设性压力测试，不是涨跌预测；账面上的涨跌只有在真正变现时才会成为实际盈亏。"
     "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 )
-
-
-def _f(value: Any) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _money(value: float) -> str:
-    """父母视角的金额：万元为主，小额回退到元。"""
-    value = _f(value)
-    if abs(value) >= 10000:
-        return f"{value / 10000:.1f} 万元"
-    return f"{value:.0f} 元"
-
-
-def _severity(loss_ratio: float) -> tuple[str, str]:
-    """按"占全家资产的比例"判断严重度，返回 (code, label)。"""
-    if loss_ratio >= 0.15:
-        return "severe", "影响重大"
-    if loss_ratio >= 0.05:
-        return "notable", "影响明显"
-    return "mild", "影响有限"
-
-
-def _cushion_note(loss: float, cash: float) -> str:
-    """现金垫能否缓冲这笔账面损失。只描述事实，不给操作建议。"""
-    if cash <= 0:
-        return "目前几乎没有现金垫，这类波动会直接压到本金，建议先确认家里短期是否要用钱。"
-    cover = loss / cash if cash > 0 else None
-    if cover is not None and cover > 1:
-        return (
-            f"这笔账面损失约为家庭现金垫的 {cover:.1f} 倍（现金约 {_money(cash)}），"
-            "现金垫不足以完全缓冲，适合提前把用钱计划聊清楚。"
-        )
-    return f"家庭现金垫约能覆盖这笔账面损失（现金约 {_money(cash)}），短期缓冲相对从容。"
 
 
 def _build_scenario(

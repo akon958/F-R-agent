@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from scenario_common import to_float as _f, money as _money, severity as _severity, cushion_note
+
 
 # ── 历史下跌区间（口径：沪深300 区间内峰谷最大回撤，实测后四舍五入到整数档）──────
 #   数值来源：东方财富 push2his 日线（沪深300，2007-01 至 2022-12），按"区间内
@@ -89,41 +91,9 @@ _DISCLAIMER = (
 )
 
 
-def _f(value: Any) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _money(value: float) -> str:
-    """父母视角的金额：万元为主，小额回退到元。"""
-    value = _f(value)
-    if abs(value) >= 10000:
-        return f"{value / 10000:.1f} 万元"
-    return f"{value:.0f} 元"
-
-
-def _severity(loss_ratio: float) -> tuple[str, str]:
-    """按"占全家资产的比例"判断严重度，返回 (code, label)。"""
-    if loss_ratio >= 0.15:
-        return "severe", "影响重大"
-    if loss_ratio >= 0.05:
-        return "notable", "影响明显"
-    return "mild", "影响有限"
-
-
 def _cushion_note(loss: float, cash: float) -> str:
-    """现金垫能否缓冲这笔账面回撤。只描述事实，不给操作建议。"""
-    if cash <= 0:
-        return "目前几乎没有现金垫，这类波动会直接压到本金，建议先确认家里短期是否要用钱。"
-    cover = loss / cash if cash > 0 else None
-    if cover is not None and cover > 1:
-        return (
-            f"这笔账面回撤约为家庭现金垫的 {cover:.1f} 倍（现金约 {_money(cash)}），"
-            "现金垫不足以完全缓冲，适合提前把用钱计划聊清楚。"
-        )
-    return f"家庭现金垫约能覆盖这笔账面回撤（现金约 {_money(cash)}），短期缓冲相对从容。"
+    """历史回放用"账面回撤"口径，复用 scenario_common.cushion_note。"""
+    return cushion_note(loss, cash, noun="账面回撤")
 
 
 def _build_scenario(

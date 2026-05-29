@@ -12,6 +12,25 @@ def sanitize_compliance_text(text: str) -> str:
     return safe
 
 
+def sanitize_structured(obj: Any) -> Any:
+    """递归地对结构化输出（dict/list/tuple/str）做合规词替换。
+
+    stress_test / family_dialogue / longitudinal_story / history_replay 的结构化文案
+    不经过 agent._safe_ai_text，agent 在组装结果时统一对它们调用本函数，形成
+    defense-in-depth：即便某个增量模块的文案漏了禁词，这里也会按 COMPLIANCE_REPLACEMENTS
+    兜底替换掉。对当前合规文案是无操作（不含禁词），只在未来改动引入禁词时才生效。
+    """
+    if isinstance(obj, str):
+        return sanitize_compliance_text(obj)
+    if isinstance(obj, dict):
+        return {key: sanitize_structured(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_structured(item) for item in obj]
+    if isinstance(obj, tuple):
+        return tuple(sanitize_structured(item) for item in obj)
+    return obj
+
+
 RISKY_REPORT_TERMS = {
     "行业第一所以可以买": "同业排名靠前，只能作为观察点",
     "排名靠后所以卖": "同业排名靠后，需要继续观察",
