@@ -104,7 +104,7 @@ def run_stress_test(analysis: dict[str, Any]) -> dict[str, Any]:
             name = str(largest.get("name") or largest.get("code") or "最大持仓")
             scenarios.append(_build_scenario(
                 key="single_stock",
-                title="最大单只重仓重挫",
+                title="最重的一只大跌",
                 shock=SINGLE_STOCK_SHOCK,
                 affected_value=_f(largest.get("amount")),
                 affected_label=f"持仓最重的「{name}」",

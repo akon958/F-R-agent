@@ -127,7 +127,8 @@ def cross_validate(
                 if gap > 15:
                     notes.append(
                         f"因子加权得分约 {weighted_sum:.0f} 分，与综合评分 {risk_score} 分"
-                        f"相差 {gap:.0f} 分，可能因数据缺失触发了保守限制"
+                        f"相差 {gap:.0f} 分，可能因风险规则触发了保守限制"
+                        "（如单只/行业过于集中、交易过热、现金过低或数据缺失等）"
                     )
             except Exception:  # noqa: BLE001
                 pass
