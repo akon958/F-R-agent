@@ -82,6 +82,50 @@ from storage import (
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="collapsed")
 
 
+def _inject_pwa_head() -> None:
+    """注入 PWA 标签：manifest + apple-touch-icon + 主题色，让手机可"添加到主屏幕"。
+
+    为什么不用 st.markdown：Streamlit 的 markdown 会过滤掉 <link>/<meta>（不在 body 标签
+    白名单里），注入会被静默丢弃。这里改用 0 高度的 components.html，其 srcdoc iframe 与
+    主页面同源，JS 可访问 window.parent.document.head，把 PWA 标签写进真正的 <head>。
+    ensure() 去重，避免每次 rerun 重复插入。
+    静态文件由 .streamlit/config.toml 的 enableStaticServing 提供，前缀 /app/static/。
+    """
+    import streamlit.components.v1 as components
+
+    components.html(
+        """
+        <script>
+        (function () {
+          try {
+            var doc = window.parent.document;
+            var head = doc.head;
+            function ensure(selector, make) {
+              if (!doc.querySelector(selector)) head.appendChild(make());
+            }
+            function link(rel, href) {
+              return function () { var l = doc.createElement('link'); l.rel = rel; l.href = href; return l; };
+            }
+            function meta(name, content) {
+              return function () { var m = doc.createElement('meta'); m.name = name; m.content = content; return m; };
+            }
+            ensure('link[rel="manifest"]', link('manifest', '/app/static/manifest.json'));
+            ensure('link[rel="apple-touch-icon"]', link('apple-touch-icon', '/app/static/apple-touch-icon.png'));
+            ensure('meta[name="theme-color"]', meta('theme-color', '#7a3e2e'));
+            ensure('meta[name="apple-mobile-web-app-capable"]', meta('apple-mobile-web-app-capable', 'yes'));
+            ensure('meta[name="apple-mobile-web-app-status-bar-style"]', meta('apple-mobile-web-app-status-bar-style', 'default'));
+            ensure('meta[name="apple-mobile-web-app-title"]', meta('apple-mobile-web-app-title', 'FamilyReader'));
+          } catch (e) { /* 跨域或异常时静默跳过，不影响主流程 */ }
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+
+_inject_pwa_head()
+
+
 def render_html(html: str) -> None:
     if hasattr(st, "html"):
         st.html(html)

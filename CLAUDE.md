@@ -93,6 +93,16 @@
 - stock_metrics.csv：Streamlit Cloud 默认读取的本地缓存文件
 - Streamlit Secrets：保存 `DEEPSEEK_API_KEY`、`SUPABASE_URL`、`SUPABASE_KEY`
 
+### PWA（添加到主屏幕）
+
+定位仍是手机网页工具，但已做成 PWA，父母可"添加到主屏幕"，有图标、全屏打开。
+
+- `.streamlit/config.toml` 开启 `[server] enableStaticServing = true`，把 `static/` 暴露在 `/app/static/`。
+- `static/manifest.json` + `static/icon-192.png` / `icon-512.png` / `apple-touch-icon.png`（由 `scripts/generate_pwa_icons.py` 用品牌脉搏线生成，改图标重跑该脚本）。
+- `app.py` 的 `_inject_pwa_head()` 用 **components.html 里的 JS 写入 `window.parent.document.head`**（注意：不能用 st.markdown，它会过滤掉 `<link>/<meta>`）。
+- 已在本地浏览器实测：manifest/图标 HTTP 200、标签确实进入 `<head>`、`display:standalone`。
+- 这是纯网页 PWA，不上架应用商店，规避金融类 App 的资质/备案负担。
+
 数据更新工作流：
 
 ```text
@@ -542,7 +552,16 @@ README.md
 stock_metrics.csv
 supabase_schema.sql
 CLAUDE.md
+.streamlit/config.toml
+static/manifest.json
+static/icon-192.png
+static/icon-512.png
+static/apple-touch-icon.png
 ```
+
+> PWA 资产（`.streamlit/config.toml` + `static/` 下 manifest 与 3 个图标）必须一起上传，
+> 否则"添加到主屏幕"会没有图标或 manifest 404。图标由 `scripts/generate_pwa_icons.py`
+> 生成，脚本本身可不上传（不影响运行），但建议留仓库以便重新生成。
 
 > 上面 config / memory_agent / validator / delta_alert / stress_test / history_replay /
 > family_dialogue / longitudinal_story 都是 `agent.py` 模块级 import 的运行时依赖。
