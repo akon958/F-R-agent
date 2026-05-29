@@ -1,0 +1,11 @@
+# Streamlit 配置。PWA：开启静态文件服务，让 static/ 下的 manifest.json 和图标
+# 可通过 /app/static/<文件> 访问（app.py 会注入 manifest 与 apple-touch-icon 标签）。
+[server]
+enableStaticServing = true
+
+# 与 app.py 注入的暖色主题保持一致，避免首屏/PWA 启动时闪过 Streamlit 默认配色。
+[theme]
+primaryColor = "#8d5039"
+backgroundColor = "#f6f1ea"
+secondaryBackgroundColor = "#f3ece2"
+textColor = "#282019"
