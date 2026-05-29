@@ -3154,6 +3154,74 @@ def watch_tasks_block(agent_result: dict[str, Any]) -> None:
     """)
 
 
+def stress_test_block(agent_result: dict[str, Any]) -> None:
+    """极端情景压力测试卡：让家人直观感受"最坏情况下全家会缩水多少"。
+
+    纯展示 agent 已算好的结构化情景，不做任何预测，不给交易建议。
+    """
+    stress = agent_result.get("stress_test") or {}
+    if not stress.get("available"):
+        return
+    scenarios = list(stress.get("scenarios") or [])
+    if not scenarios:
+        return
+
+    _SEV_STYLE = {
+        "severe":  ("影响重大", "#b91c1c", "#fef2f2"),
+        "notable": ("影响明显", "#92400e", "#fffbeb"),
+        "mild":    ("影响有限", "#15803d", "#f0fdf4"),
+    }
+
+    rows_html = ""
+    for sc in scenarios:
+        sev = str(sc.get("severity") or "mild")
+        sev_label, fg, bg = _SEV_STYLE.get(sev, _SEV_STYLE["mild"])
+        title = html_escape(str(sc.get("title", "")))
+        shock = float(sc.get("shock_pct", 0) or 0)
+        plain = html_escape(str(sc.get("plain", "")))
+        cushion = html_escape(str(sc.get("cushion_note", "")))
+        rows_html += f"""
+        <li style="padding:0.6rem 0.9rem;border-bottom:1px solid var(--border);
+                   border-left:4px solid {fg};">
+            <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.25rem;
+                        flex-wrap:wrap;">
+                <span style="font-size:0.84rem;font-weight:700;color:var(--text);">{title}</span>
+                <span style="font-size:0.65rem;font-weight:700;color:#fff;background:{fg};
+                             padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">
+                    假设跌 {shock:.0%}
+                </span>
+                <span style="font-size:0.65rem;font-weight:700;color:{fg};background:{bg};
+                             padding:0.1rem 0.45rem;border-radius:10px;white-space:nowrap;">{sev_label}</span>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text);margin:0 0 0.2rem;line-height:1.55;">{plain}</p>
+            <p style="font-size:0.74rem;color:var(--text-2);margin:0;line-height:1.5;">{cushion}</p>
+        </li>"""
+
+    worst = stress.get("worst_case") or {}
+    worst_loss = float(worst.get("loss", 0) or 0)
+    worst_loss_text = f"{worst_loss / 10000:.1f} 万元" if abs(worst_loss) >= 10000 else f"{worst_loss:.0f} 元"
+    summary = html_escape(str(stress.get("summary", "")))
+    disclaimer = html_escape(str(stress.get("disclaimer", "")))
+
+    render_html(f"""
+    <section style="margin:0.8rem 0;border-radius:12px;
+                    border:1px solid var(--border);background:var(--surface);overflow:hidden;">
+        <div style="padding:0.55rem 0.9rem;display:flex;align-items:center;
+                    justify-content:space-between;border-bottom:1px solid var(--border);
+                    gap:0.6rem;flex-wrap:wrap;">
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">🌧️&nbsp;极端情景压力测试</span>
+            <span style="font-size:0.72rem;color:var(--text-3);">最坏约缩水 {html_escape(worst_loss_text)}</span>
+        </div>
+        <ul style="margin:0;padding:0;list-style:none;">{rows_html}</ul>
+        <div style="padding:0.5rem 0.9rem;border-top:1px solid var(--border);">
+            <p style="font-size:0.72rem;color:var(--text-3);margin:0;line-height:1.5;">{disclaimer}</p>
+        </div>
+    </section>
+    """)
+    if summary:
+        st.caption(summary)
+
+
 def agent_focus_block(agent_result: dict[str, Any]) -> None:
     """Agent 主动选择本次最值得先看的 1-2 个重点。"""
     risk_factors = agent_result.get("risk_factors") or {}
@@ -4703,6 +4771,13 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
 
     # 1d. 家庭分歧（有则显示）
     family_disagreement_block(agent_result.get("family_disagreement", {}))
+
+    # 1d-2. 极端情景压力测试（最坏情况演练；重大影响时自动展开）
+    _stress = agent_result.get("stress_test") or {}
+    if _stress.get("available") and _stress.get("scenarios"):
+        _worst_sev = str((_stress.get("worst_case") or {}).get("severity") or "mild")
+        with st.expander("最坏情况下，全家会缩水多少？", expanded=(_worst_sev == "severe")):
+            stress_test_block(agent_result)
 
     # 1e. Agent 主动抓重点（结果页唯一的重点风险入口）
     with st.expander(f"Agent 主动判断 · 数据可信度：{_conf_level or '未知'}", expanded=True):

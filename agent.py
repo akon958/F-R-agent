@@ -37,6 +37,11 @@ except ImportError:
         }
 from data_fetcher import get_stock_metrics, normalize_code, resolve_code_or_name
 from delta_alert import compute_delta
+try:
+    from stress_test import run_stress_test  # type: ignore
+except ImportError:
+    def run_stress_test(analysis: dict) -> dict:  # type: ignore[misc]
+        return {"available": False, "reason": "", "scenarios": [], "worst_case": None, "summary": "", "disclaimer": ""}
 from memory_agent import (
     build_agent_memory_summary,
     build_family_profile_snapshot,
@@ -1021,6 +1026,7 @@ def run_family_risk_agent(
             "intent_action_gap": {"has_gap": False, "gaps": [], "summary": ""},
             "data_confidence": {"level": "低", "level_code": "low", "summary": "输入不完整", "issues": []},
             "cross_validation": {"passed": True, "issues": [], "notes": [], "checks_run": 0},
+            "stress_test": {"available": False, "reason": "输入不完整，未做压力测试。", "scenarios": [], "worst_case": None, "summary": "", "disclaimer": ""},
             "saved_history": False,
             "storage_status": {
                 "backend": "local_csv",
@@ -1083,6 +1089,10 @@ def run_family_risk_agent(
     )
     agent_context["watch_tasks"] = watch_tasks
 
+    # ── Stress Test：极端情景演练（纯计算，不改评分，不预测涨跌）──────
+    stress_test = run_stress_test(analysis)
+    agent_context["stress_test"] = stress_test
+
     # ── Report Agent ────────────────────────────────────────────
     ai_report, dinner_talk, report_source = _run_report_agent(
         agent_context, analysis, missing_data, emit, debug_steps,
@@ -1122,6 +1132,7 @@ def run_family_risk_agent(
         "followup_memory": followup_memory,
         "task_review": task_review,
         "watch_tasks": watch_tasks,
+        "stress_test": stress_test,
         "industry_conc": analysis.get("industry_concentration"),
         "data_credit": round(
             (len(clean_holdings) - len(missing_data.get("行情数据缺失", [])))
