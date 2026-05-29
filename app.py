@@ -4803,7 +4803,17 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
     if len(top_focus) > 1:
         focus_extra = "；另一个重点是：" + "、".join(html_escape(str(item.get("name") or "")) for item in top_focus[1:2])
 
+    # 高亮句与网格保持一致：有需关注因子才说"最需要先看 X"；全稳则统一给安心口径，
+    # 避免"最需要先看 X"与"没有需要先看的项"自相矛盾。
     if cards:
+        _highlight_html = (
+            '<div style="border:1px solid #e8c4b2;background:#fff9f6;border-radius:12px;'
+            'padding:0.75rem 0.85rem;margin-bottom:0.75rem;">'
+            '<p style="font-size:0.82rem;color:var(--text);line-height:1.55;margin:0;">'
+            f'本次最需要先看的因子是：<strong>{html_escape(focus_name)}</strong>'
+            f'（{focus_score:.0f}/100）。简单说，就是{html_escape(focus_plain)}{focus_extra}。'
+            '</p></div>'
+        )
         _grid_html = (
             '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">'
             + "".join(cards) + "</div>"
@@ -4814,10 +4824,13 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
                 f'其余 {_steady_n} 项目前较稳，已收起。</p>'
             )
     else:
-        _grid_html = (
-            '<p style="font-size:0.82rem;color:#3f7d55;margin:0;">'
-            '各项风险因子目前都在较稳区间，没有特别需要先看的项。</p>'
+        _highlight_html = (
+            '<div style="border:1px solid #cfe6d6;background:#f4faf6;border-radius:12px;'
+            'padding:0.75rem 0.85rem;margin-bottom:0;">'
+            '<p style="font-size:0.82rem;color:#3f7d55;line-height:1.55;margin:0;">'
+            '本次各项风险因子都在较稳区间，没有特别突出的短板，保持定期复盘即可。</p></div>'
         )
+        _grid_html = ""
 
     render_html(
         f"""
@@ -4828,14 +4841,7 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
                     <p class="block-subtitle">只列出需要关注的因子，其余较稳的已收起。</p>
                 </div>
             </div>
-            <div style="border:1px solid #e8c4b2;background:#fff9f6;border-radius:12px;
-                        padding:0.75rem 0.85rem;margin-bottom:0.75rem;">
-                <p style="font-size:0.82rem;color:var(--text);line-height:1.55;margin:0;">
-                    本次最需要先看的因子是：
-                    <strong>{html_escape(focus_name)}</strong>（{focus_score:.0f}/100）。
-                    简单说，就是{html_escape(focus_plain)}{focus_extra}。
-                </p>
-            </div>
+            {_highlight_html}
             {_grid_html}
         </section>
         """
@@ -5102,8 +5108,10 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                         st.caption("  影响：这部分已按保守口径处理。")
 
 
-def history_replay_block(agent_result: dict[str, Any] | None) -> None:
-    """历史体检回放：对比最近两次体检的风险变化。"""
+def history_score_trend_block(agent_result: dict[str, Any] | None) -> None:
+    """历史评分趋势：对比最近两次体检的评分、现金、仓位变化。
+    （原名 history_replay_block，已改名避免与 line 3249 历史区间回放函数冲突。）
+    """
     try:
         rows = load_recent_analysis_history(limit=5)
     except Exception:  # noqa: BLE001
@@ -5561,7 +5569,7 @@ def history_page(agent_result: dict[str, Any]) -> None:
         </div>
         """
     )
-    history_replay_block(agent_result)
+    history_score_trend_block(agent_result)
     history_records_block()
 
 
