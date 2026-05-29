@@ -84,9 +84,9 @@ HISTORICAL_SCENARIOS: list[dict[str, Any]] = [
 
 
 _DISCLAIMER = (
-    "以上是把当前持仓放回历史区间的回放，不是对未来的预测；"
-    "这里统一用大盘同期回撤做近似，个股实际涨跌可能更大或更小；"
-    "账面上的回撤只有在真正变现时才会成为实际盈亏。"
+    "以上是把当前持仓放回历史区间的回放，不是预测未来；"
+    "统一用大盘同期回撤做近似，个股实际可能更大或更小；"
+    "账面回撤只有真正变现时才会成为实际盈亏。"
     "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 )
 
@@ -110,10 +110,10 @@ def _build_scenario(
     sev_code, sev_label = _severity(loss_ratio)
 
     plain = (
-        f"如果现在这套持仓原样经历{scenario.get('title')}（{scenario.get('period')}），"
-        f"股票和基金部分按大盘同期约回撤 {drawdown:.0%} 估算，"
-        f"全家资产会账面缩水约 {_money(loss)}（约占全家总资产的 {loss_ratio:.0%}），"
-        f"从 {_money(total_assets)} 降到约 {_money(assets_after)}。"
+        f"如果这套持仓原样经历{scenario.get('title')}（{scenario.get('period')}），"
+        f"股票基金按大盘同期约回撤 {drawdown:.0%} 估算，"
+        f"全家账面缩水约 {_money(loss)}（占 {loss_ratio:.0%}），"
+        f"从 {_money(total_assets)} 降到 {_money(assets_after)}。"
     )
     return {
         "key": str(scenario.get("key") or ""),
@@ -166,9 +166,8 @@ def run_history_replay(analysis: dict[str, Any]) -> dict[str, Any]:
         worst = max(scenarios, key=lambda s: s.get("loss", 0), default=None)
         if worst:
             summary = (
-                f"把当前持仓放回过去这几段真实下跌里，账面回撤最深的一次约为 "
-                f"{worst['loss_ratio']:.0%}（缩水约 {_money(worst['loss'])}），"
-                f"对应{worst['title']}。这是历史回放，不是预测未来。"
+                f"把当前持仓放回这几段真实下跌，回撤最深一次约 {worst['loss_ratio']:.0%}"
+                f"（缩水约 {_money(worst['loss'])}），对应{worst['title']}。这是回放，不是预测。"
             )
         else:
             summary = ""

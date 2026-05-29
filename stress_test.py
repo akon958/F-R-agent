@@ -32,7 +32,7 @@ MARKET_SHOCK = 0.20
 _INVALID_INDUSTRY = {"", "未知", "无", "None", "none"}
 
 _DISCLAIMER = (
-    "以上均为假设性压力测试，不是涨跌预测；账面上的涨跌只有在真正变现时才会成为实际盈亏。"
+    "以上是假设性演练，不是涨跌预测；账面涨跌只有真正变现时才会成为实际盈亏。"
     "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不替任何人做交易决定。"
 )
 
@@ -53,9 +53,8 @@ def _build_scenario(
     sev_code, sev_label = _severity(loss_ratio)
 
     plain = (
-        f"假设{affected_label}短期下跌 {shock:.0%}，全家资产会账面缩水约 {_money(loss)}"
-        f"（约占全家总资产的 {loss_ratio:.0%}），"
-        f"从 {_money(total_assets)} 降到约 {_money(assets_after)}。"
+        f"假设{affected_label}短期下跌 {shock:.0%}，全家账面缩水约 {_money(loss)}"
+        f"（占 {loss_ratio:.0%}），从 {_money(total_assets)} 降到 {_money(assets_after)}。"
     )
     return {
         "key": key,
@@ -146,9 +145,8 @@ def run_stress_test(analysis: dict[str, Any]) -> dict[str, Any]:
         worst = max(scenarios, key=lambda s: s.get("loss", 0), default=None)
         if worst:
             summary = (
-                f"在假设的极端下跌情景里，全家资产最多可能账面缩水约 "
-                f"{_money(worst['loss'])}（约占 {worst['loss_ratio']:.0%}），"
-                f"对应情景：{worst['title']}。这是情景演练，不是预测。"
+                f"极端下跌情景里，全家最多账面缩水约 {_money(worst['loss'])}"
+                f"（占 {worst['loss_ratio']:.0%}），对应「{worst['title']}」。这是演练，不是预测。"
             )
         else:
             summary = ""

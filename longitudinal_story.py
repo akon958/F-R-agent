@@ -25,8 +25,7 @@ _METRIC_LABEL = {
 }
 
 _DISCLAIMER = (
-    "以上是把几次体检连起来的观察，帮助家人看清自己的长期习惯，"
-    "不评判对错，也不构成任何投资建议。"
+    "以上是把几次体检连起来看的长期习惯，不评判对错，也不构成投资建议。"
 )
 
 
@@ -62,9 +61,8 @@ def _gap_stories(task_review: dict[str, Any]) -> list[dict[str, Any]]:
                 "icon": "🔁",
                 "tone": "watch",
                 "text": (
-                    f"「{label}」这个点，最近的体检里被提醒了 {times} 次。"
-                    f"上次约 {first:.0%}、这次约 {latest:.0%}，数字一直没往更稳的方向走——"
-                    "这种'提了好几回、却一直没顾上'的情况很常见，值得趁这次一起聊聊、定个小目标。"
+                    f"「{label}」最近被提醒了 {times} 次：上次约 {first:.0%}、这次约 {latest:.0%}，"
+                    "数字一直没往更稳的方向走。这种'提了好几回却没顾上'很常见，值得趁这次定个小目标。"
                 ),
             })
         elif improved:
@@ -73,8 +71,8 @@ def _gap_stories(task_review: dict[str, Any]) -> list[dict[str, Any]]:
                 "icon": "✅",
                 "tone": "good",
                 "text": (
-                    f"之前一直被提醒的「{label}」，上次约 {first:.0%}、这次约 {latest:.0%}，"
-                    "家里确实在一点点往更稳的方向调，这是个好信号。"
+                    f"之前一直被提醒的「{label}」，从 {first:.0%} 到 {latest:.0%}，"
+                    "家里确实在往更稳的方向调，是好信号。"
                 ),
             })
     return stories
@@ -87,20 +85,20 @@ def _conflict_story(history_analysis: dict[str, Any]) -> list[dict[str, Any]]:
         if "已消除" in s:
             return [{
                 "kind": "conflict_resolved", "icon": "🤝", "tone": "good",
-                "text": f"{s}——家里的沟通起作用了。这种'聊过之后达成一致'的过程，本身就值得记下来。",
+                "text": f"{s}——家里的沟通起作用了，'聊过就达成一致'的过程值得记下来。",
             }]
         if "仍然存在" in s:
             return [{
                 "kind": "conflict_persistent", "icon": "💬", "tone": "watch",
                 "text": (
-                    f"{s}。同一个分歧出现不止一次，不一定是谁固执，"
-                    "更可能是还没找到双方都能接受的方案，可以试着换个角度再聊一次。"
+                    f"{s}。同一个分歧出现不止一次，多半不是谁固执，"
+                    "而是还没找到都能接受的方案，可以换个角度再聊。"
                 ),
             }]
         if "出现" in s:
             return [{
                 "kind": "conflict_new", "icon": "💬", "tone": "watch",
-                "text": f"{s}。趁分歧还新鲜，先把各自的担心说清楚，往往比拖着更容易对齐。",
+                "text": f"{s}。趁分歧还新鲜，先把各自的担心说清楚，比拖着更容易对齐。",
             }]
     return []
 
@@ -114,7 +112,7 @@ def _persistent_risk_story(history_analysis: dict[str, Any]) -> list[dict[str, A
         "kind": "risk_persistent", "icon": "📌", "tone": "neutral",
         "text": (
             f"有些风险连续两次体检都在：{snippet}。"
-            "它不是一时的波动，适合放在心上，隔段时间回看一次趋势。"
+            "不是一时波动，适合隔段时间回看一次趋势。"
         ),
     }]
 

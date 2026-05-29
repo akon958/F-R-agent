@@ -2513,7 +2513,7 @@ def home_hero() -> None:
         <div class="hero-card fr-hero">
             <div class="fr-hero-kicker">FamilyReader · AI</div>
             <h1 class="fr-hero-title">读懂家庭持仓风险</h1>
-            <p class="fr-hero-subtitle">输入持仓和现金，Agent 会检查仓位、集中度、数据完整性，并生成家人能看懂的说明。</p>
+            <p class="fr-hero-subtitle">输入持仓和现金，Agent 帮你看清风险，生成家人能看懂的说明。</p>
             <div class="fr-agent-strip">
                 <span>看结构</span>
                 <span>讲清楚</span>
@@ -4840,7 +4840,7 @@ def risk_factor_breakdown_block(analysis: dict[str, Any], factor_data: dict[str,
             '<div style="border:1px solid #cfe6d6;background:#f4faf6;border-radius:12px;'
             'padding:0.75rem 0.85rem;margin-bottom:0;">'
             '<p style="font-size:0.82rem;color:#3f7d55;line-height:1.55;margin:0;">'
-            '本次各项风险因子都在较稳区间，没有特别突出的短板，保持定期复盘即可。</p></div>'
+            '本次各项风险因子都较稳，没有特别需要先看的，定期复盘即可。</p></div>'
         )
         _grid_html = ""
 
@@ -4974,9 +4974,6 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
                       stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <span style="font-size:0.85rem;font-weight:700;color:var(--text);">体检完成</span>
-            <span style="font-size:0.72rem;color:var(--text-3);margin-left:0.15rem;">
-                ·&nbsp;已检查持仓结构、现金比例与集中风险
-            </span>
         </div>
         """
     )
@@ -5068,7 +5065,7 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         <div class="fr-step-card">
             <p class="fr-step-kicker">Next</p>
             <p class="fr-step-title">让 AI 把风险讲给家人听</p>
-            <p class="fr-step-sub">基于本次体检数据生成，重点解释为什么要关注这些风险。</p>
+            <p class="fr-step-sub">用通俗的话解释这次为什么要关注这些风险。</p>
         </div>
         """)
         if st.button("查看 AI 风险说明 →", use_container_width=True,

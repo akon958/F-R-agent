@@ -39,11 +39,11 @@ def cushion_note(loss: float, cash: float, *, noun: str = "账面损失") -> str
     noun：压力测试用"账面损失"，历史回放用"账面回撤"。
     """
     if cash <= 0:
-        return "目前几乎没有现金垫，这类波动会直接压到本金，建议先确认家里短期是否要用钱。"
+        return "几乎没有现金垫，波动会直接压到本金，先确认家里短期是否要用钱。"
     cover = loss / cash if cash > 0 else None
     if cover is not None and cover > 1:
         return (
-            f"这笔{noun}约为家庭现金垫的 {cover:.1f} 倍（现金约 {money(cash)}），"
-            "现金垫不足以完全缓冲，适合提前把用钱计划聊清楚。"
+            f"这笔{noun}约为现金垫的 {cover:.1f} 倍（现金约 {money(cash)}），"
+            "缓冲不够，建议先把用钱计划聊清楚。"
         )
-    return f"家庭现金垫约能覆盖这笔{noun}（现金约 {money(cash)}），短期缓冲相对从容。"
+    return f"现金垫能覆盖这笔{noun}（现金约 {money(cash)}），短期缓冲较从容。"
